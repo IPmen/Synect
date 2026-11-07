@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Synect.Domain\Synect.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Base EF Core package only (no provider): Application talks to ISynectDbContext. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Synect.Tests" />
+  </ItemGroup>
+</Project>
