@@ -4,6 +4,10 @@ public interface IAdapterRegistry
 {
     IBankAdapter GetBank(string sourceCode);
     IEdoAdapter GetEdo(string sourceCode);
+
+    /// <summary>Any adapter by source code.</summary>
+    ISourceAdapter Get(string sourceCode);
+
     IReadOnlyCollection<string> SourceCodes { get; }
 }
 
@@ -23,6 +27,11 @@ public sealed class AdapterRegistry : IAdapterRegistry
     }
 
     public IReadOnlyCollection<string> SourceCodes => _banks.Keys.Concat(_edo.Keys).ToList();
+
+    public ISourceAdapter Get(string sourceCode) =>
+        _banks.TryGetValue(sourceCode, out var bank) ? bank
+        : _edo.TryGetValue(sourceCode, out var edo) ? edo
+        : throw new KeyNotFoundException($"No adapter registered for source '{sourceCode}'.");
 
     public IBankAdapter GetBank(string sourceCode) =>
         _banks.TryGetValue(sourceCode, out var adapter)

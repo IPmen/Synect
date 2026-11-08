@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Synect.Application.Abstractions;
+using Synect.Application.Queue;
 using Synect.Domain.Sync;
 using Synect.Tests.Infrastructure;
 
@@ -16,6 +17,7 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
     [
         "connections", "sync_runs", "raw_objects", "bank_accounts", "bank_transactions",
         "bank_daily_balances", "edo_documents", "edo_document_status_logs", "counterparties",
+        "sync_jobs", "connection_secrets",
     ];
 
     private void RequirePostgres() => Assert.SkipUnless(fixture.Available, PostgresFixture.SkipReason);
@@ -117,5 +119,60 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
         var ex = await Assert.ThrowsAsync<PostgresException>(() => db.InTransactionAsync(ct =>
             db.Database.ExecuteSqlRawAsync("UPDATE edo_document_status_logs SET status = 'x'", ct), CancellationToken.None));
         Assert.Contains("append-only", ex.MessageText);
+    }
+
+    [Fact]
+    public async Task Queue_runs_a_requested_load_end_to_end_under_rls()
+    {
+        RequirePostgres();
+        var tenant = await Host.CreateTenantAsync("PG queue");
+        var bank = await Host.CreateConnectionAsync(tenant, AdapterKind.Bank);
+
+        Assert.Equal(SyncRequestStatus.Queued, (await Host.RequestSyncAsync(tenant, bank)).Status);
+        Assert.Equal(SyncRequestStatus.AlreadyQueued, (await Host.RequestSyncAsync(tenant, bank)).Status);
+        await Host.RunQueueAsync();
+
+        var job = (await Host.JobsAsync(tenant, bank)).Single(j => j.Kind == SyncJobKind.Manual);
+        Assert.Equal(SyncJobStatus.Succeeded, job.Status);
+        Assert.NotNull(job.SyncRunId);
+        Assert.True(await Host.CountAsync(tenant, db => db.BankTransactions) > 0);
+    }
+
+    [Fact]
+    public async Task Partial_unique_index_allows_one_active_job_per_connection()
+    {
+        RequirePostgres();
+        var tenant = await Host.CreateTenantAsync("PG active job");
+        var bank = await Host.CreateConnectionAsync(tenant, AdapterKind.Bank);
+        await Host.RequestSyncAsync(tenant, bank);
+
+        await using var scope = Host.Scope(tenant);
+        var db = scope.ServiceProvider.GetRequiredService<ISynectDbContext>();
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.InTransactionAsync(async ct =>
+        {
+            db.SyncJobs.Add(SyncJob.Create(tenant, bank, SyncJobKind.Scheduled, Host.Time.Now));
+            await db.SaveChangesAsync(ct);
+        }, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Connection_secrets_are_isolated_by_rls_and_hold_no_plain_value()
+    {
+        RequirePostgres();
+        var a = await Host.CreateTenantAsync("PG secrets A");
+        var b = await Host.CreateTenantAsync("PG secrets B");
+        var bankA = await Host.CreateConnectionAsync(a, AdapterKind.Bank);
+        await Host.CreateConnectionAsync(b, AdapterKind.Bank);
+
+        var visibleToB = await Host.QueryAsync(b, db => db.ConnectionSecrets.IgnoreQueryFilters()
+            .Select(s => s.TenantId).Distinct().ToListAsync());
+        Assert.Equal([b], visibleToB);
+        Assert.Equal(0, await Host.QueryAsync(null, db => db.ConnectionSecrets.IgnoreQueryFilters().CountAsync()));
+
+        var password = Host.Passwords[bankA];
+        var plainRows = await fixture.ScalarAsync<long>(
+            $"SELECT count(*) FROM connection_secrets WHERE encrypted_value LIKE '%{password}%'");
+        Assert.Equal(0L, plainRows);
+        Assert.Equal(1L, await fixture.ScalarAsync<long>($"SELECT count(*) FROM connection_secrets WHERE connection_id = '{bankA}'"));
     }
 }

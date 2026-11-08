@@ -52,6 +52,17 @@ public class SyncRun : TenantEntity
         RecordCount = recordCount;
     }
 
+    /// <summary>Records the date range actually loaded when it is only known during the run.</summary>
+    public void SetRange(DateOnly from, DateOnly to)
+    {
+        RangeFrom = from;
+        RangeTo = to;
+    }
+
+    /// <summary>The worker died while this run was in progress.</summary>
+    public void Abandon(DateTimeOffset at) =>
+        Fail(at, "Abandoned: no progress within the stale-run timeout (worker stopped?).", RecordCount);
+
     public void Fail(DateTimeOffset at, string error, int recordCount)
     {
         Result = SyncRunResult.Failed;

@@ -6,13 +6,16 @@ namespace Synect.Infrastructure.Adapters.Fake;
 
 /// <summary>
 /// Bank adapter backed by <see cref="FakeBankDataSource"/>. Uses the real <see cref="KapitalBankMapper"/>
-/// (including envelope error handling), so swapping in the real transport later does not change the mapping.
+/// and <see cref="KapitalSessionManager"/> (login, sid cache, re-login on authentication errors), so
+/// swapping in the real transport later does not change mapping or session handling.
 /// </summary>
-public sealed class FakeBankAdapter(FakeBankDataSource source, KapitalBankMapper mapper) : IBankAdapter
+public sealed class FakeBankAdapter(FakeBankDataSource source, KapitalBankMapper mapper, KapitalSessionManager sessions) : IBankAdapter
 {
     public const string Code = "fake_kapitalbank";
+    public const string Provider = "KapitalBank";
 
     public string SourceCode => Code;
+    public string ProviderName => Provider;
     public AdapterKind Kind => AdapterKind.Bank;
 
     public BankAdapterCapabilities Capabilities { get; } = new(
@@ -21,25 +24,31 @@ public sealed class FakeBankAdapter(FakeBankDataSource source, KapitalBankMapper
         HasFinalityFlag: true,
         HasStableOperationId: true);
 
-    public Task<ConnectionTestResult> TestConnectionAsync(AdapterContext context, CancellationToken ct)
+    public async Task<ConnectionTestResult> TestConnectionAsync(AdapterContext context, CancellationToken ct)
     {
         try
         {
-            mapper.MapAccounts(source.AccountsJson(context.ConnectionId));
-            return Task.FromResult(ConnectionTestResult.Ok());
+            await GetAccountsAsync(context, ct);
+            return ConnectionTestResult.Ok();
         }
-        catch (AdapterException ex)
+        catch (AdapterException ex) when (ex is not AdapterTransientException)
         {
-            return Task.FromResult(ConnectionTestResult.Failed(ex.Message));
+            return ConnectionTestResult.Failed(ex.Message);
         }
     }
 
     public Task<IReadOnlyList<BankAccountInfo>> GetAccountsAsync(AdapterContext context, CancellationToken ct) =>
-        Task.FromResult(mapper.MapAccounts(source.AccountsJson(context.ConnectionId)));
+        sessions.WithSessionAsync(context, Login(context), async (sid, token) =>
+            mapper.MapAccounts(await source.AccountsJsonAsync(context.ConnectionId, sid, token)), ct);
 
     public Task<BankDayTransactions> GetTransactionsAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct) =>
-        Task.FromResult(mapper.MapTransactions(source.StatementJson(context.ConnectionId, accountNumber, day), accountNumber, day));
+        sessions.WithSessionAsync(context, Login(context), async (sid, token) =>
+            mapper.MapTransactions(await source.StatementJsonAsync(context.ConnectionId, sid, accountNumber, day, token), accountNumber, day), ct);
 
     public Task<BankBalanceInfo?> GetBalancesAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct) =>
-        Task.FromResult(mapper.MapBalance(source.StatementJson(context.ConnectionId, accountNumber, day), accountNumber, day));
+        sessions.WithSessionAsync(context, Login(context), async (sid, token) =>
+            mapper.MapBalance(await source.StatementJsonAsync(context.ConnectionId, sid, accountNumber, day, token), accountNumber, day), ct);
+
+    private KapitalSessionManager.LoginTransport Login(AdapterContext context) =>
+        (login, password, _) => Task.FromResult(source.LoginJson(context.ConnectionId, login, password));
 }

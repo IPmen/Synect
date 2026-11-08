@@ -558,6 +558,12 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("adapter_kind");
 
+                    b.Property<int>("ConsecutiveFailures")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("consecutive_failures");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -594,6 +600,10 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("status");
 
+                    b.Property<DateTimeOffset?>("StatusChangedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("status_changed_at");
+
                     b.Property<string>("StatusReason")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)")
@@ -606,6 +616,129 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_connections_tenant_id_source_code");
 
                     b.ToTable("connections", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Sync.ConnectionSecret", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("EncryptedValue")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("encrypted_value");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("kind");
+
+                    b.Property<DateTimeOffset?>("RotatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("rotated_at");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_connection_secrets");
+
+                    b.HasIndex("TenantId", "ConnectionId", "Kind")
+                        .IsUnique()
+                        .HasDatabaseName("ix_connection_secrets_tenant_id_connection_id_kind");
+
+                    b.ToTable("connection_secrets", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Sync.SyncJob", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<DateTimeOffset>("EnqueuedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("enqueued_at");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("error");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finished_at");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("kind");
+
+                    b.Property<DateTimeOffset>("NotBefore")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("not_before");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("integer")
+                        .HasColumnName("priority");
+
+                    b.Property<DateTimeOffset?>("ScheduledFor")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("scheduled_for");
+
+                    b.Property<DateTimeOffset?>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid?>("SyncRunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sync_run_id");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_sync_jobs");
+
+                    b.HasIndex("TenantId", "ConnectionId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_sync_jobs_tenant_id_connection_id_active")
+                        .HasFilter("status IN ('Queued', 'Running')");
+
+                    b.HasIndex("TenantId", "ConnectionId", "EnqueuedAt")
+                        .HasDatabaseName("ix_sync_jobs_tenant_id_connection_id_enqueued_at");
+
+                    b.HasIndex("TenantId", "Status", "NotBefore")
+                        .HasDatabaseName("ix_sync_jobs_tenant_id_status_not_before");
+
+                    b.ToTable("sync_jobs", (string)null);
                 });
 
             modelBuilder.Entity("Synect.Domain.Sync.SyncRun", b =>
@@ -826,6 +959,40 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_connections_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Sync.ConnectionSecret", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_connection_secrets_tenants_tenant_id");
+
+                    b.HasOne("Synect.Domain.Sync.Connection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_connection_secrets_connections_tenant_id_connection_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Sync.SyncJob", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_sync_jobs_tenants_tenant_id");
+
+                    b.HasOne("Synect.Domain.Sync.Connection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_sync_jobs_connections_tenant_id_connection_id");
                 });
 
             modelBuilder.Entity("Synect.Domain.Sync.SyncRun", b =>

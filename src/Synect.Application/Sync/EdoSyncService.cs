@@ -3,6 +3,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Synect.Application.Abstractions;
 using Synect.Application.Adapters;
+using Synect.Application.Resilience;
+using Synect.Application.Secrets;
 using Synect.Domain.Edo;
 using Synect.Domain.Sync;
 
@@ -29,8 +31,11 @@ public sealed class EdoSyncService(
     IAdapterRegistry registry,
     RawObjectStore rawStore,
     CounterpartyStore counterparties,
+    ICredentialProvider credentials,
+    AdapterCallPolicy policy,
     TimeProvider time,
     IOptions<EdoSyncOptions> options,
+    IOptions<CircuitBreakerOptions> breakerOptions,
     ILogger<EdoSyncService> logger)
 {
     private static readonly EdoDocumentOwner[] Owners = [EdoDocumentOwner.Incoming, EdoDocumentOwner.Outgoing];
@@ -53,7 +58,7 @@ public sealed class EdoSyncService(
         }, ct);
 
         var adapter = registry.GetEdo(connection.SourceCode);
-        var context = SyncRunFinalizer.CreateAdapterContext(connection);
+        var context = SyncRunFinalizer.CreateAdapterContext(connection, credentials);
         DateTimeOffset? updatedSince = adapter.Capabilities.SupportsUpdatedSince && connection.LastSuccessfulSyncAt is { } last
             ? last - options.Value.UpdatedSinceOverlap
             : null;
@@ -70,7 +75,9 @@ public sealed class EdoSyncService(
                 var page = 1;
                 while (true)
                 {
-                    var result = await adapter.ListDocumentsAsync(context, owner, updatedSince, page, ct);
+                    var currentPage = page;
+                    var result = await policy.ExecuteAsync(adapter, context, "ListDocuments",
+                        token => adapter.ListDocumentsAsync(context, owner, updatedSince, currentPage, token), ct);
                     records += result.Items.Count;
                     await db.InTransactionAsync(async token =>
                     {
@@ -104,7 +111,8 @@ public sealed class EdoSyncService(
         {
             logger.LogWarning("EDO sync failed: connection {ConnectionId}, error type {ErrorType}",
                 connection.Id, ex.GetType().Name);
-            var outcome = await SyncRunFinalizer.FailAsync(db, run.Id, connection.Id, ex, records, time.GetUtcNow());
+            var outcome = await SyncRunFinalizer.FailAsync(db, run.Id, connection.Id, ex, records, time.GetUtcNow(),
+                breakerOptions.Value.FailureThreshold);
             if (ex is OperationCanceledException) throw;
             return outcome;
         }

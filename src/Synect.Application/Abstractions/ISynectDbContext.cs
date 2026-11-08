@@ -26,6 +26,8 @@ public interface ISynectDbContext
     DbSet<EdoDocument> EdoDocuments { get; }
     DbSet<EdoDocumentStatusLog> EdoDocumentStatusLogs { get; }
     DbSet<Counterparty> Counterparties { get; }
+    DbSet<SyncJob> SyncJobs { get; }
+    DbSet<ConnectionSecret> ConnectionSecrets { get; }
 
     DatabaseFacade Database { get; }
     ChangeTracker ChangeTracker { get; }

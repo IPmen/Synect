@@ -49,6 +49,7 @@ internal sealed class ConnectionConfiguration : IEntityTypeConfiguration<Connect
         b.Property(e => e.AdapterKind).HasConversion<string>().HasMaxLength(32);
         b.Property(e => e.Status).HasConversion<string>().HasMaxLength(32);
         b.Property(e => e.StatusReason).HasMaxLength(2000);
+        b.Property(e => e.ConsecutiveFailures).HasDefaultValue(0);
         b.Property(e => e.Settings).HasColumnType(TenantEntityConfiguration.Jsonb);
         b.Property(e => e.CredentialsRef).HasMaxLength(256);
         b.HasIndex(e => new { e.TenantId, e.SourceCode });
@@ -176,5 +177,38 @@ internal sealed class CounterpartyConfiguration : IEntityTypeConfiguration<Count
         b.Property(e => e.Inn).HasMaxLength(16);
         b.Property(e => e.Name).HasMaxLength(512);
         b.HasIndex(e => new { e.TenantId, e.Inn }).IsUnique();
+    }
+}
+
+internal sealed class SyncJobConfiguration : IEntityTypeConfiguration<SyncJob>
+{
+    public void Configure(EntityTypeBuilder<SyncJob> b)
+    {
+        b.ConfigureTenantEntity();
+        b.Ignore(e => e.IsActive);
+        b.Property(e => e.Kind).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.Status).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.Error).HasMaxLength(2000);
+        b.HasOne<Connection>().WithMany().HasForeignKey(e => new { e.TenantId, e.ConnectionId }).OnDelete(DeleteBehavior.Restrict);
+        // At most one Queued or Running job per connection: no overlapping loads, no duplicate requests.
+        b.HasIndex(e => new { e.TenantId, e.ConnectionId })
+            .IsUnique()
+            .HasFilter("status IN ('Queued', 'Running')")
+            .HasDatabaseName("ux_sync_jobs_tenant_id_connection_id_active");
+        b.HasIndex(e => new { e.TenantId, e.Status, e.NotBefore });
+        b.HasIndex(e => new { e.TenantId, e.ConnectionId, e.EnqueuedAt });
+    }
+}
+
+internal sealed class ConnectionSecretConfiguration : IEntityTypeConfiguration<ConnectionSecret>
+{
+    public void Configure(EntityTypeBuilder<ConnectionSecret> b)
+    {
+        b.ConfigureTenantEntity();
+        b.Ignore(e => e.Reference);
+        b.Property(e => e.Kind).HasMaxLength(64);
+        b.Property(e => e.EncryptedValue);
+        b.HasOne<Connection>().WithMany().HasForeignKey(e => new { e.TenantId, e.ConnectionId }).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(e => new { e.TenantId, e.ConnectionId, e.Kind }).IsUnique();
     }
 }

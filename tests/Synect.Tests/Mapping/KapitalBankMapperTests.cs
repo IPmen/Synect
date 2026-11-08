@@ -201,10 +201,29 @@ public class KapitalBankMapperTests
         Assert.Throws<AdapterAuthenticationException>(() => Mapper().MapAccounts(ErrorEnvelope(61002, "IP address is not allowed")));
     }
 
-    [Fact]
-    public void Envelope_login_error_is_an_authentication_error()
+    [Theory]
+    [InlineData(10001, "Invalid login or password")]
+    [InlineData(50010, "Internal error")]
+    [InlineData(61002, "IP address is not allowed")]
+    public void Any_APILogin_error_is_an_authentication_error(int code, string message)
     {
-        Assert.Throws<AdapterAuthenticationException>(() => Mapper().MapAccounts(ErrorEnvelope(40001, "Invalid login or password")));
+        var ex = Assert.Throws<AdapterAuthenticationException>(() => Mapper().MapLogin(ErrorEnvelope(code, message)));
+        Assert.Contains(code.ToString(), ex.Message);
+    }
+
+    [Fact]
+    public void Login_returns_the_session_id()
+    {
+        Assert.Equal("abc", Mapper().MapLogin(Envelope("{ \"sid\": \"abc\" }")));
+        Assert.Equal("xyz", Mapper().MapLogin(Envelope("\"xyz\"")));
+        Assert.Throws<AdapterException>(() => Mapper().MapLogin(Envelope("{}")));
+    }
+
+    [Fact]
+    public void Data_method_errors_other_than_61002_are_not_recognised_by_text()
+    {
+        var ex = Assert.Throws<AdapterException>(() => Mapper().MapAccounts(ErrorEnvelope(40001, "Invalid login or password")));
+        Assert.IsNotType<AdapterAuthenticationException>(ex);
     }
 
     [Fact]

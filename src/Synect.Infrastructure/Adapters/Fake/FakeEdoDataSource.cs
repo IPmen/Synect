@@ -33,16 +33,30 @@ public sealed class FakeEdoScenario
     public int Seed { get; set; } = 7;
     public int DocumentCount { get; set; } = 12;
 
-    /// <summary>Every call fails with an authentication error.</summary>
+    /// <summary>Login is rejected.</summary>
     public bool AuthFailure { get; set; }
+
+    /// <summary>Data calls never answer (until cancelled).</summary>
+    public bool Hang { get; set; }
+
+    /// <summary>The next N data calls fail with HTTP 503.</summary>
+    public int TransientFailures;
+
+    /// <summary>Number of login calls (token requests).</summary>
+    public int LoginCount;
+
+    /// <summary>Issued tokens and their expiry (360 minutes, as in Didox).</summary>
+    internal readonly ConcurrentDictionary<string, DateTimeOffset> Tokens = new();
 
     /// <summary>Base time of seeded documents.</summary>
     public DateTimeOffset BaseTime { get; set; } = new(2026, 10, 1, 9, 0, 0, TimeSpan.FromHours(5));
 }
 
 /// <summary>Produces Didox shaped JSON from an in-memory, mutable document set.</summary>
-public sealed class FakeEdoDataSource
+public sealed class FakeEdoDataSource(TimeProvider time)
 {
+    public static readonly TimeSpan TokenLifetime = TimeSpan.FromMinutes(360);
+
     private static readonly string[] DocTypes = ["002", "005", "007", "052"];
     private static readonly int[] Statuses = [0, 1, 2, 3, 4, 6, 8, 40];
     private static readonly TimeSpan Tashkent = TimeSpan.FromHours(5);
@@ -51,10 +65,32 @@ public sealed class FakeEdoDataSource
 
     public FakeEdoScenario For(Guid connectionId) => _scenarios.GetOrAdd(connectionId, _ => new FakeEdoScenario());
 
-    public void EnsureAuthorized(Guid connectionId)
+    /// <summary>Login response: { "token": "..." } or { "error": ... }. The password is only checked for presence.</summary>
+    public string LoginJson(Guid connectionId, string login, string password)
     {
-        if (For(connectionId).AuthFailure)
-            throw new AdapterAuthenticationException("Fake Didox rejected the token (401).");
+        var s = For(connectionId);
+        Interlocked.Increment(ref s.LoginCount);
+        if (s.AuthFailure || string.IsNullOrEmpty(login) || string.IsNullOrEmpty(password))
+            return """{ "error": "invalid credentials" }""";
+        var token = "tok-" + Guid.NewGuid().ToString("N");
+        s.Tokens[token] = time.GetUtcNow() + TokenLifetime;
+        return new JsonObject { ["token"] = token }.ToJsonString();
+    }
+
+    /// <summary>Simulates the transport in front of every data call: hangs, HTTP 503, HTTP 401 for bad or expired tokens.</summary>
+    public async Task GateAsync(Guid connectionId, string token, CancellationToken ct)
+    {
+        var s = For(connectionId);
+        if (s.Hang) await Task.Delay(Timeout.Infinite, ct);
+        while (true)
+        {
+            var current = Volatile.Read(ref s.TransientFailures);
+            if (current <= 0) break;
+            if (Interlocked.CompareExchange(ref s.TransientFailures, current - 1, current) == current)
+                throw new AdapterTransientException("HTTP 503 Service Unavailable (fake Didox).");
+        }
+        if (!s.Tokens.TryGetValue(token, out var expiresAt) || time.GetUtcNow() >= expiresAt)
+            throw new AdapterAuthenticationException("HTTP 401: token is invalid or expired (fake Didox).");
     }
 
     public IReadOnlyList<FakeDidoxDocument> Documents(Guid connectionId)

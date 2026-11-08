@@ -1,12 +1,25 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Synect.Application.Abstractions;
 using Synect.Application.Adapters;
 using Synect.Application.Common;
+using Synect.Application.Resilience;
+using Synect.Application.Secrets;
 using Synect.Domain.Banking;
 using Synect.Domain.Sync;
 
 namespace Synect.Application.Sync;
+
+/// <summary>Sync:Bank.</summary>
+public sealed class BankSyncOptions
+{
+    /// <summary>Days to load on the first sync of an account (capped by the adapter history depth).</summary>
+    public int InitialDays { get; set; } = 30;
+
+    /// <summary>UTC offset of the bank operational day. Uzbekistan is UTC+5 without DST.</summary>
+    public TimeSpan OperationalDayUtcOffset { get; set; } = TimeSpan.FromHours(5);
+}
 
 /// <summary>
 /// Loads accounts, operations and daily balances of one bank connection into the database.
@@ -17,13 +30,35 @@ public sealed class BankSyncService(
     IAdapterRegistry registry,
     RawObjectStore rawStore,
     CounterpartyStore counterparties,
+    ICredentialProvider credentials,
+    AdapterCallPolicy policy,
     TimeProvider time,
+    IOptions<BankSyncOptions> bankOptions,
+    IOptions<CircuitBreakerOptions> breakerOptions,
     ILogger<BankSyncService> logger)
 {
-    public async Task<SyncOutcome> SyncAsync(Guid connectionId, DateOnly from, DateOnly to, CancellationToken ct)
+    /// <summary>
+    /// Incremental load. Per account: the first load covers InitialDays (capped by HistoryDepthDays);
+    /// later loads re-read from the earliest day that is not closed yet (bank_daily_balances.is_day_closed = false)
+    /// up to today, or only yesterday and today when every stored day is closed. If the worker did not run
+    /// for a while, reading also starts right after the latest stored day so that no day is skipped.
+    /// </summary>
+    public Task<SyncOutcome> SyncAsync(Guid connectionId, CancellationToken ct) =>
+        RunAsync(connectionId, null, ct);
+
+    /// <summary>Loads an explicit range for every account (manual re-reads, tests).</summary>
+    public Task<SyncOutcome> SyncAsync(Guid connectionId, DateOnly from, DateOnly to, CancellationToken ct)
     {
         if (to < from) throw new ArgumentException("Range end is before range start.", nameof(to));
+        return RunAsync(connectionId, (from, to), ct);
+    }
 
+    /// <summary>Today in the bank operational time zone.</summary>
+    public DateOnly Today() =>
+        DateOnly.FromDateTime(time.GetUtcNow().ToOffset(bankOptions.Value.OperationalDayUtcOffset).DateTime);
+
+    private async Task<SyncOutcome> RunAsync(Guid connectionId, (DateOnly From, DateOnly To)? explicitRange, CancellationToken ct)
+    {
         var (connection, run) = await db.InTransactionAsync(async token =>
         {
             var c = await db.Connections.SingleOrDefaultAsync(x => x.Id == connectionId, token)
@@ -33,22 +68,22 @@ public sealed class BankSyncService(
             if (c.Status == ConnectionStatus.Disabled)
                 throw new InvalidOperationException($"Connection {connectionId} is disabled.");
 
-            var r = SyncRun.Start(c.TenantId, c.Id, time.GetUtcNow(), from, to);
+            var r = SyncRun.Start(c.TenantId, c.Id, time.GetUtcNow(), explicitRange?.From, explicitRange?.To);
             db.SyncRuns.Add(r);
             await db.SaveChangesAsync(token);
             return (c, r);
         }, ct);
 
         var adapter = registry.GetBank(connection.SourceCode);
-        var context = SyncRunFinalizer.CreateAdapterContext(connection);
+        var context = SyncRunFinalizer.CreateAdapterContext(connection, credentials);
         var records = 0;
 
-        logger.LogInformation("Bank sync started: connection {ConnectionId}, source {SourceCode}, {From}..{To}",
-            connection.Id, connection.SourceCode, from, to);
+        logger.LogInformation("Bank sync started: connection {ConnectionId}, source {SourceCode}", connection.Id, connection.SourceCode);
 
         try
         {
-            var accountInfos = await adapter.GetAccountsAsync(context, ct);
+            var accountInfos = await policy.ExecuteAsync(adapter, context, "GetAccounts",
+                token => adapter.GetAccountsAsync(context, token), ct);
             records += accountInfos.Count;
             var accounts = await db.InTransactionAsync(async token =>
             {
@@ -58,12 +93,21 @@ public sealed class BankSyncService(
             }, ct);
 
             var allDaysClosed = adapter.Capabilities.HasFinalityFlag;
+            DateOnly? rangeFrom = null, rangeTo = null;
             foreach (var account in accounts)
             {
+                var (from, to) = explicitRange
+                    ?? await db.InTransactionAsync(token => RangeForAsync(connection, account, adapter.Capabilities, token), ct);
+                rangeFrom = rangeFrom is { } rf && rf < from ? rf : from;
+                rangeTo = rangeTo is { } rt && rt > to ? rt : to;
+
                 for (var day = from; day <= to; day = day.AddDays(1))
                 {
-                    var dayTransactions = await adapter.GetTransactionsAsync(context, account.AccountNumber, day, ct);
-                    var balance = await adapter.GetBalancesAsync(context, account.AccountNumber, day, ct);
+                    var d = day;
+                    var dayTransactions = await policy.ExecuteAsync(adapter, context, "GetTransactions",
+                        token => adapter.GetTransactionsAsync(context, account.AccountNumber, d, token), ct);
+                    var balance = await policy.ExecuteAsync(adapter, context, "GetBalances",
+                        token => adapter.GetBalancesAsync(context, account.AccountNumber, d, token), ct);
                     var dayClosed = adapter.Capabilities.HasFinalityFlag
                         && (balance?.IsDayClosed ?? dayTransactions.IsDayClosed ?? false);
                     allDaysClosed &= dayClosed;
@@ -83,6 +127,7 @@ public sealed class BankSyncService(
             await db.InTransactionAsync(async token =>
             {
                 var now = time.GetUtcNow();
+                if (explicitRange is null && rangeFrom is { } f && rangeTo is { } t) run.SetRange(f, t);
                 run.Succeed(now, allDaysClosed, records);
                 connection.MarkSyncSucceeded(now);
                 await db.SaveChangesAsync(token);
@@ -96,10 +141,38 @@ public sealed class BankSyncService(
         {
             logger.LogWarning("Bank sync failed: connection {ConnectionId}, error type {ErrorType}",
                 connection.Id, ex.GetType().Name);
-            var outcome = await SyncRunFinalizer.FailAsync(db, run.Id, connection.Id, ex, records, time.GetUtcNow());
+            var outcome = await SyncRunFinalizer.FailAsync(db, run.Id, connection.Id, ex, records, time.GetUtcNow(),
+                breakerOptions.Value.FailureThreshold);
             if (ex is OperationCanceledException) throw;
             return outcome;
         }
+    }
+
+    private async Task<(DateOnly From, DateOnly To)> RangeForAsync(
+        Connection connection, BankAccount account, BankAdapterCapabilities capabilities, CancellationToken ct)
+    {
+        var today = Today();
+        var initialDays = bankOptions.Value.InitialDays;
+        if (capabilities.HistoryDepthDays is { } depth) initialDays = Math.Min(initialDays, depth);
+        var initialFrom = today.AddDays(-Math.Max(1, initialDays) + 1);
+
+        var balances = db.BankDailyBalances.Where(b => b.BankAccountId == account.Id);
+        var latestStored = await balances.Select(b => (DateOnly?)b.Date).MaxAsync(ct);
+        if (connection.LastSuccessfulSyncAt is null || latestStored is null)
+            return (initialFrom, today);
+
+        // Default: yesterday and today.
+        var from = today.AddDays(-1);
+        // Re-read from the earliest day the bank has not closed yet.
+        var earliestOpen = await balances.Where(b => !b.IsDayClosed).Select(b => (DateOnly?)b.Date).MinAsync(ct);
+        if (earliestOpen is { } open && open < from) from = open;
+        // Gap protection: never skip days after the latest stored one (worker was down).
+        var afterLatest = latestStored.Value.AddDays(1);
+        if (afterLatest < from) from = afterLatest;
+        // Do not ask for more history than the bank keeps.
+        if (capabilities.HistoryDepthDays is { } maxDepth && from < today.AddDays(-maxDepth + 1))
+            from = today.AddDays(-maxDepth + 1);
+        return (from, today);
     }
 
     private async Task<List<BankAccount>> UpsertAccountsAsync(

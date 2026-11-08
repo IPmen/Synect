@@ -1,0 +1,49 @@
+namespace Synect.Application.Queue;
+
+/// <summary>Sync:Queue.</summary>
+public sealed class SyncQueueOptions
+{
+    /// <summary>How often the worker plans and dispatches jobs.</summary>
+    public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>Loads running at the same time, all connections together.</summary>
+    public int MaxConcurrent { get; set; } = 4;
+
+    /// <summary>Loads running at the same time per provider when not listed in <see cref="MaxConcurrentPerSource"/>.</summary>
+    public int DefaultMaxConcurrentPerSource { get; set; } = 2;
+
+    /// <summary>Per-provider overrides, e.g. { "KapitalBank": 2, "Didox": 3 }.</summary>
+    public Dictionary<string, int> MaxConcurrentPerSource { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A single load is cancelled after this time.</summary>
+    public TimeSpan JobTimeout { get; set; } = TimeSpan.FromHours(1);
+
+    /// <summary>A run or job still Running after this time is considered abandoned (worker crashed) and marked Failed.</summary>
+    public TimeSpan StaleRunTimeout { get; set; } = TimeSpan.FromHours(2);
+
+    /// <summary>Minimum time between two "refresh now" requests for the same connection.</summary>
+    public TimeSpan ManualRequestMinInterval { get; set; } = TimeSpan.FromMinutes(5);
+
+    public int MaxConcurrentFor(string provider) =>
+        MaxConcurrentPerSource.TryGetValue(provider, out var limit) ? limit : DefaultMaxConcurrentPerSource;
+}
+
+/// <summary>Sync:Schedule. Times are local times of <see cref="UtcOffset"/>.</summary>
+public sealed class ScheduleOptions
+{
+    /// <summary>Uzbekistan, UTC+5.</summary>
+    public TimeSpan UtcOffset { get; set; } = TimeSpan.FromHours(5);
+
+    /// <summary>Nightly load window start (inclusive). Must be before <see cref="NightlyWindowEnd"/> on the same day.</summary>
+    public TimeSpan NightlyWindowStart { get; set; } = TimeSpan.FromHours(1);
+
+    /// <summary>Nightly load window end (exclusive).</summary>
+    public TimeSpan NightlyWindowEnd { get; set; } = TimeSpan.FromHours(5);
+
+    /// <summary>Extra daytime refresh period for EDO (Didox) connections, hours. 0 disables daytime refreshes.</summary>
+    public int EdoDaytimeRefreshHours { get; set; } = 4;
+
+    /// <summary>Daytime refreshes happen between these local times.</summary>
+    public TimeSpan DaytimeStart { get; set; } = TimeSpan.FromHours(8);
+    public TimeSpan DaytimeEnd { get; set; } = TimeSpan.FromHours(20);
+}

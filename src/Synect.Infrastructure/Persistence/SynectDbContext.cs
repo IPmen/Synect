@@ -32,6 +32,8 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
     public DbSet<EdoDocument> EdoDocuments => Set<EdoDocument>();
     public DbSet<EdoDocumentStatusLog> EdoDocumentStatusLogs => Set<EdoDocumentStatusLog>();
     public DbSet<Counterparty> Counterparties => Set<Counterparty>();
+    public DbSet<SyncJob> SyncJobs => Set<SyncJob>();
+    public DbSet<ConnectionSecret> ConnectionSecrets => Set<ConnectionSecret>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -47,6 +49,8 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
         modelBuilder.Entity<EdoDocument>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<EdoDocumentStatusLog>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<Counterparty>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<SyncJob>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<ConnectionSecret>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)

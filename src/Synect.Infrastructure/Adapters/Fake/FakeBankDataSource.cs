@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
+using Synect.Application.Adapters;
 
 namespace Synect.Infrastructure.Adapters.Fake;
 
@@ -9,8 +10,34 @@ public sealed class FakeBankScenario
     public int Seed { get; set; } = 42;
     public int AccountCount { get; set; } = 1;
 
-    /// <summary>Every call returns error 61002 (IP not allowed) in the response envelope.</summary>
+    /// <summary>APILogin is rejected (error in the envelope).</summary>
     public bool AuthFailure { get; set; }
+
+    /// <summary>Data methods return envelope error 61002 (IP not allowed).</summary>
+    public bool IpBlocked { get; set; }
+
+    /// <summary>Data calls never answer (until cancelled).</summary>
+    public bool Hang { get; set; }
+
+    /// <summary>The next N data calls fail with HTTP 503.</summary>
+    public int TransientFailures;
+
+    /// <summary>The next N data calls fail with HTTP 429.</summary>
+    public int RateLimitFailures;
+
+    /// <summary>Retry-After sent with simulated 429 responses.</summary>
+    public TimeSpan? RateLimitRetryAfter { get; set; }
+
+    /// <summary>Number of APILogin calls.</summary>
+    public int LoginCount;
+
+    /// <summary>Number of data calls (including failed ones).</summary>
+    public int CallCount;
+
+    internal readonly ConcurrentDictionary<string, bool> Sessions = new();
+
+    /// <summary>Invalidates every issued sid, as a server-side session expiry would.</summary>
+    public void ExpireSessions() => Sessions.Clear();
 
     /// <summary>Days with no operations (still closed, zero totals).</summary>
     public HashSet<DateOnly> EmptyDays { get; } = [];
@@ -42,11 +69,23 @@ public sealed class FakeBankDataSource
 
     public static string AccountNumber(int seed, int index) => $"20208000{seed % 1000:D3}{index + 1:D6}001";
 
-    /// <summary>GetAccounts / GetAcc1C response.</summary>
-    public string AccountsJson(Guid connectionId)
+    /// <summary>APILogin response. The password is only checked for presence.</summary>
+    public string LoginJson(Guid connectionId, string login, string password)
     {
         var s = For(connectionId);
-        if (s.AuthFailure) return AuthError();
+        Interlocked.Increment(ref s.LoginCount);
+        if (s.AuthFailure || string.IsNullOrEmpty(login) || string.IsNullOrEmpty(password))
+            return ErrorEnvelope(10001, "Invalid login or password");
+        var sid = "sid-" + Guid.NewGuid().ToString("N");
+        s.Sessions[sid] = true;
+        return Envelope(new JsonObject { ["sid"] = sid });
+    }
+
+    /// <summary>GetAccounts / GetAcc1C response.</summary>
+    public async Task<string> AccountsJsonAsync(Guid connectionId, string sid, CancellationToken ct)
+    {
+        var s = For(connectionId);
+        if (await GateAsync(s, sid, ct) is { } error) return error;
 
         var items = new JsonArray();
         for (var i = 0; i < s.AccountCount; i++)
@@ -74,10 +113,10 @@ public sealed class FakeBankDataSource
     }
 
     /// <summary>GetDoc1C response for one account and day.</summary>
-    public string StatementJson(Guid connectionId, string account, DateOnly day)
+    public async Task<string> StatementJsonAsync(Guid connectionId, string sid, string account, DateOnly day, CancellationToken ct)
     {
         var s = For(connectionId);
-        if (s.AuthFailure) return AuthError();
+        if (await GateAsync(s, sid, ct) is { } error) return error;
 
         var accountIndex = int.Parse(account.Substring(11, 6)) - 1;
         var random = new Random(unchecked(s.Seed * 7919 + day.DayNumber * 31 + accountIndex));
@@ -159,9 +198,33 @@ public sealed class FakeBankDataSource
         ["result"] = result,
     }.ToJsonString();
 
-    private string AuthError() => new JsonObject
+    /// <summary>
+    /// Simulates the transport in front of every data method: hangs, HTTP 503/429/401, IP restriction.
+    /// Returns an envelope error to send instead of data, or null to continue.
+    /// </summary>
+    private async Task<string?> GateAsync(FakeBankScenario s, string sid, CancellationToken ct)
     {
-        ["error"] = new JsonObject { ["code"] = 61002, ["message"] = "IP address is not allowed" },
+        Interlocked.Increment(ref s.CallCount);
+        if (s.Hang) await Task.Delay(Timeout.Infinite, ct);
+        if (TryTake(ref s.TransientFailures)) throw new AdapterTransientException("HTTP 503 Service Unavailable (fake bank).");
+        if (TryTake(ref s.RateLimitFailures)) throw new AdapterRateLimitException("HTTP 429 Too Many Requests (fake bank).", s.RateLimitRetryAfter);
+        if (!s.Sessions.ContainsKey(sid)) throw new AdapterAuthenticationException("HTTP 401: session expired (fake bank).");
+        return s.IpBlocked ? ErrorEnvelope(61002, "IP address is not allowed") : null;
+    }
+
+    private static bool TryTake(ref int counter)
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref counter);
+            if (current <= 0) return false;
+            if (Interlocked.CompareExchange(ref counter, current - 1, current) == current) return true;
+        }
+    }
+
+    private string ErrorEnvelope(int code, string message) => new JsonObject
+    {
+        ["error"] = new JsonObject { ["code"] = code, ["message"] = message },
         ["id"] = Interlocked.Increment(ref _requestId),
         ["result"] = null,
     }.ToJsonString();

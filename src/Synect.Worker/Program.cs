@@ -5,7 +5,7 @@ var builder = Host.CreateApplicationBuilder(args);
 
 // The connection string comes from user-secrets (Development) or ConnectionStrings__Synect.
 builder.Services.AddSynectInfrastructure(builder.Configuration);
-builder.Services.AddHostedService<SyncOnceWorker>();
+builder.Services.AddHostedService<SyncWorker>();
 
 var host = builder.Build();
 host.Run();

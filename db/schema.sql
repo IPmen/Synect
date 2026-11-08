@@ -595,3 +595,141 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    ALTER TABLE connections ADD consecutive_failures integer NOT NULL DEFAULT 0;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    ALTER TABLE connections ADD status_changed_at timestamp with time zone;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    CREATE TABLE connection_secrets (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        connection_id uuid NOT NULL,
+        kind character varying(64) NOT NULL,
+        encrypted_value text NOT NULL,
+        version integer NOT NULL,
+        created_at timestamp with time zone NOT NULL,
+        rotated_at timestamp with time zone,
+        CONSTRAINT pk_connection_secrets PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_connection_secrets_connections_tenant_id_connection_id FOREIGN KEY (tenant_id, connection_id) REFERENCES connections (tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_connection_secrets_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    CREATE TABLE sync_jobs (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        connection_id uuid NOT NULL,
+        kind character varying(16) NOT NULL,
+        priority integer NOT NULL,
+        status character varying(16) NOT NULL,
+        scheduled_for timestamp with time zone,
+        enqueued_at timestamp with time zone NOT NULL,
+        not_before timestamp with time zone NOT NULL,
+        started_at timestamp with time zone,
+        finished_at timestamp with time zone,
+        sync_run_id uuid,
+        error character varying(2000),
+        CONSTRAINT pk_sync_jobs PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_sync_jobs_connections_tenant_id_connection_id FOREIGN KEY (tenant_id, connection_id) REFERENCES connections (tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_sync_jobs_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    CREATE UNIQUE INDEX ix_connection_secrets_tenant_id_connection_id_kind ON connection_secrets (tenant_id, connection_id, kind);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    CREATE INDEX ix_sync_jobs_tenant_id_connection_id_enqueued_at ON sync_jobs (tenant_id, connection_id, enqueued_at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    CREATE INDEX ix_sync_jobs_tenant_id_status_not_before ON sync_jobs (tenant_id, status, not_before);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    CREATE UNIQUE INDEX ux_sync_jobs_tenant_id_connection_id_active ON sync_jobs (tenant_id, connection_id) WHERE status IN ('Queued', 'Running');
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    ALTER TABLE sync_jobs ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    ALTER TABLE sync_jobs FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    CREATE POLICY tenant_isolation ON sync_jobs USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    ALTER TABLE connection_secrets ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    ALTER TABLE connection_secrets FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    CREATE POLICY tenant_isolation ON connection_secrets USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108173337_QueueSecretsConnectionStates') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261108173337_QueueSecretsConnectionStates', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+

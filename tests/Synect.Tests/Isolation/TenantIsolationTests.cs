@@ -48,6 +48,7 @@ public class TenantIsolationTests : IAsyncLifetime
                 await db.EdoDocuments.Select(x => x.TenantId).Distinct().ToListAsync(),
                 await db.EdoDocumentStatusLogs.Select(x => x.TenantId).Distinct().ToListAsync(),
                 await db.Counterparties.Select(x => x.TenantId).Distinct().ToListAsync(),
+                await db.ConnectionSecrets.Select(x => x.TenantId).Distinct().ToListAsync(),
             });
             Assert.All(tenantIds, ids => Assert.Equal([tenant], ids));
         }

@@ -29,12 +29,11 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
     public const string DayBalanceObjectType = "kapitalbank.day_balance";
 
     /// <summary>
-    /// Error codes treated as authentication failures.
-    /// ASSUMPTION: 61002 is documented as an IP restriction error ("IP not allowed"); it needs the same
-    /// user action as bad credentials, so it is reported as an authentication problem.
-    /// Login error codes are not documented yet; they are recognised by message (see IsLoginError).
+    /// Envelope error code meaning "IP address not allowed" (documented as an IP restriction error).
+    /// For data methods it is the only code treated as an access (authentication) problem; other codes
+    /// are not guessed and not recognised by message text.
     /// </summary>
-    private static readonly HashSet<int> AuthErrorCodes = [61002];
+    public const int IpNotAllowedErrorCode = 61002;
 
     private readonly KapitalBankMapperOptions _options = options.Value;
 
@@ -107,19 +106,37 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
             new RawRecord(DayBalanceObjectType, $"{accountNumber}:{operDay:yyyy-MM-dd}", header.ToJsonString()));
     }
 
-    /// <summary>Validates the envelope and returns "result". Throws when the bank reported an error.</summary>
+    /// <summary>
+    /// Maps the APILogin response to the session id (sid). ANY envelope error of APILogin is an
+    /// authentication failure. ASSUMPTION: result is either the sid string or an object with "sid".
+    /// </summary>
+    public string MapLogin(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new AdapterException("Kapital Bank login response is not a JSON object.");
+        if (EnvelopeError(root) is { } error)
+            throw new AdapterAuthenticationException($"Kapital Bank login failed: error {error.Code?.ToString() ?? "?"}: {error.Message ?? "no message"}");
+
+        if (root.TryGetProperty("result", out var result))
+        {
+            if (result.ValueKind == JsonValueKind.String && result.GetString() is { Length: > 0 } sid) return sid;
+            if (result.ValueKind == JsonValueKind.Object && SourceJson.Str(result, "sid") is { } objSid) return objSid;
+        }
+        throw new AdapterException("Kapital Bank login response has no session id.");
+    }
+
+    /// <summary>Validates the envelope of a data method and returns "result". Throws when the bank reported an error.</summary>
     private static JsonElement Result(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object)
             throw new AdapterException("Kapital Bank response is not a JSON object.");
 
-        if (root.TryGetProperty("error", out var error) && error.ValueKind != JsonValueKind.Null)
+        if (EnvelopeError(root) is { } error)
         {
-            var code = error.ValueKind == JsonValueKind.Object ? SourceJson.Int(error, "code") : null;
-            var message = error.ValueKind == JsonValueKind.Object ? SourceJson.Str(error, "message") : error.GetRawText();
-            var text = $"Kapital Bank error {code?.ToString() ?? "?"}: {message ?? "no message"}";
-            if (code is { } c && AuthErrorCodes.Contains(c) || IsLoginError(message))
-                throw new AdapterAuthenticationException(text);
+            var text = $"Kapital Bank error {error.Code?.ToString() ?? "?"}: {error.Message ?? "no message"}";
+            if (error.Code == IpNotAllowedErrorCode) throw new AdapterAuthenticationException(text);
             throw new AdapterException(text);
         }
 
@@ -128,13 +145,13 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
         return result;
     }
 
-    /// <summary>
-    /// ASSUMPTION: login error codes are not documented; a message mentioning login, password,
-    /// authorization or token is treated as an authentication failure.
-    /// </summary>
-    private static bool IsLoginError(string? message) =>
-        message is not null && new[] { "login", "password", "auth", "token", "логин", "парол", "авториз" }
-            .Any(k => message.Contains(k, StringComparison.OrdinalIgnoreCase));
+    private static (int? Code, string? Message)? EnvelopeError(JsonElement root)
+    {
+        if (!root.TryGetProperty("error", out var error) || error.ValueKind == JsonValueKind.Null) return null;
+        return error.ValueKind == JsonValueKind.Object
+            ? (SourceJson.Int(error, "code"), SourceJson.Str(error, "message"))
+            : (null, error.GetRawText());
+    }
 
     private BankTransactionInfo MapOperation(JsonElement item, string currency, DateOnly day)
     {
