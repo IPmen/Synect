@@ -71,6 +71,7 @@ public sealed class DidoxMapper(IOptions<DidoxMapperOptions> options)
             TotalVatSum: Minor(item, "total_vat_sum"),
             TotalDeliverySum: Minor(item, "total_delivery_sum"),
             TotalDeliverySumWithVat: Minor(item, "total_delivery_sum_with_vat"),
+            StatusComment: SourceJson.Str(item, "status_comment"),
             CreatedAt: SourceJson.Timestamp(item, "created", _options.SourceUtcOffset),
             UpdatedAt: SourceJson.Timestamp(item, "updated", _options.SourceUtcOffset),
             Raw: new RawRecord(DocumentObjectType, id, item.GetRawText()));

@@ -34,23 +34,45 @@ public sealed class DidoxTokenCache(TimeProvider time, IOptions<DidoxTokenOption
     public void Invalidate(Guid connectionId) => _tokens.TryRemove(connectionId, out _);
 
     /// <summary>
-    /// Reads the token from a Didox login response. ASSUMPTION: { "token": "..." }; anything else
-    /// (including an error object) is an authentication failure.
+    /// Parses a Didox login response. Format (taken from the documentation description, NOT verified on
+    /// real responses): { "token": "...", "related_companies": null, "related_branches": null }; when a
+    /// person logs into a company, "permissions": { "tin": "...", "roles": [...] } is added.
+    /// Anything without a token (including an error object) is an authentication failure.
     /// </summary>
-    public static string ParseLoginResponse(string json)
+    public static DidoxLoginResult ParseLoginResponse(string json)
     {
         try
         {
             using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.ValueKind == JsonValueKind.Object
-                && doc.RootElement.TryGetProperty("token", out var token)
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("token", out var token)
                 && token.ValueKind == JsonValueKind.String
                 && token.GetString() is { Length: > 0 } value)
-                return value;
+            {
+                DidoxPermissions? permissions = null;
+                if (root.TryGetProperty("permissions", out var p) && p.ValueKind == JsonValueKind.Object)
+                {
+                    var roles = p.TryGetProperty("roles", out var r) && r.ValueKind == JsonValueKind.Array
+                        ? r.EnumerateArray().Select(x => x.ValueKind == JsonValueKind.String ? x.GetString()! : x.GetRawText()).ToList()
+                        : [];
+                    permissions = new DidoxPermissions(SourceJson.Str(p, "tin"), roles);
+                }
+                return new DidoxLoginResult(value, permissions);
+            }
         }
         catch (JsonException)
         {
         }
         throw new AdapterAuthenticationException("Didox login failed: no token in the response.");
     }
+}
+
+/// <summary>Permissions returned when a person logs into a company.</summary>
+public sealed record DidoxPermissions(string? Tin, IReadOnlyList<string> Roles);
+
+/// <summary>Parsed Didox login result. The token is a secret: never log it.</summary>
+public sealed record DidoxLoginResult(string Token, DidoxPermissions? Permissions)
+{
+    public override string ToString() => $"DidoxLoginResult {{ Permissions = {Permissions} }}";
 }

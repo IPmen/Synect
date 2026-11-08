@@ -5,6 +5,8 @@
   <ItemGroup>
     <!-- Base EF Core package only (no provider): Application talks to ISynectDbContext. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <!-- SqlQuery for analytics aggregates (provider-neutral API; the SQL itself targets PostgreSQL). -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Options" />
     <PackageReference Include="System.Threading.RateLimiting" />

@@ -39,7 +39,7 @@ public sealed class KapitalSessionManager(KapitalBankMapper mapper)
         if (!forceLogin && _sessions.TryGetValue(context.ConnectionId, out var cached)) return cached;
 
         var credentials = LoginPasswordCredentials.Parse(await context.Credentials.GetCredentialsAsync(context, ct));
-        var sid = mapper.MapLogin(await login(credentials.Login, credentials.Password.Reveal(), ct));
+        var sid = mapper.MapLogin(await login(credentials.Login, credentials.Password.Reveal(), ct)).Sid;
         _sessions[context.ConnectionId] = sid;
         return sid;
     }

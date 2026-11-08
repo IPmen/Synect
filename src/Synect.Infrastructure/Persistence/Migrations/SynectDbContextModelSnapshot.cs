@@ -22,6 +22,77 @@ namespace Synect.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Synect.Domain.Analytics.CounterpartyMonthly", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("BankCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("bank_count");
+
+                    b.Property<long>("BankIncoming")
+                        .HasColumnType("bigint")
+                        .HasColumnName("bank_incoming");
+
+                    b.Property<long>("BankOutgoing")
+                        .HasColumnType("bigint")
+                        .HasColumnName("bank_outgoing");
+
+                    b.Property<string>("CounterpartyInn")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("counterparty_inn");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<int>("EdoIncomingCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("edo_incoming_count");
+
+                    b.Property<long>("EdoIncomingTotal")
+                        .HasColumnType("bigint")
+                        .HasColumnName("edo_incoming_total");
+
+                    b.Property<int>("EdoOutgoingCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("edo_outgoing_count");
+
+                    b.Property<long>("EdoOutgoingTotal")
+                        .HasColumnType("bigint")
+                        .HasColumnName("edo_outgoing_total");
+
+                    b.Property<DateOnly>("Month")
+                        .HasColumnType("date")
+                        .HasColumnName("month");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_analytics_counterparty_monthly");
+
+                    b.HasIndex("TenantId", "Month", "Currency")
+                        .HasDatabaseName("ix_analytics_counterparty_monthly_tenant_id_month_currency");
+
+                    b.HasIndex("TenantId", "CounterpartyInn", "Month", "Currency")
+                        .IsUnique()
+                        .HasDatabaseName("ix_analytics_counterparty_monthly_tenant_id_counterparty_inn_m");
+
+                    b.ToTable("analytics_counterparty_monthly", (string)null);
+                });
+
             modelBuilder.Entity("Synect.Domain.Banking.BankAccount", b =>
                 {
                     b.Property<Guid>("TenantId")
@@ -126,6 +197,9 @@ namespace Synect.Infrastructure.Persistence.Migrations
 
                     b.HasKey("TenantId", "Id")
                         .HasName("pk_bank_daily_balances");
+
+                    b.HasIndex("TenantId", "Date")
+                        .HasDatabaseName("ix_bank_daily_balances_tenant_id_date");
 
                     b.HasIndex("TenantId", "BankAccountId", "Date")
                         .IsUnique()
@@ -259,8 +333,11 @@ namespace Synect.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "ConnectionId")
                         .HasDatabaseName("ix_bank_transactions_tenant_id_connection_id");
 
-                    b.HasIndex("TenantId", "CounterpartyInn")
-                        .HasDatabaseName("ix_bank_transactions_tenant_id_counterparty_inn");
+                    b.HasIndex("TenantId", "PostingDate")
+                        .HasDatabaseName("ix_bank_transactions_flows")
+                        .HasFilter("has_error = false");
+
+                    NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex("TenantId", "PostingDate"), new[] { "BankAccountId", "Currency", "Direction", "Amount", "CounterpartyInn" });
 
                     b.HasIndex("TenantId", "BankAccountId", "OperationId")
                         .IsUnique()
@@ -268,6 +345,9 @@ namespace Synect.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TenantId", "BankAccountId", "PostingDate")
                         .HasDatabaseName("ix_bank_transactions_tenant_id_bank_account_id_posting_date");
+
+                    b.HasIndex("TenantId", "CounterpartyInn", "PostingDate")
+                        .HasDatabaseName("ix_bank_transactions_tenant_id_counterparty_inn_posting_date");
 
                     b.ToTable("bank_transactions", (string)null);
                 });
@@ -396,6 +476,11 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(16)")
                         .HasColumnName("status");
 
+                    b.Property<string>("StatusComment")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("status_comment");
+
                     b.Property<long>("TotalDeliverySum")
                         .HasColumnType("bigint")
                         .HasColumnName("total_delivery_sum");
@@ -422,12 +507,23 @@ namespace Synect.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "CounterpartyInn")
                         .HasDatabaseName("ix_edo_documents_tenant_id_counterparty_inn");
 
+                    NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex("TenantId", "CounterpartyInn"), new[] { "Status" });
+
                     b.HasIndex("TenantId", "DocumentDate")
                         .HasDatabaseName("ix_edo_documents_tenant_id_document_date");
+
+                    b.HasIndex("TenantId", "SourceCreatedAt")
+                        .HasDatabaseName("ix_edo_documents_tenant_id_source_created_at");
+
+                    b.HasIndex("TenantId", "SourceUpdatedAt")
+                        .HasDatabaseName("ix_edo_documents_tenant_id_source_updated_at");
 
                     b.HasIndex("TenantId", "ConnectionId", "ExternalId")
                         .IsUnique()
                         .HasDatabaseName("ix_edo_documents_tenant_id_connection_id_external_id");
+
+                    b.HasIndex("TenantId", "Owner", "Status", "DocumentDate")
+                        .HasDatabaseName("ix_edo_documents_tenant_id_owner_status_document_date");
 
                     b.ToTable("edo_documents", (string)null);
                 });
@@ -692,6 +788,10 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("finished_at");
 
+                    b.Property<DateTimeOffset?>("HeartbeatAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("heartbeat_at");
+
                     b.Property<string>("Kind")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -824,6 +924,16 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasName("pk_tenants");
 
                     b.ToTable("tenants", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Analytics.CounterpartyMonthly", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_analytics_counterparty_monthly_tenants_tenant_id");
                 });
 
             modelBuilder.Entity("Synect.Domain.Banking.BankAccount", b =>

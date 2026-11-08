@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Synect.Application.Abstractions;
 using Synect.Application.Adapters;
+using Synect.Application.Analytics.Totals;
 using Synect.Application.Common;
 using Synect.Application.Resilience;
 using Synect.Application.Secrets;
@@ -32,6 +33,8 @@ public sealed class BankSyncService(
     CounterpartyStore counterparties,
     ICredentialProvider credentials,
     AdapterCallPolicy policy,
+    AnalyticsChangeSet changes,
+    CounterpartyMonthlyRefresher monthly,
     TimeProvider time,
     IOptions<BankSyncOptions> bankOptions,
     IOptions<CircuitBreakerOptions> breakerOptions,
@@ -128,6 +131,9 @@ public sealed class BankSyncService(
             {
                 var now = time.GetUtcNow();
                 if (explicitRange is null && rangeFrom is { } f && rangeTo is { } t) run.SetRange(f, t);
+                // Precomputed totals for exactly the (INN, month) pairs this load touched, atomically with success.
+                await monthly.RefreshAsync(changes.Keys, token);
+                changes.Clear();
                 run.Succeed(now, allDaysClosed, records);
                 connection.MarkSyncSucceeded(now);
                 await db.SaveChangesAsync(token);
@@ -247,6 +253,8 @@ public sealed class BankSyncService(
             {
                 var isFinal = tx.IsFinal || dayClosed;
                 if (tx.SourceHash == hash && tx.IsFinal == isFinal) continue;
+                changes.Add(tx.CounterpartyInn, tx.PostingDate);
+                changes.Add(info.CounterpartyInn, info.PostingDate);
                 Apply(tx, info, account, hash, isFinal);
                 tx.UpdatedAt = now;
                 continue;
@@ -263,6 +271,7 @@ public sealed class BankSyncService(
             };
             Apply(tx, info, account, hash, dayClosed);
             db.BankTransactions.Add(tx);
+            changes.Add(info.CounterpartyInn, info.PostingDate);
         }
 
         await counterparties.UpsertAsync(connection.TenantId,

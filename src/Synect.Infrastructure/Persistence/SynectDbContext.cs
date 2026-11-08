@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Synect.Application.Abstractions;
+using Synect.Domain.Analytics;
 using Synect.Domain.Banking;
 using Synect.Domain.Common;
 using Synect.Domain.Counterparties;
@@ -34,6 +35,7 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
     public DbSet<Counterparty> Counterparties => Set<Counterparty>();
     public DbSet<SyncJob> SyncJobs => Set<SyncJob>();
     public DbSet<ConnectionSecret> ConnectionSecrets => Set<ConnectionSecret>();
+    public DbSet<CounterpartyMonthly> CounterpartyMonthly => Set<CounterpartyMonthly>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -51,6 +53,7 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
         modelBuilder.Entity<Counterparty>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<SyncJob>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<ConnectionSecret>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<CounterpartyMonthly>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)

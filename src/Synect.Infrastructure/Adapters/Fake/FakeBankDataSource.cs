@@ -10,14 +10,51 @@ public sealed class FakeBankScenario
     public int Seed { get; set; } = 42;
     public int AccountCount { get; set; } = 1;
 
+    /// <summary>Currency codes (digits 6-8 of the account number, and "val") assigned to accounts in turn.</summary>
+    public string[] AccountCurrencies { get; set; } = ["000"];
+
+    /// <summary>Operations per day are drawn from [Min, Max].</summary>
+    public int MinOperationsPerDay { get; set; } = 1;
+    public int MaxOperationsPerDay { get; set; } = 5;
+
+    /// <summary>When positive, counterparties are drawn from a fixed pool of this size (INN 300000000 + index).</summary>
+    public int CounterpartyPoolSize { get; set; }
+
+    /// <summary>Share of operations sent without counterparty INN (fees, cash).</summary>
+    public double NoInnShare { get; set; }
+
+    /// <summary>Days that get one extra incoming operation (INN 309999999, 1 234.00), to simulate late changes.</summary>
+    public HashSet<DateOnly> ExtraDays { get; } = [];
+
     /// <summary>APILogin is rejected (error in the envelope).</summary>
     public bool AuthFailure { get; set; }
 
     /// <summary>Data methods return envelope error 61002 (IP not allowed).</summary>
     public bool IpBlocked { get; set; }
 
-    /// <summary>Data calls never answer (until cancelled).</summary>
-    public bool Hang { get; set; }
+    private TaskCompletionSource _hangRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Data calls do not answer until <see cref="ReleaseHang"/> is called or the call is cancelled.</summary>
+    public bool Hang
+    {
+        get => _hang;
+        set
+        {
+            if (value && !_hang) _hangRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _hang = value;
+        }
+    }
+
+    private volatile bool _hang;
+
+    /// <summary>Lets every hanging call continue (and stops hanging).</summary>
+    public void ReleaseHang()
+    {
+        Hang = false;
+        _hangRelease.TrySetResult();
+    }
+
+    internal Task WaitWhileHangingAsync(CancellationToken ct) => Hang ? _hangRelease.Task.WaitAsync(ct) : Task.CompletedTask;
 
     /// <summary>The next N data calls fail with HTTP 503.</summary>
     public int TransientFailures;
@@ -67,7 +104,10 @@ public sealed class FakeBankDataSource
 
     public FakeBankScenario For(Guid connectionId) => _scenarios.GetOrAdd(connectionId, _ => new FakeBankScenario());
 
-    public static string AccountNumber(int seed, int index) => $"20208000{seed % 1000:D3}{index + 1:D6}001";
+    public static string AccountNumber(int seed, int index, string currency = "000") =>
+        $"20208{currency}{seed % 1000:D3}{index + 1:D6}001";
+
+    private static string CurrencyOf(FakeBankScenario s, int index) => s.AccountCurrencies[index % s.AccountCurrencies.Length];
 
     /// <summary>APILogin response. The password is only checked for presence.</summary>
     public string LoginJson(Guid connectionId, string login, string password)
@@ -78,7 +118,21 @@ public sealed class FakeBankDataSource
             return ErrorEnvelope(10001, "Invalid login or password");
         var sid = "sid-" + Guid.NewGuid().ToString("N");
         s.Sessions[sid] = true;
-        return Envelope(new JsonObject { ["sid"] = sid });
+        // Shape from the documentation description: sid, login and the organisations with their accounts.
+        var accounts = new JsonArray();
+        for (var i = 0; i < s.AccountCount; i++)
+            accounts.Add(new JsonObject { ["account"] = AccountNumber(s.Seed, i, CurrencyOf(s, i)), ["val"] = CurrencyOf(s, i), ["s_out"] = 1_000_000_000_00L });
+        return Envelope(new JsonObject
+        {
+            ["sid"] = sid,
+            ["login"] = login,
+            ["clients"] = new JsonArray(new JsonObject
+            {
+                ["id"] = (s.Seed * 100).ToString(),
+                ["branch"] = "00974",
+                ["accounts"] = accounts,
+            }),
+        });
     }
 
     /// <summary>GetAccounts / GetAcc1C response.</summary>
@@ -94,9 +148,9 @@ public sealed class FakeBankDataSource
             {
                 ["aid"] = s.Seed * 100 + i,
                 ["branch"] = "00974",
-                ["account"] = AccountNumber(s.Seed, i),
+                ["account"] = AccountNumber(s.Seed, i, CurrencyOf(s, i)),
                 ["name"] = $"OOO \"FAKE CLIENT {s.Seed}\"",
-                ["val"] = "000",
+                ["val"] = CurrencyOf(s, i),
                 ["o_date"] = "2024-01-15",
                 ["l_date"] = "2026-11-06",
                 ["s_in"] = 1_000_000_000_00L,
@@ -123,7 +177,7 @@ public sealed class FakeBankDataSource
 
         var content = new JsonArray();
         long debit = 0, credit = 0;
-        var count = s.EmptyDays.Contains(day) ? 0 : random.Next(1, 6);
+        var count = s.EmptyDays.Contains(day) ? 0 : random.Next(s.MinOperationsPerDay, s.MaxOperationsPerDay + 1);
         for (var i = 0; i < count; i++)
         {
             var dir = random.Next(1, 3);
@@ -132,6 +186,15 @@ public sealed class FakeBankDataSource
             var op = Operation(s, account, day, accountIndex, i, dir, amount, random, err: 0);
             content.Add(op);
             if (s.DuplicateDays.Contains(day)) content.Add(op.DeepClone());
+        }
+
+        if (s.ExtraDays.Contains(day))
+        {
+            var extra = Operation(s, account, day, accountIndex, 800, 1, 1_234_00, random, err: 0);
+            extra["inn_dt"] = "309999999";
+            extra["name_dt"] = "OOO \"LATE PAYER\"";
+            content.Add(extra);
+            credit += 1_234_00;
         }
 
         if (s.ErroneousDays.Contains(day))
@@ -157,9 +220,12 @@ public sealed class FakeBankDataSource
     private static JsonObject Operation(
         FakeBankScenario s, string account, DateOnly day, int accountIndex, int i, int dir, long amount, Random random, int err)
     {
-        var partnerInn = (300_000_000 + random.Next(0, 99_999_999)).ToString();
+        var partnerInn = s.CounterpartyPoolSize > 0
+            ? (300_000_000 + random.Next(0, s.CounterpartyPoolSize)).ToString()
+            : (300_000_000 + random.Next(0, 99_999_999)).ToString();
+        if (s.NoInnShare > 0 && random.NextDouble() < s.NoInnShare) partnerInn = "";
         var partnerAccount = $"20208000{random.Next(0, 999_999_999):D9}001";
-        var partnerName = $"OOO \"PARTNER {partnerInn[^3..]}\"";
+        var partnerName = partnerInn.Length == 0 ? "BANK FEE" : $"OOO \"PARTNER {partnerInn[^3..]}\"";
         var ourInn = (200_000_000 + s.Seed).ToString();
         var ourName = $"OOO \"FAKE CLIENT {s.Seed}\"";
         var b2Id = $"{day.DayNumber}{accountIndex:D2}{i:D3}";
@@ -205,7 +271,7 @@ public sealed class FakeBankDataSource
     private async Task<string?> GateAsync(FakeBankScenario s, string sid, CancellationToken ct)
     {
         Interlocked.Increment(ref s.CallCount);
-        if (s.Hang) await Task.Delay(Timeout.Infinite, ct);
+        await s.WaitWhileHangingAsync(ct);
         if (TryTake(ref s.TransientFailures)) throw new AdapterTransientException("HTTP 503 Service Unavailable (fake bank).");
         if (TryTake(ref s.RateLimitFailures)) throw new AdapterRateLimitException("HTTP 429 Too Many Requests (fake bank).", s.RateLimitRetryAfter);
         if (!s.Sessions.ContainsKey(sid)) throw new AdapterAuthenticationException("HTTP 401: session expired (fake bank).");

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Synect.Domain.Analytics;
 using Synect.Domain.Banking;
 using Synect.Domain.Common;
 using Synect.Domain.Counterparties;
@@ -122,7 +123,13 @@ internal sealed class BankTransactionConfiguration : IEntityTypeConfiguration<Ba
         // Idempotency key: the same bank operation is stored once per account.
         b.HasIndex(e => new { e.TenantId, e.BankAccountId, e.OperationId }).IsUnique();
         b.HasIndex(e => new { e.TenantId, e.BankAccountId, e.PostingDate });
-        b.HasIndex(e => new { e.TenantId, e.CounterpartyInn });
+        // B1/B3: one counterparty within a period.
+        b.HasIndex(e => new { e.TenantId, e.CounterpartyInn, e.PostingDate });
+        // A3, A7/A10, B8: period scans across accounts; covering and partial (errors are always excluded).
+        b.HasIndex(e => new { e.TenantId, e.PostingDate })
+            .IncludeProperties(e => new { e.BankAccountId, e.Currency, e.Direction, e.Amount, e.CounterpartyInn })
+            .HasFilter("has_error = false")
+            .HasDatabaseName("ix_bank_transactions_flows");
     }
 }
 
@@ -133,6 +140,8 @@ internal sealed class BankDailyBalanceConfiguration : IEntityTypeConfiguration<B
         b.ConfigureTenantEntity();
         b.HasOne<BankAccount>().WithMany().HasForeignKey(e => new { e.TenantId, e.BankAccountId }).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(e => new { e.TenantId, e.BankAccountId, e.Date }).IsUnique();
+        // Balance integrity and cross-account day scans.
+        b.HasIndex(e => new { e.TenantId, e.Date });
     }
 }
 
@@ -145,6 +154,7 @@ internal sealed class EdoDocumentConfiguration : IEntityTypeConfiguration<EdoDoc
         b.Property(e => e.DocType).HasMaxLength(16);
         b.Property(e => e.Status).HasMaxLength(16);
         b.Property(e => e.Owner).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.StatusComment).HasMaxLength(2000);
         b.Property(e => e.Number).HasMaxLength(256);
         b.Property(e => e.CounterpartyInn).HasMaxLength(16);
         b.Property(e => e.CounterpartyName).HasMaxLength(512);
@@ -152,8 +162,15 @@ internal sealed class EdoDocumentConfiguration : IEntityTypeConfiguration<EdoDoc
         b.Property(e => e.SourceHash).HasMaxLength(64).IsFixedLength();
         b.HasOne<Connection>().WithMany().HasForeignKey(e => new { e.TenantId, e.ConnectionId }).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(e => new { e.TenantId, e.ConnectionId, e.ExternalId }).IsUnique();
-        b.HasIndex(e => new { e.TenantId, e.CounterpartyInn });
+        // B3/B8: documents of one counterparty; status included for the counted-status anti-join.
+        b.HasIndex(e => new { e.TenantId, e.CounterpartyInn }).IncludeProperties(e => new { e.Status });
         b.HasIndex(e => new { e.TenantId, e.DocumentDate });
+        // V1/V2: waiting for a signature, oldest first.
+        b.HasIndex(e => new { e.TenantId, e.Owner, e.Status, e.DocumentDate });
+        // DateBasis.SourceCreated / SourceUpdated.
+        b.HasIndex(e => new { e.TenantId, e.SourceCreatedAt });
+        b.HasIndex(e => new { e.TenantId, e.SourceUpdatedAt });
+        // Prefix search by number and contract number uses text_pattern_ops indexes created in the migration.
     }
 }
 
@@ -210,5 +227,18 @@ internal sealed class ConnectionSecretConfiguration : IEntityTypeConfiguration<C
         b.Property(e => e.EncryptedValue);
         b.HasOne<Connection>().WithMany().HasForeignKey(e => new { e.TenantId, e.ConnectionId }).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(e => new { e.TenantId, e.ConnectionId, e.Kind }).IsUnique();
+    }
+}
+
+internal sealed class CounterpartyMonthlyConfiguration : IEntityTypeConfiguration<CounterpartyMonthly>
+{
+    public void Configure(EntityTypeBuilder<CounterpartyMonthly> b)
+    {
+        b.ToTable("analytics_counterparty_monthly");
+        b.ConfigureTenantEntity();
+        b.Property(e => e.CounterpartyInn).HasMaxLength(16);
+        b.Property(e => e.Currency).HasMaxLength(3);
+        b.HasIndex(e => new { e.TenantId, e.CounterpartyInn, e.Month, e.Currency }).IsUnique();
+        b.HasIndex(e => new { e.TenantId, e.Month, e.Currency });
     }
 }

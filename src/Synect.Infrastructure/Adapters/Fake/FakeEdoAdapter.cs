@@ -39,11 +39,12 @@ public sealed class FakeEdoAdapter(FakeEdoDataSource source, DidoxMapper mapper,
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
         await source.GateAsync(context.ConnectionId, await TokenAsync(context, ct), ct);
-        var json = source.ListJson(context.ConnectionId, owner, updatedSince, page, Capabilities.PageSize);
+        var pageSize = source.For(context.ConnectionId).PageSize;
+        var json = source.ListJson(context.ConnectionId, owner, updatedSince, page, pageSize);
         var list = mapper.MapDocumentList(json);
         var hasMore = list.Total is { } total
-            ? page * Capabilities.PageSize < total
-            : list.Items.Count == Capabilities.PageSize;
+            ? page * pageSize < total
+            : list.Items.Count == pageSize;
         return new EdoDocumentPage(list.Items, page, hasMore);
     }
 
@@ -59,6 +60,6 @@ public sealed class FakeEdoAdapter(FakeEdoDataSource source, DidoxMapper mapper,
         {
             var credentials = LoginPasswordCredentials.Parse(await context.Credentials.GetCredentialsAsync(context, token));
             return DidoxTokenCache.ParseLoginResponse(
-                source.LoginJson(context.ConnectionId, credentials.Login, credentials.Password.Reveal()));
+                source.LoginJson(context.ConnectionId, credentials.Login, credentials.Password.Reveal())).Token;
         }, ct);
 }

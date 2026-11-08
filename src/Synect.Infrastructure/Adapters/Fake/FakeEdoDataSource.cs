@@ -13,6 +13,7 @@ public sealed class FakeDidoxDocument
     public required string DocType { get; init; }
     public required int Owner { get; init; }
     public int Status { get; set; }
+    public string? StatusComment { get; set; }
     public required string Name { get; init; }
     public DateOnly DocDate { get; init; }
     public required string PartnerTin { get; init; }
@@ -33,11 +34,44 @@ public sealed class FakeEdoScenario
     public int Seed { get; set; } = 7;
     public int DocumentCount { get; set; } = 12;
 
+    /// <summary>Documents are spread evenly over this many days from BaseTime (default: one document per day).</summary>
+    public int? SpreadDays { get; set; }
+
+    /// <summary>When positive, partners are drawn from a fixed pool of this size (TIN 300000000 + index).</summary>
+    public int CounterpartyPoolSize { get; set; }
+
+    /// <summary>Documents per page returned by the fake list method.</summary>
+    public int PageSize { get; set; } = 5;
+
     /// <summary>Login is rejected.</summary>
     public bool AuthFailure { get; set; }
 
-    /// <summary>Data calls never answer (until cancelled).</summary>
-    public bool Hang { get; set; }
+    /// <summary>Simulates a person logging into a company: the login response carries permissions.</summary>
+    public bool PersonLogin { get; set; }
+
+    private TaskCompletionSource _hangRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Data calls do not answer until <see cref="ReleaseHang"/> is called or the call is cancelled.</summary>
+    public bool Hang
+    {
+        get => _hang;
+        set
+        {
+            if (value && !_hang) _hangRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _hang = value;
+        }
+    }
+
+    private volatile bool _hang;
+
+    /// <summary>Lets every hanging call continue (and stops hanging).</summary>
+    public void ReleaseHang()
+    {
+        Hang = false;
+        _hangRelease.TrySetResult();
+    }
+
+    internal Task WaitWhileHangingAsync(CancellationToken ct) => Hang ? _hangRelease.Task.WaitAsync(ct) : Task.CompletedTask;
 
     /// <summary>The next N data calls fail with HTTP 503.</summary>
     public int TransientFailures;
@@ -74,14 +108,18 @@ public sealed class FakeEdoDataSource(TimeProvider time)
             return """{ "error": "invalid credentials" }""";
         var token = "tok-" + Guid.NewGuid().ToString("N");
         s.Tokens[token] = time.GetUtcNow() + TokenLifetime;
-        return new JsonObject { ["token"] = token }.ToJsonString();
+        // Shape from the documentation description; permissions only when a person logs into a company.
+        var response = new JsonObject { ["token"] = token, ["related_companies"] = null, ["related_branches"] = null };
+        if (s.PersonLogin)
+            response["permissions"] = new JsonObject { ["tin"] = "30" + s.Seed.ToString("D7"), ["roles"] = new JsonArray("director") };
+        return response.ToJsonString();
     }
 
     /// <summary>Simulates the transport in front of every data call: hangs, HTTP 503, HTTP 401 for bad or expired tokens.</summary>
     public async Task GateAsync(Guid connectionId, string token, CancellationToken ct)
     {
         var s = For(connectionId);
-        if (s.Hang) await Task.Delay(Timeout.Infinite, ct);
+        await s.WaitWhileHangingAsync(ct);
         while (true)
         {
             var current = Volatile.Read(ref s.TransientFailures);
@@ -150,10 +188,13 @@ public sealed class FakeEdoDataSource(TimeProvider time)
         s.Documents = [];
         for (var i = 0; i < s.DocumentCount; i++)
         {
-            var created = s.BaseTime.AddDays(i).AddMinutes(random.Next(0, 600));
+            var dayOffset = s.SpreadDays is { } spread ? (double)i * spread / s.DocumentCount : i;
+            var created = s.BaseTime.AddDays(dayOffset).AddMinutes(random.Next(0, 600));
             var sum = random.Next(100_000, 90_000_000) + random.Next(0, 100) / 100m;
             var vat = Math.Round(sum * 12m / 112m, 2);
-            var partnerTin = (300_000_000 + random.Next(0, 99_999_999)).ToString();
+            var partnerTin = s.CounterpartyPoolSize > 0
+                ? (300_000_000 + random.Next(0, s.CounterpartyPoolSize)).ToString()
+                : (300_000_000 + random.Next(0, 99_999_999)).ToString();
             s.Documents.Add(new FakeDidoxDocument
             {
                 DocId = $"{s.Seed:D2}{i:D4}{random.Next(0x10000000, int.MaxValue):x8}",
@@ -181,6 +222,7 @@ public sealed class FakeEdoDataSource(TimeProvider time)
         ["name"] = d.Name,
         ["doc_date"] = d.DocDate.ToString("yyyy-MM-dd"),
         ["doc_status"] = d.Status,
+        ["status_comment"] = d.Status == 4 ? d.StatusComment ?? "Rejected: amounts do not match the contract" : d.StatusComment,
         ["doctype"] = d.DocType,
         ["owner"] = d.Owner,
         ["partnerTin"] = d.PartnerTin,

@@ -22,6 +22,7 @@ public sealed record EdoDocumentInfo(
     long TotalVatSum,
     long TotalDeliverySum,
     long TotalDeliverySumWithVat,
+    string? StatusComment,
     DateTimeOffset? CreatedAt,
     DateTimeOffset? UpdatedAt,
     RawRecord Raw);

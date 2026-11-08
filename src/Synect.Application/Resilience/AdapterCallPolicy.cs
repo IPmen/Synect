@@ -34,8 +34,16 @@ public sealed class RetryOptions
 }
 
 /// <summary>Per-connection and per-provider token buckets, created lazily and kept for the process lifetime.</summary>
-public sealed class AdapterRateLimiters(IOptionsMonitor<RateLimitOptions> options)
+public sealed class AdapterRateLimiters(IOptionsMonitor<RateLimitOptions> options) : IDisposable
 {
+    /// <summary>Token buckets own replenishment timers; they are released with the container.</summary>
+    public void Dispose()
+    {
+        foreach (var limiter in _perSource.Values.Concat(_perConnection.Values)) limiter.Dispose();
+        _perSource.Clear();
+        _perConnection.Clear();
+    }
+
     private readonly ConcurrentDictionary<string, RateLimiter> _perSource = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<Guid, RateLimiter> _perConnection = new();
 

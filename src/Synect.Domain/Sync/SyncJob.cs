@@ -50,6 +50,9 @@ public class SyncJob : TenantEntity
     public DateTimeOffset EnqueuedAt { get; private set; }
     public DateTimeOffset NotBefore { get; private set; }
     public DateTimeOffset? StartedAt { get; private set; }
+
+    /// <summary>Last sign of life of a Running job, written periodically by the dispatcher.</summary>
+    public DateTimeOffset? HeartbeatAt { get; private set; }
     public DateTimeOffset? FinishedAt { get; private set; }
     public Guid? SyncRunId { get; private set; }
     public string? Error { get; private set; }

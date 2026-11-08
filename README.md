@@ -8,10 +8,11 @@ database and never call external systems.
 | Project | Purpose |
 |---|---|
 | `Synect.Domain` | Entities: tenants, connections (states), sync runs, sync jobs, connection secrets, raw objects, bank, EDO, counterparties |
-| `Synect.Application` | Adapter contracts and registry, sync services, queue (planner, dispatcher, requests), rate limiting and retries, secrets and credentials contracts, freshness query |
+| `Synect.Application` | Adapter contracts and registry, sync services, queue (planner, dispatcher, requests), rate limiting and retries, secrets and credentials contracts, freshness query, read-only analytics (`Analytics/`) |
 | `Synect.Infrastructure` | EF Core + Npgsql, migrations, RLS interceptor, Data Protection secret store, Kapital Bank / Didox mappers, session and token caches, fake adapters |
 | `Synect.Api` | HTTP host (health only for now) |
 | `Synect.Worker` | Hosts the sync queue (`SyncWorker`) |
+| `Synect.DevTools` | Development only: demo/load data, `query`, `bench`, `explain` (not referenced by Api or Worker) |
 | `Synect.Tests` | xUnit v3 tests (SQLite temporary file + local PostgreSQL) |
 
 ## Local database (no Docker)
@@ -37,8 +38,10 @@ of every transaction. Application code therefore reads and writes inside transac
 
 Own queue on PostgreSQL (`sync_jobs`) run by `SyncDispatcher` in the Worker:
 
-- Every `Sync:Queue:PollInterval` the worker walks the `tenants` table (no RLS) and, per tenant in its own scope and
-  transaction: marks runs/jobs Running for longer than `StaleRunTimeout` as Failed, plans due jobs, collects queued jobs.
+- At startup the worker (single instance) marks every Running job and run as Failed. Then every `Sync:Queue:PollInterval`
+  it walks the `tenants` table (no RLS) and, per tenant in its own scope and transaction: fails Running jobs whose
+  `heartbeat_at` is older than `HeartbeatTimeout` (with their runs), plans due jobs, collects queued jobs. Running jobs
+  write `heartbeat_at` every `HeartbeatInterval`.
 - Jobs start by priority (manual, then scheduled/reactivation, then initial loads), limited globally (`MaxConcurrent`)
   and per provider (`MaxConcurrentPerSource`). A partial unique index allows only one Queued/Running job per
   connection, so loads never overlap. Each job runs in its own task with `JobTimeout`.
@@ -54,6 +57,38 @@ Own queue on PostgreSQL (`sync_jobs`) run by `SyncDispatcher` in the Worker:
 Bank days are re-read from the earliest day with `is_day_closed = false`, otherwise only yesterday and today; days
 missed while the worker was down are always included. The first load covers `Sync:Bank:InitialDays` (capped by the
 bank history depth).
+
+## Analytics
+
+`Synect.Application/Analytics` answers the question catalogue (blocks A, B, V) from the database only; it has no
+dependency on adapters, sync, queue or secrets (enforced by a test). Rules shared by every method:
+
+- the tenant comes from the current tenant context, never from arguments; reads run in a tenant transaction (RLS);
+- amounts are never added across currencies (results are grouped by currency, no exchange rates);
+- bank operations with `has_error = true` are always excluded;
+- periods are local dates of UTC+5; Didox periods select by `DateBasis` (DocumentDate, SourceCreated, SourceUpdated);
+- every result carries `DataFreshness` (last successful load, connection state, completeness per source);
+- lists use keyset cursors with a stable order: 100 rows by default, at most 1000; each call times out after
+  `Analytics:QueryTimeout` (5 s, also applied as `statement_timeout`).
+
+Counterparty blocks B2, B5, B6 and B9 read `analytics_counterparty_monthly`, which each successful load refreshes for
+exactly the (INN, month) pairs it touched (old and new values of every changed row). `dotnet run --project src/Synect.DevTools -- rebuild-totals --tenant <name>` rebuilds it fully.
+
+**Assumption to confirm:** Didox statuses counted in sums (VAT, tops, turnover) are `Analytics:Edo:CountedStatuses`
+= 1, 2, 3, 6, 8, 60 (draft 0, rejected 4 and invalid 40 excluded). Didox amounts are treated as UZS.
+
+## Developer tools
+
+```
+dotnet run --project src/Synect.DevTools -- seed-demo --tenants 3
+dotnet run --project src/Synect.DevTools -- seed-load --operations 200000 --documents 30000
+dotnet run --project src/Synect.DevTools -- list-queries
+dotnet run --project src/Synect.DevTools -- query b2-top-counterparties --tenant "Demo client 1" --top 5
+dotnet run --project src/Synect.DevTools -- bench --tenant "Load test" --runs 20
+dotnet run --project src/Synect.DevTools -- explain --tenant "Load test"
+```
+
+Data is loaded through the real sync services and the fake adapters. Timings are measured by `bench`, never asserted in tests.
 
 ## Secrets
 
@@ -95,13 +130,19 @@ or the `SYNECT_TEST_PG` environment variable.
 | `Sync:Queue:MaxConcurrent` | 4 | Loads at the same time, overall. |
 | `Sync:Queue:DefaultMaxConcurrentPerSource` / `MaxConcurrentPerSource` | 2 / `{KapitalBank: 2, Didox: 2}` | Loads at the same time per provider. |
 | `Sync:Queue:JobTimeout` | 1 h | A load is cancelled after this. |
-| `Sync:Queue:StaleRunTimeout` | 2 h | Running runs/jobs older than this are marked Failed. |
+| `Sync:Queue:HeartbeatInterval` | 1 min | How often a running job writes `heartbeat_at`. |
+| `Sync:Queue:HeartbeatTimeout` | 10 min | Running jobs with an older heartbeat are marked Failed (with their runs). |
 | `Sync:Queue:ManualRequestMinInterval` | 5 min | Between two "refresh now" requests per connection. |
 | `Sync:Schedule:NightlyWindowStart` / `End` | 01:00 / 05:00 | Local time (UTC+5). |
 | `Sync:Schedule:EdoDaytimeRefreshHours` | 4 | 0 disables daytime refreshes. |
 | `Sync:Schedule:DaytimeStart` / `End` | 08:00 / 20:00 | Daytime refresh window. |
 | `Sync:Retry:MaxAttempts` / `BaseDelay` / `MaxDelay` | 4 / 1 s / 30 s | Exponential backoff with jitter for network, 5xx, 429. |
 | `Sync:CircuitBreaker:FailureThreshold` | 3 | Failed loads in a row before NeedsAttention. |
+| `Analytics:QueryTimeout` | 5 s | Per analytics call. |
+| `Analytics:DefaultPageSize` / `MaxPageSize` | 100 / 1000 | List paging. |
+| `Analytics:MaxParallelWorkersPerGather` | 0 | Parallel workers cost about 150 ms per query on Windows; analytics queries are short. |
+| `Analytics:UtcOffset` | `05:00:00` | Period dates are local dates. |
+| `Analytics:Edo:CountedStatuses` | 1, 2, 3, 6, 8, 60 | **Assumption to confirm.** |
 | `Secrets:KeysPath` | `%APPDATA%/Synect/DataProtection-Keys` | Data Protection key ring, outside the repository. |
 
 All money is stored as `long` in minor units.

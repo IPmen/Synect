@@ -107,10 +107,11 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
     }
 
     /// <summary>
-    /// Maps the APILogin response to the session id (sid). ANY envelope error of APILogin is an
-    /// authentication failure. ASSUMPTION: result is either the sid string or an object with "sid".
+    /// Maps the APILogin response. ANY envelope error of APILogin is an authentication failure.
+    /// Format (taken from the documentation description, NOT verified on real responses):
+    /// result = { "sid": "...", "login": "...", "clients": [ { "id", "branch", "accounts": [ ...accounts with balances... ] } ] }.
     /// </summary>
-    public string MapLogin(string json)
+    public KapitalLoginResult MapLogin(string json)
     {
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
@@ -119,12 +120,22 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
         if (EnvelopeError(root) is { } error)
             throw new AdapterAuthenticationException($"Kapital Bank login failed: error {error.Code?.ToString() ?? "?"}: {error.Message ?? "no message"}");
 
-        if (root.TryGetProperty("result", out var result))
+        if (!root.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Object
+            || SourceJson.Str(result, "sid") is not { } sid)
+            throw new AdapterException("Kapital Bank login response has no result.sid.");
+
+        var clients = new List<KapitalLoginClient>();
+        if (result.TryGetProperty("clients", out var clientArray) && clientArray.ValueKind == JsonValueKind.Array)
         {
-            if (result.ValueKind == JsonValueKind.String && result.GetString() is { Length: > 0 } sid) return sid;
-            if (result.ValueKind == JsonValueKind.Object && SourceJson.Str(result, "sid") is { } objSid) return objSid;
+            foreach (var client in clientArray.EnumerateArray())
+            {
+                var accounts = new List<string>();
+                if (client.TryGetProperty("accounts", out var accountArray) && accountArray.ValueKind == JsonValueKind.Array)
+                    accounts.AddRange(accountArray.EnumerateArray().Select(acc => SourceJson.Str(acc, "account")).OfType<string>());
+                clients.Add(new KapitalLoginClient(SourceJson.Str(client, "id"), SourceJson.Str(client, "branch"), accounts));
+            }
         }
-        throw new AdapterException("Kapital Bank login response has no session id.");
+        return new KapitalLoginResult(sid, SourceJson.Str(result, "login"), clients);
     }
 
     /// <summary>Validates the envelope of a data method and returns "result". Throws when the bank reported an error.</summary>
@@ -189,6 +200,15 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
     }
 
     private long Minor(decimal value, string field) => SourceJson.ToMinorUnits(value, _options.AmountUnit, field);
+}
+
+/// <summary>An organisation available to the logged-in Kapital Bank user, with its account numbers.</summary>
+public sealed record KapitalLoginClient(string? Id, string? Branch, IReadOnlyList<string> Accounts);
+
+/// <summary>Parsed APILogin result. The sid is a secret-like session token: never log it.</summary>
+public sealed record KapitalLoginResult(string Sid, string? Login, IReadOnlyList<KapitalLoginClient> Clients)
+{
+    public override string ToString() => $"KapitalLoginResult {{ Login = {Login}, Clients = {Clients.Count} }}";
 }
 
 /// <summary>Currency helpers for Kapital Bank accounts.</summary>

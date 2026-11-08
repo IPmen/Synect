@@ -210,7 +210,8 @@ public sealed class TestHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await Dispatcher.WaitForIdleAsync();
+        // Bounded: a job that never ends must fail the test loudly instead of hanging the whole run.
+        await Dispatcher.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(60));
         await Services.DisposeAsync();
         if (_cleanup is not null) await _cleanup();
     }

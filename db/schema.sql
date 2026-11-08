@@ -733,3 +733,185 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108183931_SyncJobHeartbeat') THEN
+    ALTER TABLE sync_jobs ADD heartbeat_at timestamp with time zone;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108183931_SyncJobHeartbeat') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261108183931_SyncJobHeartbeat', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108185807_AnalyticsStage3') THEN
+    ALTER TABLE edo_documents ADD status_comment character varying(2000);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108185807_AnalyticsStage3') THEN
+    CREATE TABLE analytics_counterparty_monthly (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        counterparty_inn character varying(16) NOT NULL,
+        month date NOT NULL,
+        currency character varying(3) NOT NULL,
+        bank_incoming bigint NOT NULL,
+        bank_outgoing bigint NOT NULL,
+        bank_count integer NOT NULL,
+        edo_incoming_total bigint NOT NULL,
+        edo_outgoing_total bigint NOT NULL,
+        edo_incoming_count integer NOT NULL,
+        edo_outgoing_count integer NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        CONSTRAINT pk_analytics_counterparty_monthly PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_analytics_counterparty_monthly_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108185807_AnalyticsStage3') THEN
+    CREATE UNIQUE INDEX ix_analytics_counterparty_monthly_tenant_id_counterparty_inn_m ON analytics_counterparty_monthly (tenant_id, counterparty_inn, month, currency);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108185807_AnalyticsStage3') THEN
+    CREATE INDEX ix_analytics_counterparty_monthly_tenant_id_month_currency ON analytics_counterparty_monthly (tenant_id, month, currency);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108185807_AnalyticsStage3') THEN
+    ALTER TABLE analytics_counterparty_monthly ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108185807_AnalyticsStage3') THEN
+    ALTER TABLE analytics_counterparty_monthly FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108185807_AnalyticsStage3') THEN
+    CREATE POLICY tenant_isolation ON analytics_counterparty_monthly USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108185807_AnalyticsStage3') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261108185807_AnalyticsStage3', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108191349_AnalyticsIndexes') THEN
+    DROP INDEX ix_edo_documents_tenant_id_counterparty_inn;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108191349_AnalyticsIndexes') THEN
+    DROP INDEX ix_bank_transactions_tenant_id_counterparty_inn;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108191349_AnalyticsIndexes') THEN
+    CREATE INDEX ix_edo_documents_tenant_id_counterparty_inn ON edo_documents (tenant_id, counterparty_inn) INCLUDE (status);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108191349_AnalyticsIndexes') THEN
+    CREATE INDEX ix_edo_documents_tenant_id_owner_status_document_date ON edo_documents (tenant_id, owner, status, document_date);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108191349_AnalyticsIndexes') THEN
+    CREATE INDEX ix_edo_documents_tenant_id_source_created_at ON edo_documents (tenant_id, source_created_at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108191349_AnalyticsIndexes') THEN
+    CREATE INDEX ix_edo_documents_tenant_id_source_updated_at ON edo_documents (tenant_id, source_updated_at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108191349_AnalyticsIndexes') THEN
+    CREATE INDEX ix_bank_transactions_flows ON bank_transactions (tenant_id, posting_date) INCLUDE (bank_account_id, currency, direction, amount, counterparty_inn) WHERE has_error = false;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108191349_AnalyticsIndexes') THEN
+    CREATE INDEX ix_bank_transactions_tenant_id_counterparty_inn_posting_date ON bank_transactions (tenant_id, counterparty_inn, posting_date);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108191349_AnalyticsIndexes') THEN
+    CREATE INDEX ix_bank_daily_balances_tenant_id_date ON bank_daily_balances (tenant_id, date);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108191349_AnalyticsIndexes') THEN
+    CREATE INDEX ix_edo_documents_tenant_id_number_prefix ON edo_documents (tenant_id, number text_pattern_ops);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108191349_AnalyticsIndexes') THEN
+    CREATE INDEX ix_edo_documents_tenant_id_contract_number_prefix ON edo_documents (tenant_id, contract_number text_pattern_ops);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261108191349_AnalyticsIndexes') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261108191349_AnalyticsIndexes', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+

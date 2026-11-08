@@ -17,7 +17,7 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
     [
         "connections", "sync_runs", "raw_objects", "bank_accounts", "bank_transactions",
         "bank_daily_balances", "edo_documents", "edo_document_status_logs", "counterparties",
-        "sync_jobs", "connection_secrets",
+        "sync_jobs", "connection_secrets", "analytics_counterparty_monthly",
     ];
 
     private void RequirePostgres() => Assert.SkipUnless(fixture.Available, PostgresFixture.SkipReason);

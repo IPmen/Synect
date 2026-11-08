@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Synect.Application.Abstractions;
 using Synect.Application.Adapters;
+using Synect.Application.Analytics.Totals;
 using Synect.Application.Resilience;
 using Synect.Application.Secrets;
 using Synect.Domain.Edo;
@@ -33,6 +34,8 @@ public sealed class EdoSyncService(
     CounterpartyStore counterparties,
     ICredentialProvider credentials,
     AdapterCallPolicy policy,
+    AnalyticsChangeSet changes,
+    CounterpartyMonthlyRefresher monthly,
     TimeProvider time,
     IOptions<EdoSyncOptions> options,
     IOptions<CircuitBreakerOptions> breakerOptions,
@@ -99,6 +102,8 @@ public sealed class EdoSyncService(
             await db.InTransactionAsync(async token =>
             {
                 var now = time.GetUtcNow();
+                await monthly.RefreshAsync(changes.Keys, token);
+                changes.Clear();
                 run.Succeed(now, complete, records);
                 connection.MarkSyncSucceeded(now);
                 await db.SaveChangesAsync(token);
@@ -151,6 +156,11 @@ public sealed class EdoSyncService(
             {
                 continue;
             }
+            else
+            {
+                changes.Add(doc.CounterpartyInn, doc.DocumentDate);
+            }
+            changes.Add(info.CounterpartyInn, info.DocumentDate);
 
             doc.DocType = info.DocType;
             doc.Owner = info.Owner;
@@ -164,6 +174,7 @@ public sealed class EdoSyncService(
             doc.TotalVatSum = info.TotalVatSum;
             doc.TotalDeliverySum = info.TotalDeliverySum;
             doc.TotalDeliverySumWithVat = info.TotalDeliverySumWithVat;
+            doc.StatusComment = info.StatusComment;
             doc.SourceCreatedAt = info.CreatedAt;
             doc.SourceUpdatedAt = info.UpdatedAt;
             doc.SourceHash = hash;

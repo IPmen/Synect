@@ -59,9 +59,8 @@ public class SyncRun : TenantEntity
         RangeTo = to;
     }
 
-    /// <summary>The worker died while this run was in progress.</summary>
-    public void Abandon(DateTimeOffset at) =>
-        Fail(at, "Abandoned: no progress within the stale-run timeout (worker stopped?).", RecordCount);
+    /// <summary>The worker died (or stopped sending heartbeats) while this run was in progress.</summary>
+    public void Abandon(DateTimeOffset at, string reason) => Fail(at, reason, RecordCount);
 
     public void Fail(DateTimeOffset at, string error, int recordCount)
     {

@@ -24,6 +24,9 @@ public class EdoDocument : TenantEntity
     public string Status { get; private set; } = string.Empty;
 
     public EdoDocumentOwner Owner { get; set; }
+
+    /// <summary>Comment attached to the current status (e.g. rejection reason), as received.</summary>
+    public string? StatusComment { get; set; }
     public string? Number { get; set; }
     public DateOnly? DocumentDate { get; set; }
     public string? CounterpartyInn { get; set; }

@@ -60,6 +60,7 @@ public static class DependencyInjection
         services.Configure<RetryOptions>(configuration.GetSection("Sync:Retry"));
         services.Configure<SyncQueueOptions>(configuration.GetSection("Sync:Queue"));
         services.Configure<ScheduleOptions>(configuration.GetSection("Sync:Schedule"));
+        services.Configure<Synect.Application.Analytics.AnalyticsOptions>(configuration.GetSection("Analytics"));
         return services;
     }
 

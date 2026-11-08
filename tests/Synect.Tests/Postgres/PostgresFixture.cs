@@ -31,6 +31,9 @@ public sealed class PostgresFixture : IAsyncLifetime
     public string AppRole => "synect_rls_" + _suffix;
     public string AdminDbConnectionString { get; private set; } = string.Empty;
 
+    /// <summary>Connection string the application uses (restricted role, RLS applies).</summary>
+    public string AppConnectionString { get; private set; } = string.Empty;
+
     public static string? AdminConnectionString() =>
         Environment.GetEnvironmentVariable("SYNECT_TEST_PG") is { Length: > 0 } env
             ? env
@@ -44,7 +47,20 @@ public sealed class PostgresFixture : IAsyncLifetime
 
         await ExecAsync(_admin, $"CREATE DATABASE {DatabaseName}");
         AdminDbConnectionString = new NpgsqlConnectionStringBuilder(_admin) { Database = DatabaseName }.ConnectionString;
+        try
+        {
+            await PrepareAsync();
+        }
+        catch
+        {
+            // Do not leave a half-created database or role behind.
+            await CleanupAsync();
+            throw;
+        }
+    }
 
+    private async Task PrepareAsync()
+    {
         var options = new DbContextOptionsBuilder<SynectDbContext>().UseSynectNpgsql(AdminDbConnectionString).Options;
         await using (var ctx = new SynectDbContext(options, new TenantContext()))
             await ctx.Database.MigrateAsync();
@@ -56,8 +72,8 @@ public sealed class PostgresFixture : IAsyncLifetime
             """);
 
         // The application session switches to the restricted role right at connection start.
-        var app = new NpgsqlConnectionStringBuilder(AdminDbConnectionString) { Options = $"-c role={AppRole}" }.ConnectionString;
-        Host = TestHost.CreatePostgres(app, CleanupAsync);
+        AppConnectionString = new NpgsqlConnectionStringBuilder(AdminDbConnectionString) { Options = $"-c role={AppRole}" }.ConnectionString;
+        Host = TestHost.CreatePostgres(AppConnectionString, CleanupAsync);
     }
 
     public async ValueTask DisposeAsync()

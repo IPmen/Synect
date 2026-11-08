@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Synect.Application.Abstractions;
 using Synect.Application.Adapters;
+using Synect.Application.Analytics;
+using Synect.Application.Analytics.Totals;
 using Synect.Application.Freshness;
 using Synect.Application.Queue;
 using Synect.Application.Resilience;
@@ -51,6 +53,12 @@ public static class DependencyInjection
         services.AddScoped<SyncRecovery>();
 
         services.AddScoped<ISourceFreshnessQuery, SourceFreshnessQuery>();
+
+        // Analytics (read-only over the database) and precomputed totals.
+        services.AddOptions<AnalyticsOptions>();
+        services.AddScoped<AnalyticsChangeSet>();
+        services.AddScoped<CounterpartyMonthlyRefresher>();
+        services.AddSynectAnalytics();
         return services;
     }
 }

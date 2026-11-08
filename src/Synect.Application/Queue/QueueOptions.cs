@@ -18,8 +18,15 @@ public sealed class SyncQueueOptions
     /// <summary>A single load is cancelled after this time.</summary>
     public TimeSpan JobTimeout { get; set; } = TimeSpan.FromHours(1);
 
-    /// <summary>A run or job still Running after this time is considered abandoned (worker crashed) and marked Failed.</summary>
-    public TimeSpan StaleRunTimeout { get; set; } = TimeSpan.FromHours(2);
+    /// <summary>How often a running job writes heartbeat_at.</summary>
+    public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    /// A Running job whose heartbeat is older than this is considered dead and marked Failed (with its run).
+    /// Must be well above <see cref="HeartbeatInterval"/>. Jobs left Running by a previous process are
+    /// failed right at worker startup (single worker instance).
+    /// </summary>
+    public TimeSpan HeartbeatTimeout { get; set; } = TimeSpan.FromMinutes(10);
 
     /// <summary>Minimum time between two "refresh now" requests for the same connection.</summary>
     public TimeSpan ManualRequestMinInterval { get; set; } = TimeSpan.FromMinutes(5);

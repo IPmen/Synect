@@ -214,8 +214,24 @@ public class KapitalBankMapperTests
     [Fact]
     public void Login_returns_the_session_id()
     {
-        Assert.Equal("abc", Mapper().MapLogin(Envelope("{ \"sid\": \"abc\" }")));
-        Assert.Equal("xyz", Mapper().MapLogin(Envelope("\"xyz\"")));
+        var login = Mapper().MapLogin(Envelope("""
+            {
+              "sid": "abc", "login": "client1",
+              "clients": [
+                { "id": "77", "branch": "00974", "accounts": [ { "account": "20208000900123456001", "s_out": 100 } ] },
+                { "id": "78", "branch": "00444", "accounts": [] }
+              ]
+            }
+            """));
+        Assert.Equal("abc", login.Sid);
+        Assert.Equal("client1", login.Login);
+        Assert.Equal(2, login.Clients.Count);
+        Assert.Equal(["20208000900123456001"], login.Clients[0].Accounts);
+        Assert.Equal("00444", login.Clients[1].Branch);
+        Assert.DoesNotContain("abc", login.ToString());
+
+        // A bare string or an object without sid is not the documented format.
+        Assert.Throws<AdapterException>(() => Mapper().MapLogin(Envelope("\"xyz\"")));
         Assert.Throws<AdapterException>(() => Mapper().MapLogin(Envelope("{}")));
     }
 
