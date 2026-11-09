@@ -40,6 +40,7 @@ public static class DependencyInjection
         services.AddScoped<ICredentialProvider, SecretStoreCredentialProvider>();
         services.AddScoped<RawObjectStore>();
         services.AddScoped<CounterpartyStore>();
+        services.AddScoped<CounterpartyAliasRebuilder>();
         services.AddScoped<BankSyncService>();
         services.AddScoped<EdoSyncService>();
         services.AddScoped<ConnectionSyncService>();

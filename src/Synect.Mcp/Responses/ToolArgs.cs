@@ -136,6 +136,18 @@ public sealed partial class ToolArgs(McpOptions options)
         return code;
     }
 
+    /// <summary>Required search text: 1-200 visible characters.</summary>
+    public string SearchText(string name, string? value)
+    {
+        var text = value?.Trim();
+        if (string.IsNullOrEmpty(text))
+            throw new ToolArgumentException($"Parameter '{name}' is required: a fragment of the counterparty name or an INN.");
+        if (text.Length > 200 || text.Any(char.IsControl))
+            throw new ToolArgumentException($"Parameter '{name}' must be at most 200 characters without control characters.");
+        _request[name] = text;
+        return text;
+    }
+
     /// <summary>Free text used as a filter (document or contract number): at most 100 visible characters.</summary>
     public string? OptionalText(string name, string? value)
     {

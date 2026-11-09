@@ -88,7 +88,7 @@ public sealed class DocumentTools(ToolRunner runner, Presenter p, DocumentsAnaly
     [McpServerTool(Name = "search_documents", Title = "Search documents", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Searches Didox documents by number (exact or prefix), counterparty INN, contract number, type, status, direction and period; newest first. " +
                  "All filters are optional and combined with AND (V5). " +
-                 "Examples: «Найди счёт-фактуру INV-002», «Документы по договору C-1», «Все документы с ИНН 301000001 за октябрь»." + Common)]
+                 "Examples: «Найди счёт-фактуру INV-002», «Документы по договору C-1», «Все документы с ИНН 301000001 за октябрь»." + InnHint + Common)]
     public Task<CallToolResult> SearchDocuments(
         [Description("Document number, exact or prefix.")] string? number = null,
         [Description("Counterparty INN, 9 or 14 digits.")] string? inn = null,

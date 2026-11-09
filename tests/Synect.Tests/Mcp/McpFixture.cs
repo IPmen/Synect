@@ -65,6 +65,8 @@ public sealed class McpFixture : IAsyncLifetime
         if (!_data.Available) return;
 
         await SeedTenantCAsync();
+        foreach (var tenant in new[] { _data.TenantA, _data.TenantB, TenantC })
+            await Host.InTenantAsync(tenant, sp => sp.GetRequiredService<Synect.Application.Sync.CounterpartyAliasRebuilder>().RebuildAsync(CancellationToken.None));
         KeyA = await CreateKeyAsync(_data.TenantA, "A read", ApiKey.ScopeRead);
         KeyASync = await CreateKeyAsync(_data.TenantA, "A sync", ApiKey.ScopeRead, ApiKey.ScopeSyncRequest);
         KeyB = await CreateKeyAsync(_data.TenantB, "B read", ApiKey.ScopeRead);

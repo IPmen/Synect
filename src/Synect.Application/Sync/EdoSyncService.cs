@@ -6,6 +6,7 @@ using Synect.Application.Adapters;
 using Synect.Application.Analytics.Totals;
 using Synect.Application.Resilience;
 using Synect.Application.Secrets;
+using Synect.Domain.Counterparties;
 using Synect.Domain.Edo;
 using Synect.Domain.Sync;
 
@@ -137,11 +138,17 @@ public sealed class EdoSyncService(
             .Where(d => d.ConnectionId == connection.Id && ids.Contains(d.ExternalId))
             .ToDictionaryAsync(d => d.ExternalId, StringComparer.Ordinal, ct);
 
+        var names = new List<NameSighting>();
         for (var i = 0; i < items.Count; i++)
         {
             var info = items[i];
             var hash = hashes[i];
-            if (!existing.TryGetValue(info.ExternalId, out var doc))
+            var isNew = !existing.TryGetValue(info.ExternalId, out var doc);
+            // New documents, and changed ones whose counterparty or name changed, add a name sighting.
+            if (isNew || (doc!.SourceHash != hash && (doc.CounterpartyInn != info.CounterpartyInn || doc.CounterpartyName != info.CounterpartyName)))
+                names.Add(new NameSighting(info.CounterpartyInn, info.CounterpartyName, CounterpartyNameSource.Edo,
+                    info.CreatedAt ?? (info.DocumentDate is { } d ? CounterpartyAliasRebuilder.Local(d) : now)));
+            if (isNew)
             {
                 doc = new EdoDocument
                 {
@@ -186,5 +193,6 @@ public sealed class EdoSyncService(
 
         await counterparties.UpsertAsync(connection.TenantId,
             items.Select(i => (i.CounterpartyInn, i.CounterpartyName)), now, ct);
+        await counterparties.RecordNamesAsync(connection.TenantId, names, ct);
     }
 }

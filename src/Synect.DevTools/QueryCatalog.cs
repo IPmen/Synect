@@ -41,6 +41,12 @@ public sealed class QueryCatalog(TenantScopeRunner tenants, TimeProvider time)
             await sp.GetRequiredService<FlowsAnalytics>().GetIdleAccountsAsync(a.Int("days", 30), a.Page(), ct)),
         new("a7-balance-integrity", "heavy", "A7/A10", async (sp, a, today, ct) =>
             await sp.GetRequiredService<IntegrityAnalytics>().CheckBalancesAsync(a.Period(today, 1096), null, a.Page(), ct)),
+        new("s1-find-counterparties", "list", "Search by name", async (sp, a, today, ct) =>
+            await sp.GetRequiredService<CounterpartySearch>().FindAsync(a.Get("q") ?? "partner 01", new PageRequest(a.Int("limit", 10)), null, ct)),
+        new("s1-find-counterparties-typo", "list", "Search with a typo", async (sp, a, today, ct) =>
+            await sp.GetRequiredService<CounterpartySearch>().FindAsync(a.Get("q2") ?? "partnr", new PageRequest(10), null, ct)),
+        new("s1-find-counterparties-inn", "list", "Search by INN", async (sp, a, today, ct) =>
+            await sp.GetRequiredService<CounterpartySearch>().FindAsync(a.Get("inn") ?? DefaultInn, new PageRequest(10), null, ct)),
         new("b1-counterparty-payments", "list", "B1", async (sp, a, today, ct) =>
             await sp.GetRequiredService<CounterpartyAnalytics>().GetPaymentsAsync(a.Get("inn") ?? DefaultInn, a.Period(today, 365), a.Page(), ct)),
         new("b2-top-counterparties", "aggregate", "B2", async (sp, a, today, ct) =>

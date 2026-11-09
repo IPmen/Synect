@@ -43,6 +43,7 @@ public static class McpServiceCollection
             .WithTools<SourceTools>()
             .WithTools<MoneyTools>()
             .WithTools<CounterpartyTools>()
+            .WithTools<CounterpartySearchTools>()
             .WithTools<DocumentTools>()
             .WithRequestFilters(filters => filters.AddCallToolFilter(ToolCallFilter.Create()));
         return services;

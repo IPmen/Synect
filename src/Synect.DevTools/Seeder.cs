@@ -110,6 +110,9 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
         return db.InTransactionAsync(t => sp.GetRequiredService<CounterpartyMonthlyRefresher>().RebuildAllAsync(t), ct);
     }, CancellationToken.None);
 
+    public Task<int> RebuildAliasesAsync(Guid tenant) => tenants.InTenantAsync(tenant, (sp, ct) =>
+        sp.GetRequiredService<CounterpartyAliasRebuilder>().RebuildAsync(ct), CancellationToken.None);
+
     private Task<SyncOutcome> SyncBankAsync(Guid tenant, Guid connection, DateOnly from, DateOnly to) =>
         tenants.InTenantAsync(tenant, (sp, ct) => sp.GetRequiredService<BankSyncService>().SyncAsync(connection, from, to, ct), CancellationToken.None);
 

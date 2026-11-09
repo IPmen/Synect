@@ -273,3 +273,18 @@ internal sealed class ToolAuditLogConfiguration : IEntityTypeConfiguration<ToolA
         b.HasIndex(e => new { e.TenantId, e.StartedAt });
     }
 }
+
+internal sealed class CounterpartyAliasConfiguration : IEntityTypeConfiguration<CounterpartyAlias>
+{
+    public void Configure(EntityTypeBuilder<CounterpartyAlias> b)
+    {
+        b.ToTable("counterparty_aliases");
+        b.ConfigureTenantEntity();
+        b.Property(e => e.CounterpartyInn).HasMaxLength(16);
+        b.Property(e => e.Name).HasMaxLength(CounterpartyAlias.MaxNameLength);
+        b.Property(e => e.NormalizedName).HasMaxLength(CounterpartyAlias.MaxNameLength);
+        b.Property(e => e.Source).HasConversion<string>().HasMaxLength(16);
+        b.HasIndex(e => new { e.TenantId, e.CounterpartyInn, e.Source, e.Name }).IsUnique();
+        // The trigram GIN index (tenant_id, normalized_name gin_trgm_ops) is created in the migration (pg_trgm, btree_gin).
+    }
+}

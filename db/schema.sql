@@ -1090,3 +1090,89 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109181830_CounterpartyAliases') THEN
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109181830_CounterpartyAliases') THEN
+    CREATE EXTENSION IF NOT EXISTS btree_gin;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109181830_CounterpartyAliases') THEN
+    CREATE TABLE counterparty_aliases (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        counterparty_inn character varying(16) NOT NULL,
+        name character varying(500) NOT NULL,
+        normalized_name character varying(500) NOT NULL,
+        source character varying(16) NOT NULL,
+        occurrences integer NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        CONSTRAINT pk_counterparty_aliases PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_counterparty_aliases_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109181830_CounterpartyAliases') THEN
+    CREATE UNIQUE INDEX ix_counterparty_aliases_tenant_id_counterparty_inn_source_name ON counterparty_aliases (tenant_id, counterparty_inn, source, name);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109181830_CounterpartyAliases') THEN
+    ALTER TABLE counterparty_aliases ADD CONSTRAINT ck_counterparty_aliases_source CHECK (source IN ('Bank', 'Edo'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109181830_CounterpartyAliases') THEN
+    CREATE INDEX ix_counterparty_aliases_tenant_id_normalized_name_trgm ON counterparty_aliases USING gin (tenant_id, normalized_name gin_trgm_ops);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109181830_CounterpartyAliases') THEN
+    ALTER TABLE counterparty_aliases ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109181830_CounterpartyAliases') THEN
+    ALTER TABLE counterparty_aliases FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109181830_CounterpartyAliases') THEN
+    CREATE POLICY tenant_isolation ON counterparty_aliases USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109181830_CounterpartyAliases') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261109181830_CounterpartyAliases', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+

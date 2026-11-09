@@ -7,7 +7,7 @@ database and never call external systems.
 
 | Project | Purpose |
 |---|---|
-| `Synect.Domain` | Entities: tenants, connections (states), sync runs, sync jobs, connection secrets, raw objects, bank, EDO, counterparties, monthly counterparty totals, API keys, tool audit log |
+| `Synect.Domain` | Entities: tenants, connections (states), sync runs, sync jobs, connection secrets, raw objects, bank, EDO, counterparties, monthly counterparty totals, counterparty name spellings (aliases), API keys, tool audit log |
 | `Synect.Application` | Adapter contracts and registry, sync services, queue (planner, dispatcher, requests), rate limiting and retries, secrets and credentials contracts, freshness query, read-only analytics (`Analytics/`), API keys and tool audit (`Access/`) |
 | `Synect.Infrastructure` | EF Core + Npgsql, migrations, RLS interceptor, Data Protection secret store, Kapital Bank / Didox mappers, session and token caches, fake adapters |
 | `Synect.Api` | HTTP host: `/health` and the MCP endpoint `/mcp` (Streamable HTTP, API key) |
@@ -75,6 +75,22 @@ dependency on adapters, sync, queue or secrets (enforced by a test). Rules share
 V7 also has `GetVatReportAsync`, which adds a breakdown by status (signed 3 and 8, awaiting a signature 1, 2, 6 and
 60, other) to the totals.
 
+**Counterparty search.** `CounterpartySearch.FindAsync(query, page, period)` finds counterparties by a name fragment in
+any spelling or by INN (9 or 14 digits). Every spelling seen per INN is kept in `counterparty_aliases` (source bank or
+edo, occurrences, first and last seen); loads add them where they update `counterparties`, and
+`rebuild-counterparty-aliases` refills them from loaded data. Names are compared after `CounterpartyNameNormalizer`:
+lower case, quotes and signs removed, legal forms removed (ООО, ИП, ЧП, АО, МЧЖ / MChJ, ЯТТ / YaTT, АЖ / AJ, ХК, LLC
+and full spellings), Russian and Uzbek Cyrillic transliterated to one Latin form (ў→o, қ→k, ғ→g, ҳ/х→h, ш→sh, ч→ch,
+ж→j, ё→yo; Latin q→k, x→h, kh→h, zh→j, ph→f; apostrophes of o' g' dropped). Matching uses `pg_trgm` (substring or
+`similarity` / `word_similarity` ≥ `Search:MinSimilarity`); candidates are ordered by similarity, then activity (bank
+operations plus counted Didox documents in the period), then INN. Each candidate has the main (most frequent) name, up to
+3 other spellings, last payment and document dates, bank turnover per currency and Didox totals for the period (default
+the last 12 months). Payments without an INN are never matched; their number in the period is returned separately.
+`pg_trgm` and `btree_gin` are trusted extensions, created by the migration as the database owner. Note: under row-level
+security PostgreSQL does not pass the non-leakproof trigram operators to the index, so the GIN index
+`(tenant_id, normalized_name gin_trgm_ops)` narrows by tenant only and the names of one tenant are compared one by one
+(about 20 ms for 4 000 spellings, 80 ms for 20 000, 250 ms for 50 000).
+
 Counterparty blocks B2, B5, B6 and B9 read `analytics_counterparty_monthly`, which each successful load refreshes for
 exactly the (INN, month) pairs it touched (old and new values of every changed row). `dotnet run --project src/Synect.DevTools -- rebuild-totals --tenant <name>` rebuilds it fully.
 
@@ -108,6 +124,10 @@ function returns nothing for unknown, short or NULL hashes.
 timed-out ones, is written to `tool_audit_log` (RLS): key, tool, arguments as JSON (long values cut, secret-looking names
 redacted), start, duration, returned rows, status (`Ok`, `Error`, `RateLimited`, `Timeout`), error message.
 
+**Names instead of INNs.** Tools that take an INN tell the model to call `find_counterparties` first when the user
+names a counterparty, and never to guess an INN. `find_counterparties` sets `best_match` only when the first candidate
+is above `Search:MinSimilarity` and ahead of the second by `Search:BestMatchMargin`; it never passes the INN on by itself.
+
 **Answers.** Structured JSON (also repeated as text): `tool`, `status`, `period` (echo), `request` (echo), `data`,
 `returned_rows`, `truncated`, `next_cursor`, `data_freshness` (per source: last successful load, connection state,
 completeness), `notes` (configured warnings such as the unconfirmed Kapital Bank amount unit, the Didox statuses counted
@@ -121,7 +141,7 @@ Errors are answers with `isError: true` and `error.code`: `invalid_argument`, `t
 |---|---|
 | Freshness | `get_data_freshness` |
 | Money | `get_account_balances` (A1, A2), `get_balance_history` (A4), `get_balance_stats` (A11), `get_cash_flow` (A3), `get_largest_transactions` (A5), `get_transactions_for_day` (A6), `find_idle_accounts` (A9), `check_balance_integrity` (A7, A10) |
-| Counterparties | `get_counterparty_payments` (B1), `get_top_counterparties` (B2), `get_counterparty_summary` (B3, B4), `compare_counterparty_periods` (B5), `get_counterparty_changes` (B6), `get_payments_without_documents` (B8), `get_counterparty_concentration` (B9) |
+| Counterparties | `find_counterparties` (search by name or INN), `get_counterparty_payments` (B1), `get_top_counterparties` (B2), `get_counterparty_summary` (B3, B4), `compare_counterparty_periods` (B5), `get_counterparty_changes` (B6), `get_payments_without_documents` (B8), `get_counterparty_concentration` (B9) |
 | Documents | `get_documents_awaiting_our_signature` (V1), `get_documents_awaiting_partner_signature` (V2), `get_document_counts` (V3), `get_rejected_documents` (V4), `search_documents` (V5), `get_largest_documents` (V6), `get_vat_summary` (V7 with status breakdown) |
 | Refresh | `request_data_refresh` (scope `sync_request`) |
 
@@ -170,6 +190,8 @@ server is published.
 dotnet run --project src/Synect.DevTools -- seed-demo --tenants 3
 dotnet run --project src/Synect.DevTools -- seed-load --operations 200000 --documents 30000
 dotnet run --project src/Synect.DevTools -- list-queries
+dotnet run --project src/Synect.DevTools -- rebuild-counterparty-aliases --all
+dotnet run --project src/Synect.DevTools -- query s1-find-counterparties --tenant "Demo client 1" --q "Ромашка"
 dotnet run --project src/Synect.DevTools -- query b2-top-counterparties --tenant "Demo client 1" --top 5
 dotnet run --project src/Synect.DevTools -- bench --tenant "Load test" --runs 20
 dotnet run --project src/Synect.DevTools -- explain --tenant "Load test"
@@ -238,6 +260,10 @@ or the `SYNECT_TEST_PG` environment variable.
 | `Analytics:UtcOffset` | `05:00:00` | Period dates are local dates. |
 | `Analytics:Edo:CountedStatuses` | 1, 2, 3, 6, 8, 60 | **Assumption to confirm.** |
 | `Secrets:KeysPath` | `%APPDATA%/Synect/DataProtection-Keys` | Data Protection key ring, outside the repository. |
+| `Search:MinSimilarity` | 0.3 | Smallest trigram similarity of a name match (substring matches always count). |
+| `Search:DefaultPeriodMonths` | 12 | Activity period of search candidates when none is given. |
+| `Search:MaxCandidates` | 200 | Best-scoring INNs considered before ordering by activity and paging. |
+| `Search:BestMatchMargin` | 0.15 | Lead over the second candidate needed for `best_match`. |
 | `Mcp:DefaultLimit` / `MaxLimit` | 50 / 200 | Rows per MCP answer (smaller than Analytics to keep model context small). |
 | `Mcp:MaxPeriodDays` | 1827 | Longest period a tool accepts (5 years). |
 | `Mcp:CallTimeout` | 5 s | Per tool call; the timeout answer asks to narrow the period. |

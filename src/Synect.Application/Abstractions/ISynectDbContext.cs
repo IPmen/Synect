@@ -32,6 +32,7 @@ public interface ISynectDbContext
     DbSet<ConnectionSecret> ConnectionSecrets { get; }
     DbSet<CounterpartyMonthly> CounterpartyMonthly { get; }
     DbSet<ApiKey> ApiKeys { get; }
+    DbSet<CounterpartyAlias> CounterpartyAliases { get; }
     DbSet<ToolAuditLog> ToolAuditLogs { get; }
 
     DatabaseFacade Database { get; }

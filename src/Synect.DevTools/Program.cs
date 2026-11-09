@@ -18,6 +18,7 @@ using Synect.Infrastructure.Persistence;
 //   list-queries
 //   bench --tenant <name|id> [--runs 20]          p50/p95 of every analytics method
 //   explain --tenant <name|id> [--query <name>]   EXPLAIN (ANALYZE, BUFFERS) of the SQL each method runs
+//   rebuild-counterparty-aliases --tenant <name|id>|--all   refills counterparty_aliases from loaded data
 //   create-api-key <tenant> [--scopes read,sync_request] [--name ...]   prints the new key ONCE
 //   revoke-api-key <tenant> <key id|key prefix>
 //   list-api-keys <tenant>                        id, prefix, scopes, created/last used/revoked (never the key)
@@ -82,6 +83,10 @@ try
         case "explain":
             await new Bench(services, capture).ExplainAsync(await Tenant(), options.Get("query"));
             break;
+        case "rebuild-counterparty-aliases":
+            foreach (var tenantId in options.Get("all") == "true" ? await AllTenants() : [await Tenant()])
+                Console.WriteLine($"{tenantId}: {await services.GetRequiredService<Seeder>().RebuildAliasesAsync(tenantId)} name spellings");
+            break;
         case "create-api-key":
             return await ApiKeyCommands.CreateAsync(services, await Tenant(), options);
         case "revoke-api-key":
@@ -91,7 +96,7 @@ try
         case "test-db-leftovers":
             return await TestDbLeftovers.RunAsync(builder.Configuration, options.Get("drop") == "true");
         default:
-            Console.WriteLine("Commands: seed-demo, seed-load, rebuild-totals, list-queries, query <name>, bench, explain, create-api-key, revoke-api-key, list-api-keys, test-db-leftovers. See Program.cs.");
+            Console.WriteLine("Commands: seed-demo, seed-load, rebuild-totals, rebuild-counterparty-aliases, list-queries, query <name>, bench, explain, create-api-key, revoke-api-key, list-api-keys, test-db-leftovers. See Program.cs.");
             break;
     }
 }
@@ -104,6 +109,12 @@ return 0;
 
 // Positional arguments come right after the command, before any --option.
 string? Positional(int index) => args.Skip(1).TakeWhile(a => !a.StartsWith("--", StringComparison.Ordinal)).ElementAtOrDefault(index - 1);
+
+async Task<List<Guid>> AllTenants()
+{
+    await using var scope = services.CreateAsyncScope();
+    return await scope.ServiceProvider.GetRequiredService<SynectDbContext>().Tenants.OrderBy(t => t.Name).Select(t => t.Id).ToListAsync();
+}
 
 async Task<Guid> Tenant()
 {

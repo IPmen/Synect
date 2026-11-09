@@ -16,7 +16,7 @@ public sealed class CounterpartyTools(ToolRunner runner, Presenter p, Counterpar
 
     [McpServerTool(Name = "get_counterparty_payments", Title = "Payments with a counterparty", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Payments to and from one counterparty (by INN) in a period: totals per currency and the operations, newest first (B1). " +
-                 "Examples: «Сколько мы заплатили ООО Альфа в октябре?», «Платежи от ИНН 301000001 за год»." + Common)]
+                 "Examples: «Сколько мы заплатили ООО Альфа в октябре?», «Платежи от ИНН 301000001 за год»." + InnHint + Common)]
     public Task<CallToolResult> GetCounterpartyPayments(
         [Description("Counterparty INN: 9 digits (organisation) or 14 digits (individual).")] string inn,
         [Description("Period start, yyyy-MM-dd. " + Dates)] string from,
@@ -66,7 +66,7 @@ public sealed class CounterpartyTools(ToolRunner runner, Presenter p, Counterpar
     [McpServerTool(Name = "get_counterparty_summary", Title = "Counterparty summary and balance", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Documents (Didox, counted statuses) and payments with one counterparty in a period and the open difference: " +
                  "receivable = our outgoing documents - their payments; payable = their documents - our payments, in the Didox currency (B3, B4). " +
-                 "Examples: «Сколько нам должен ООО Альфа?», «Какой долг перед поставщиком 302000002?», «Сверка с контрагентом за год»." + Common)]
+                 "Examples: «Сколько нам должен ООО Альфа?», «Какой долг перед поставщиком 302000002?», «Сверка с контрагентом за год»." + InnHint + Common)]
     public Task<CallToolResult> GetCounterpartySummary(
         [Description("Counterparty INN: 9 or 14 digits.")] string inn,
         [Description("Period start, yyyy-MM-dd. " + Dates)] string from,
@@ -99,7 +99,7 @@ public sealed class CounterpartyTools(ToolRunner runner, Presenter p, Counterpar
 
     [McpServerTool(Name = "compare_counterparty_periods", Title = "Compare counterparty turnover", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Turnover per counterparty and currency in two periods (A and B) with the change; all counterparties or one INN (B5). " +
-                 "Examples: «Сравни оплаты контрагентам за сентябрь и октябрь», «Как изменились поступления от Альфы по сравнению с прошлым годом?»." + Common)]
+                 "Examples: «Сравни оплаты контрагентам за сентябрь и октябрь», «Как изменились поступления от Альфы по сравнению с прошлым годом?»." + InnHint + Common)]
     public Task<CallToolResult> CompareCounterpartyPeriods(
         [Description("Period A start, yyyy-MM-dd. " + Dates)] string from_a,
         [Description("Period A end, yyyy-MM-dd.")] string to_a,

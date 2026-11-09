@@ -23,6 +23,10 @@
 
 Дополнительно для проверки выбора инструмента:
 
+- «Сколько мы заплатили Ромашке в октябре?» / «Romashka MChJ bilan hisob-kitob» — сначала `find_counterparties`
+  (по названию), затем `get_counterparty_payments` с найденным ИНН; если `best_match` пуст, модель должна спросить,
+  какой из кандидатов имеется в виду.
+
 - «Какие новые контрагенты появились в этом квартале?» — `get_counterparty_changes` (`kind = new`).
 - «Насколько мы зависим от крупнейшего клиента?» — `get_counterparty_concentration`.
 - «Сравни оплаты поставщикам за сентябрь и октябрь» — `compare_counterparty_periods`.

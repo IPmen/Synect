@@ -15,6 +15,8 @@ public static class AnalyticsServiceCollection
         services.AddScoped<IntegrityAnalytics>();
         services.AddScoped<CounterpartyAnalytics>();
         services.AddScoped<DocumentsAnalytics>();
+        services.AddScoped<CounterpartySearch>();
+        services.AddOptions<SearchOptions>();
         return services;
     }
 }

@@ -8,6 +8,7 @@ using Synect.Application.Common;
 using Synect.Application.Resilience;
 using Synect.Application.Secrets;
 using Synect.Domain.Banking;
+using Synect.Domain.Counterparties;
 using Synect.Domain.Sync;
 
 namespace Synect.Application.Sync;
@@ -245,6 +246,9 @@ public sealed class BankSyncService(
             .Where(t => t.BankAccountId == account.Id && ids.Contains(t.OperationId))
             .ToDictionaryAsync(t => t.OperationId, StringComparer.Ordinal, ct);
 
+        var names = new List<NameSighting>();
+        NameSighting Seen(BankTransactionInfo x) => new(x.CounterpartyInn, x.CounterpartyName, CounterpartyNameSource.Bank,
+            new DateTimeOffset(x.PostingDate.ToDateTime(TimeOnly.MinValue), bankOptions.Value.OperationalDayUtcOffset));
         for (var i = 0; i < items.Count; i++)
         {
             var info = items[i];
@@ -253,6 +257,8 @@ public sealed class BankSyncService(
             {
                 var isFinal = tx.IsFinal || dayClosed;
                 if (tx.SourceHash == hash && tx.IsFinal == isFinal) continue;
+                // A changed operation counts its name again only when the name itself changed.
+                if (tx.CounterpartyInn != info.CounterpartyInn || tx.CounterpartyName != info.CounterpartyName) names.Add(Seen(info));
                 changes.Add(tx.CounterpartyInn, tx.PostingDate);
                 changes.Add(info.CounterpartyInn, info.PostingDate);
                 Apply(tx, info, account, hash, isFinal);
@@ -272,10 +278,12 @@ public sealed class BankSyncService(
             Apply(tx, info, account, hash, dayClosed);
             db.BankTransactions.Add(tx);
             changes.Add(info.CounterpartyInn, info.PostingDate);
+            names.Add(Seen(info));
         }
 
         await counterparties.UpsertAsync(connection.TenantId,
             items.Select(i => (i.CounterpartyInn, i.CounterpartyName)), now, ct);
+        await counterparties.RecordNamesAsync(connection.TenantId, names, ct);
     }
 
     private static void Apply(BankTransaction tx, BankTransactionInfo info, BankAccount account, string hash, bool isFinal)

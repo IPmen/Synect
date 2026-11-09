@@ -506,6 +506,62 @@ namespace Synect.Infrastructure.Persistence.Migrations
                     b.ToTable("counterparties", (string)null);
                 });
 
+            modelBuilder.Entity("Synect.Domain.Counterparties.CounterpartyAlias", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CounterpartyInn")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("counterparty_inn");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("NormalizedName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("normalized_name");
+
+                    b.Property<int>("Occurrences")
+                        .HasColumnType("integer")
+                        .HasColumnName("occurrences");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("source");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_counterparty_aliases");
+
+                    b.HasIndex("TenantId", "CounterpartyInn", "Source", "Name")
+                        .IsUnique()
+                        .HasDatabaseName("ix_counterparty_aliases_tenant_id_counterparty_inn_source_name");
+
+                    b.ToTable("counterparty_aliases", (string)null);
+                });
+
             modelBuilder.Entity("Synect.Domain.Edo.EdoDocument", b =>
                 {
                     b.Property<Guid>("TenantId")
@@ -1144,6 +1200,16 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_counterparties_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Counterparties.CounterpartyAlias", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_counterparty_aliases_tenants_tenant_id");
                 });
 
             modelBuilder.Entity("Synect.Domain.Edo.EdoDocument", b =>

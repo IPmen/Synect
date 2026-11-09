@@ -19,7 +19,7 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         "get_data_freshness",
         "get_account_balances", "get_balance_history", "get_balance_stats", "get_cash_flow", "get_largest_transactions",
         "get_transactions_for_day", "find_idle_accounts", "check_balance_integrity",
-        "get_counterparty_payments", "get_top_counterparties", "get_counterparty_summary", "compare_counterparty_periods",
+        "find_counterparties", "get_counterparty_payments", "get_top_counterparties", "get_counterparty_summary", "compare_counterparty_periods",
         "get_counterparty_changes", "get_payments_without_documents", "get_counterparty_concentration",
         "get_documents_awaiting_our_signature", "get_documents_awaiting_partner_signature", "get_document_counts",
         "get_rejected_documents", "search_documents", "get_largest_documents", "get_vat_summary",
@@ -40,6 +40,7 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         ["get_transactions_for_day"] = new { date = "2026-10-01" },
         ["find_idle_accounts"] = new { days = 30 },
         ["check_balance_integrity"] = new { from = "2025-01-01", to = "2026-10-31" },
+        ["find_counterparties"] = new { query = "Alpha" },
         ["get_counterparty_payments"] = new { inn = Alpha, from = "2026-10-01", to = "2026-10-31" },
         ["get_top_counterparties"] = new { from = "2026-10-01", to = "2026-10-31", direction = "incoming" },
         ["get_counterparty_summary"] = new { inn = Alpha, from = "2026-09-01", to = "2026-10-31" },
@@ -408,6 +409,57 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         Assert.Equal(callsBefore, f.AdapterCalls.Calls); // no adapter was called
         var statuses = await AuditStatusesAsync(f.KeyC.Id);
         Assert.Contains("Error", statuses); // the forbidden call is audited too
+    }
+
+    [Theory]
+    [InlineData("Alpha")]
+    [InlineData("ALPHA llc")]
+    [InlineData("Альфа")]
+    [InlineData("Alfa")]
+    public async Task Find_counterparties_returns_candidates_and_a_clear_best_match(string query)
+    {
+        RequirePostgres();
+        await using var client = await f.ClientAsync(f.KeyA);
+        var (body, raw) = await McpFixture.CallAsync(client, "find_counterparties", new { query });
+        Assert.True(raw.IsError != true, body.GetRawText());
+        var data = body.GetProperty("data");
+        Assert.Equal(Alpha, data.GetProperty("best_match").GetString());
+        var first = data.GetProperty("candidates")[0];
+        Assert.Equal(Alpha, first.GetProperty("inn").GetString());
+        Assert.True(first.GetProperty("best_match").GetBoolean());
+        Assert.Equal("Alpha LLC", first.GetProperty("name").GetProperty("untrusted_text").GetString());
+        // Bank turnover per currency (UZS and USD for Alpha), never mixed.
+        var currencies = first.GetProperty("bank_turnover").EnumerateArray().Select(t => t.GetProperty("currency").GetString()).ToList();
+        Assert.Equal(currencies.Distinct().Count(), currencies.Count);
+        Assert.Contains("USD", currencies);
+        // Tenant A has a bank fee without an INN in October: reported in notes, never a candidate.
+        Assert.Contains(body.GetProperty("notes").EnumerateArray(), n => n.GetString()!.Contains("have no counterparty INN"));
+        Assert.True(body.GetProperty("data").GetProperty("payments_without_inn_in_period").GetInt64() >= 1);
+    }
+
+    [Fact]
+    public async Task Find_counterparties_without_a_clear_winner_sets_no_best_match()
+    {
+        RequirePostgres();
+        await using var client = await f.ClientAsync(f.KeyA);
+        var (body, _) = await McpFixture.CallAsync(client, "find_counterparties", new { query = "ta" });
+        Assert.True(body.GetProperty("data").GetProperty("candidates").GetArrayLength() > 1);
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, body.GetProperty("data").GetProperty("best_match").ValueKind);
+        Assert.Contains(body.GetProperty("notes").EnumerateArray(), n => n.GetString()!.Contains("ask which one"));
+    }
+
+    [Fact]
+    public async Task Find_counterparties_is_isolated_by_tenant_and_inn_tools_point_to_it()
+    {
+        RequirePostgres();
+        await using var b = await f.ClientAsync(f.KeyB);
+        var (body, _) = await McpFixture.CallAsync(b, "find_counterparties", new { query = "Gamma" });
+        Assert.Equal(0, body.GetProperty("data").GetProperty("candidates").GetArrayLength()); // Gamma exists only in tenant A
+
+        var tools = await b.ListToolsAsync();
+        foreach (var name in new[] { "get_counterparty_payments", "get_counterparty_summary", "compare_counterparty_periods", "search_documents" })
+            Assert.Contains("call find_counterparties first; never guess an INN", tools.Single(t => t.Name == name).Description);
+        Assert.Contains("Romashka MChJ", tools.Single(t => t.Name == "find_counterparties").Description);
     }
 
     private Task<List<string>> AuditStatusesAsync(Guid keyId) =>
