@@ -4,5 +4,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Synect.Infrastructure\Synect.Infrastructure.csproj" />
+    <ProjectReference Include="..\Synect.Mcp\Synect.Mcp.csproj" />
   </ItemGroup>
 </Project>

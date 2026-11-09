@@ -13,6 +13,22 @@ public sealed record DocumentCount(string Status, string? StatusName, string Doc
 
 public sealed record VatSummary(EdoDocumentOwner Owner, string Currency, int Count, long TotalSum, long TotalVatSum, long TotalDeliverySum);
 
+/// <summary>Status groups of the VAT report: signed (3, 8), awaiting a signature (1, 2, 6, 60), anything else.</summary>
+public enum VatStatusGroup
+{
+    Signed,
+    AwaitingSignature,
+    Other,
+}
+
+/// <param name="IsCounted">Whether the status is in Analytics:Edo:CountedStatuses (included in <see cref="VatReport.Totals"/>).</param>
+public sealed record VatStatusLine(
+    EdoDocumentOwner Owner, string Status, string? StatusName, VatStatusGroup Group, bool IsCounted,
+    string Currency, int Count, long TotalSum, long TotalVatSum, long TotalDeliverySum);
+
+/// <summary>V7 with a breakdown by status: totals over counted statuses, plus every status of the period separately.</summary>
+public sealed record VatReport(IReadOnlyList<VatSummary> Totals, IReadOnlyList<VatStatusLine> ByStatus, IReadOnlyList<string> CountedStatuses);
+
 /// <summary>Search filters; all optional and combined with AND. Number and contract number match exactly or by prefix.</summary>
 public sealed record DocumentSearch(
     string? Number = null, string? CounterpartyInn = null, string? ContractNumber = null,
@@ -115,6 +131,39 @@ public sealed class DocumentsAnalytics(AnalyticsContext ctx)
                     ? new VatSummary(o, ctx.Options.Edo.Currency, r.Count, r.TotalSum, r.TotalVatSum, r.TotalDeliverySum)
                     : new VatSummary(o, ctx.Options.Edo.Currency, 0, 0, 0, 0)).ToList();
         }, ct);
+
+    /// <summary>
+    /// V7 with a breakdown by status (one query): totals per owner over the counted statuses, and per owner and
+    /// status for every status of the period, so that signed (3, 8) and awaiting-signature documents are separate.
+    /// </summary>
+    public Task<AnalyticsResult<VatReport>> GetVatReportAsync(DatePeriod period, DateBasis basis, CancellationToken ct) =>
+        ctx.RunAsync(async token =>
+        {
+            var sql = new Sql()
+                .Raw("select d.owner, d.status, count(*)::int as count, coalesce(sum(d.total_sum), 0)::bigint as total_sum,")
+                .Raw(" coalesce(sum(d.total_vat_sum), 0)::bigint as total_vat_sum, coalesce(sum(d.total_delivery_sum), 0)::bigint as total_delivery_sum")
+                .Raw(" from edo_documents d where d.tenant_id = ").P(ctx.TenantId);
+            PeriodFilter(sql, ctx, "d", period, basis);
+            sql.Raw(" group by d.owner, d.status order by d.owner, d.status");
+            var rows = await ctx.QueryAsync<VatStatusRow>(sql, token);
+            var counted = ctx.Options.Edo.CountedStatuses;
+            var currency = ctx.Options.Edo.Currency;
+            var lines = rows.Select(r => new VatStatusLine(Enum.Parse<EdoDocumentOwner>(r.Owner), r.Status, StatusName(r.Status),
+                GroupOf(r.Status), counted.Contains(r.Status), currency, r.Count, r.TotalSum, r.TotalVatSum, r.TotalDeliverySum)).ToList();
+            var totals = new[] { EdoDocumentOwner.Incoming, EdoDocumentOwner.Outgoing }.Select(o =>
+            {
+                var c = lines.Where(l => l.Owner == o && l.IsCounted).ToList();
+                return new VatSummary(o, currency, c.Sum(l => l.Count), c.Sum(l => l.TotalSum), c.Sum(l => l.TotalVatSum), c.Sum(l => l.TotalDeliverySum));
+            }).ToList();
+            return new VatReport(totals, lines, counted);
+        }, ct);
+
+    public static VatStatusGroup GroupOf(string status) => status switch
+    {
+        "3" or "8" => VatStatusGroup.Signed,
+        "1" or "2" or "6" or "60" => VatStatusGroup.AwaitingSignature,
+        _ => VatStatusGroup.Other,
+    };
 
     /// <summary>Adds the period condition for the chosen date basis (local dates; timestamps compared in UTC).</summary>
     internal static void PeriodFilter(Sql sql, AnalyticsContext ctx, string alias, DatePeriod period, DateBasis basis)
@@ -222,6 +271,16 @@ public sealed class DocumentsAnalytics(AnalyticsContext ctx)
         public string Owner { get; set; } = "";
         public int Count { get; set; }
         public long TotalSum { get; set; }
+    }
+
+    private sealed class VatStatusRow
+    {
+        public string Owner { get; set; } = "";
+        public string Status { get; set; } = "";
+        public int Count { get; set; }
+        public long TotalSum { get; set; }
+        public long TotalVatSum { get; set; }
+        public long TotalDeliverySum { get; set; }
     }
 
     private sealed class VatRow

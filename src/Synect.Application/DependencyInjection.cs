@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Synect.Application.Abstractions;
+using Synect.Application.Access;
 using Synect.Application.Adapters;
 using Synect.Application.Analytics;
 using Synect.Application.Analytics.Totals;
@@ -53,6 +54,10 @@ public static class DependencyInjection
         services.AddScoped<SyncRecovery>();
 
         services.AddScoped<ISourceFreshnessQuery, SourceFreshnessQuery>();
+
+        // Client API keys and the tool call journal (MCP).
+        services.AddScoped<ApiKeyService>();
+        services.AddSingleton<ToolAuditWriter>();
 
         // Analytics (read-only over the database) and precomputed totals.
         services.AddOptions<AnalyticsOptions>();

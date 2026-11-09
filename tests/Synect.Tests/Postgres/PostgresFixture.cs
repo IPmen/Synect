@@ -69,6 +69,7 @@ public sealed class PostgresFixture : IAsyncLifetime
             CREATE ROLE {AppRole} NOLOGIN;
             GRANT USAGE ON SCHEMA public TO {AppRole};
             GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {AppRole};
+            GRANT EXECUTE ON FUNCTION synect_resolve_api_key(bytea) TO {AppRole};
             """);
 
         // The application session switches to the restricted role right at connection start.

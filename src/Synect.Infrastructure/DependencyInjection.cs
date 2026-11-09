@@ -4,6 +4,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Synect.Application;
 using Synect.Application.Abstractions;
+using Synect.Application.Access;
+using Synect.Infrastructure.Access;
 using Synect.Application.Adapters;
 using Synect.Application.Queue;
 using Synect.Application.Resilience;
@@ -44,6 +46,7 @@ public static class DependencyInjection
                 .AddInterceptors(sp.GetRequiredService<TenantSessionInterceptor>());
         });
         services.AddScoped<ISynectDbContext>(sp => sp.GetRequiredService<SynectDbContext>());
+        services.AddScoped<IApiKeyResolver, PostgresApiKeyResolver>();
 
         services.AddSynectDataProtection(configuration);
         services.AddSynectSecretStore();

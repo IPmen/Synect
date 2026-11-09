@@ -5,6 +5,7 @@
     <Project Path="src/Synect.DevTools/Synect.DevTools.csproj" />
     <Project Path="src/Synect.Domain/Synect.Domain.csproj" />
     <Project Path="src/Synect.Infrastructure/Synect.Infrastructure.csproj" />
+    <Project Path="src/Synect.Mcp/Synect.Mcp.csproj" />
     <Project Path="src/Synect.Worker/Synect.Worker.csproj" />
   </Folder>
   <Folder Name="/tests/">

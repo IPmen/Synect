@@ -18,6 +18,10 @@ using Synect.Infrastructure.Persistence;
 //   list-queries
 //   bench --tenant <name|id> [--runs 20]          p50/p95 of every analytics method
 //   explain --tenant <name|id> [--query <name>]   EXPLAIN (ANALYZE, BUFFERS) of the SQL each method runs
+//   create-api-key <tenant> [--scopes read,sync_request] [--name ...]   prints the new key ONCE
+//   revoke-api-key <tenant> <key id|key prefix>
+//   list-api-keys <tenant>                        id, prefix, scopes, created/last used/revoked (never the key)
+//   test-db-leftovers [--drop]                    temporary databases/roles left by PostgreSQL tests
 
 var command = args.FirstOrDefault() ?? "help";
 var options = CliArgs.Parse(args.Skip(1).ToArray());
@@ -78,8 +82,16 @@ try
         case "explain":
             await new Bench(services, capture).ExplainAsync(await Tenant(), options.Get("query"));
             break;
+        case "create-api-key":
+            return await ApiKeyCommands.CreateAsync(services, await Tenant(), options);
+        case "revoke-api-key":
+            return await ApiKeyCommands.RevokeAsync(services, await Tenant(), Positional(2) ?? throw new ArgumentException("revoke-api-key <tenant> <key id|key prefix>"));
+        case "list-api-keys":
+            return await ApiKeyCommands.ListAsync(services, await Tenant());
+        case "test-db-leftovers":
+            return await TestDbLeftovers.RunAsync(builder.Configuration, options.Get("drop") == "true");
         default:
-            Console.WriteLine("Commands: seed-demo, seed-load, rebuild-totals, list-queries, query <name>, bench, explain. See Program.cs.");
+            Console.WriteLine("Commands: seed-demo, seed-load, rebuild-totals, list-queries, query <name>, bench, explain, create-api-key, revoke-api-key, list-api-keys, test-db-leftovers. See Program.cs.");
             break;
     }
 }
@@ -90,9 +102,13 @@ catch (Exception ex)
 }
 return 0;
 
+// Positional arguments come right after the command, before any --option.
+string? Positional(int index) => args.Skip(1).TakeWhile(a => !a.StartsWith("--", StringComparison.Ordinal)).ElementAtOrDefault(index - 1);
+
 async Task<Guid> Tenant()
 {
-    var key = options.Get("tenant") ?? throw new ArgumentException("--tenant <name|id> is required");
+    var key = options.Get("tenant") ?? (command.EndsWith("-api-key") || command == "list-api-keys" ? Positional(1) : null)
+        ?? throw new ArgumentException("--tenant <name|id> is required");
     await using var scope = services.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<SynectDbContext>();
     if (Guid.TryParse(key, out var id) && await db.Tenants.AnyAsync(t => t.Id == id)) return id;

@@ -17,7 +17,7 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
     [
         "connections", "sync_runs", "raw_objects", "bank_accounts", "bank_transactions",
         "bank_daily_balances", "edo_documents", "edo_document_status_logs", "counterparties",
-        "sync_jobs", "connection_secrets", "analytics_counterparty_monthly",
+        "sync_jobs", "connection_secrets", "analytics_counterparty_monthly", "tool_audit_log",
     ];
 
     private void RequirePostgres() => Assert.SkipUnless(fixture.Available, PostgresFixture.SkipReason);
@@ -43,6 +43,9 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
                 $"SELECT relrowsecurity::text || ',' || relforcerowsecurity::text FROM pg_class WHERE relname = '{table}'");
             Assert.Equal("true,true", flags);
         }
+        // api_keys: RLS enabled but not forced, so that only the owner-defined lookup function bypasses it.
+        Assert.Equal("true,false", await fixture.ScalarAsync<string>(
+            "SELECT relrowsecurity::text || ',' || relforcerowsecurity::text FROM pg_class WHERE relname = 'api_keys'"));
         Assert.Equal(1L, await fixture.ScalarAsync<long>("SELECT count(*) FROM pg_class WHERE relname = 'tenants'"));
         var nonTenantFirst = await fixture.ScalarAsync<long>("""
             SELECT count(*) FROM pg_index i
@@ -50,6 +53,8 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
             JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = i.indkey[0]
             WHERE c.relname <> 'tenants' AND c.relname NOT LIKE '\_\_%' AND c.relnamespace = 'public'::regnamespace
               AND a.attname <> 'tenant_id'
+              -- Deliberate exception: API keys are looked up by hash before the tenant is known.
+              AND NOT (c.relname = 'api_keys' AND a.attname = 'key_hash')
             """);
         Assert.Equal(0L, nonTenantFirst);
     }

@@ -28,6 +28,7 @@ public sealed class AnalyticsFixture : IAsyncLifetime
     private readonly PostgresFixture _pg = new();
 
     public bool Available => _pg.Available;
+    public PostgresFixture Postgres => _pg;
     public TestHost Host => _pg.Host;
     public Guid TenantA { get; private set; }
     public Guid TenantB { get; private set; }

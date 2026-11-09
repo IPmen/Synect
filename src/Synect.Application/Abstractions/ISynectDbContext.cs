@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Synect.Domain.Access;
 using Synect.Domain.Analytics;
 using Synect.Domain.Banking;
 using Synect.Domain.Counterparties;
@@ -30,6 +31,8 @@ public interface ISynectDbContext
     DbSet<SyncJob> SyncJobs { get; }
     DbSet<ConnectionSecret> ConnectionSecrets { get; }
     DbSet<CounterpartyMonthly> CounterpartyMonthly { get; }
+    DbSet<ApiKey> ApiKeys { get; }
+    DbSet<ToolAuditLog> ToolAuditLogs { get; }
 
     DatabaseFacade Database { get; }
     ChangeTracker ChangeTracker { get; }

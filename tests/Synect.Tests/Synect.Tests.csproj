@@ -14,9 +14,12 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Synect.Infrastructure\Synect.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Synect.Api\Synect.Api.csproj" />
+    <ProjectReference Include="..\..\src\Synect.Mcp\Synect.Mcp.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Synect.Domain.Access;
 using Synect.Domain.Analytics;
 using Synect.Domain.Banking;
 using Synect.Domain.Common;
@@ -240,5 +241,35 @@ internal sealed class CounterpartyMonthlyConfiguration : IEntityTypeConfiguratio
         b.Property(e => e.Currency).HasMaxLength(3);
         b.HasIndex(e => new { e.TenantId, e.CounterpartyInn, e.Month, e.Currency }).IsUnique();
         b.HasIndex(e => new { e.TenantId, e.Month, e.Currency });
+    }
+}
+
+internal sealed class ApiKeyConfiguration : IEntityTypeConfiguration<ApiKey>
+{
+    public void Configure(EntityTypeBuilder<ApiKey> b)
+    {
+        b.ToTable("api_keys");
+        b.ConfigureTenantEntity();
+        b.Property(e => e.Name).HasMaxLength(256);
+        b.Property(e => e.KeyHash).HasMaxLength(32);
+        b.Property(e => e.KeyPrefix).HasMaxLength(32);
+        b.Ignore(e => e.IsRevoked);
+        // Lookup by hash happens before the tenant is known (synect_resolve_api_key), so the hash is unique globally.
+        b.HasIndex(e => e.KeyHash).IsUnique();
+    }
+}
+
+internal sealed class ToolAuditLogConfiguration : IEntityTypeConfiguration<ToolAuditLog>
+{
+    public void Configure(EntityTypeBuilder<ToolAuditLog> b)
+    {
+        b.ToTable("tool_audit_log");
+        b.ConfigureTenantEntity();
+        b.Property(e => e.Tool).HasMaxLength(64);
+        b.Property(e => e.Parameters).HasColumnType(TenantEntityConfiguration.Jsonb);
+        b.Property(e => e.Status).HasConversion<string>().HasMaxLength(32);
+        b.Property(e => e.ErrorMessage).HasMaxLength(2000);
+        b.HasOne<ApiKey>().WithMany().HasForeignKey(e => new { e.TenantId, e.ApiKeyId }).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(e => new { e.TenantId, e.StartedAt });
     }
 }

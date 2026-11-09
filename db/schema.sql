@@ -915,3 +915,178 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    CREATE TABLE api_keys (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        name character varying(256) NOT NULL,
+        key_hash bytea NOT NULL,
+        key_prefix character varying(32) NOT NULL,
+        scopes text[] NOT NULL,
+        created_at timestamp with time zone NOT NULL,
+        last_used_at timestamp with time zone,
+        revoked_at timestamp with time zone,
+        CONSTRAINT pk_api_keys PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_api_keys_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    CREATE TABLE tool_audit_log (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        api_key_id uuid NOT NULL,
+        tool character varying(64) NOT NULL,
+        parameters jsonb NOT NULL,
+        started_at timestamp with time zone NOT NULL,
+        duration_ms integer NOT NULL,
+        row_count integer,
+        status character varying(32) NOT NULL,
+        error_message character varying(2000),
+        CONSTRAINT pk_tool_audit_log PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_tool_audit_log_api_keys_tenant_id_api_key_id FOREIGN KEY (tenant_id, api_key_id) REFERENCES api_keys (tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_tool_audit_log_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    CREATE UNIQUE INDEX ix_api_keys_key_hash ON api_keys (key_hash);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    CREATE INDEX ix_tool_audit_log_tenant_id_api_key_id ON tool_audit_log (tenant_id, api_key_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    CREATE INDEX ix_tool_audit_log_tenant_id_started_at ON tool_audit_log (tenant_id, started_at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_key_hash_length CHECK (octet_length(key_hash) = 32);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_scopes CHECK (scopes <@ ARRAY['read', 'sync_request']::text[]);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    ALTER TABLE tool_audit_log ADD CONSTRAINT ck_tool_audit_log_status CHECK (status IN ('Ok', 'Error', 'RateLimited', 'Timeout'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    ALTER TABLE tool_audit_log ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    ALTER TABLE tool_audit_log FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    CREATE POLICY tenant_isolation ON tool_audit_log USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    CREATE POLICY tenant_isolation ON api_keys USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    CREATE FUNCTION synect_resolve_api_key(p_key_hash bytea)
+    RETURNS TABLE (api_key_id uuid, tenant_id uuid, scopes text[])
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+    AS $fn$
+    #variable_conflict use_column
+    BEGIN
+        IF p_key_hash IS NULL OR octet_length(p_key_hash) <> 32 THEN
+            RETURN;
+        END IF;
+        RETURN QUERY
+            SELECT k.id, k.tenant_id, k.scopes FROM public.api_keys k
+            WHERE k.key_hash = p_key_hash AND k.revoked_at IS NULL;
+        IF FOUND THEN
+            -- At most one write per key and minute.
+            UPDATE public.api_keys SET last_used_at = now()
+            WHERE key_hash = p_key_hash AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute');
+        END IF;
+    END
+    $fn$;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    REVOKE ALL ON FUNCTION synect_resolve_api_key(bytea) FROM PUBLIC;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    DO $do$
+    BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'synect_app') THEN
+            GRANT EXECUTE ON FUNCTION synect_resolve_api_key(bytea) TO synect_app;
+        END IF;
+    END
+    $do$;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261109164934_McpAccessStage4') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261109164934_McpAccessStage4', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+
