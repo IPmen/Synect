@@ -1,4 +1,5 @@
 using System.Text;
+using Synect.Domain.Text;
 
 namespace Synect.Domain.Counterparties;
 
@@ -12,39 +13,6 @@ namespace Synect.Domain.Counterparties;
 /// </summary>
 public static class CounterpartyNameNormalizer
 {
-    /// <summary>Cyrillic (Russian and Uzbek) to Latin, close to the official Uzbek Latin alphabet.</summary>
-    private static readonly Dictionary<char, string> Cyrillic = new()
-    {
-        ['а'] = "a", ['б'] = "b", ['в'] = "v", ['г'] = "g", ['д'] = "d", ['е'] = "e", ['ё'] = "yo", ['ж'] = "j",
-        ['з'] = "z", ['и'] = "i", ['й'] = "y", ['к'] = "k", ['л'] = "l", ['м'] = "m", ['н'] = "n", ['о'] = "o",
-        ['п'] = "p", ['р'] = "r", ['с'] = "s", ['т'] = "t", ['у'] = "u", ['ф'] = "f", ['х'] = "h", ['ц'] = "ts",
-        ['ч'] = "ch", ['ш'] = "sh", ['щ'] = "sh", ['ъ'] = "", ['ы'] = "i", ['ь'] = "", ['э'] = "e", ['ю'] = "yu",
-        ['я'] = "ya",
-        // Uzbek letters.
-        ['ў'] = "o", ['қ'] = "k", ['ғ'] = "g", ['ҳ'] = "h",
-        // Kazakh / Karakalpak letters sometimes seen in names.
-        ['ә'] = "a", ['ө'] = "o", ['ү'] = "u", ['ң'] = "n", ['і'] = "i",
-        // Latin letters with diacritics (the app runs with invariant globalization, so string.Normalize cannot be
-        // relied on). Uzbek Latin of 1993-1995 used ş, ç, ğ, ö for sh, ch, g', o'.
-        ['ş'] = "sh", ['ç'] = "ch", ['ğ'] = "g", ['ı'] = "i", ['ö'] = "o", ['ü'] = "u",
-        ['à'] = "a", ['á'] = "a", ['â'] = "a", ['ã'] = "a", ['ä'] = "a", ['å'] = "a",
-        ['è'] = "e", ['é'] = "e", ['ê'] = "e", ['ë'] = "e",
-        ['ì'] = "i", ['í'] = "i", ['î'] = "i", ['ï'] = "i",
-        ['ò'] = "o", ['ó'] = "o", ['ô'] = "o", ['õ'] = "o", ['ø'] = "o",
-        ['ù'] = "u", ['ú'] = "u", ['û'] = "u", ['ñ'] = "n", ['ý'] = "y", ['ÿ'] = "y",
-    };
-
-    /// <summary>Latin spellings of the same sound, after transliteration (applied in this order).</summary>
-    private static readonly (string From, string To)[] LatinVariants =
-    [
-        ("kh", "h"), // Russian-style "Khamkor" = Uzbek "Hamkor" / "Xamkor"
-        ("ph", "f"), // "Alpha" = "Alfa" = "Альфа"
-        ("zh", "j"), // "Zhasur" = "Jasur"
-        ("x", "h"),  // Uzbek Latin x = Cyrillic х
-        ("q", "k"),  // Uzbek Latin q = қ, often written к in Russian spelling
-        ("w", "v"),
-    ];
-
     /// <summary>Legal forms (already canonical: transliterated, lower case, no signs). Multi-word forms first.</summary>
     private static readonly string[][] LegalForms =
     [
@@ -63,33 +31,23 @@ public static class CounterpartyNameNormalizer
         ["llc"], ["ltd"], ["jsc"], ["mchj"], ["dup"], ["gup"], ["unitarnoe", "predpriyatie"],
     ];
 
-    private static readonly HashSet<char> Apostrophes =
-        ['\'', '`', (char)0x00B4, (char)0x02BB, (char)0x02BC, (char)0x2018, (char)0x2019, (char)0x02B9, (char)0x02C8];
-
     public static string Normalize(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return string.Empty;
 
-        // 1. Lower case and Cyrillic to Latin; apostrophes (o', g', tutuq belgisi) and other signs become separators
-        //    later, so "O'zbekiston", "Oʻzbekiston" and "Ўзбекистон" all give "ozbekiston".
-        var latin = new StringBuilder(name.Length + 8);
-        foreach (var raw in name.ToLowerInvariant())
-        {
-            if (Apostrophes.Contains(raw)) continue;
-            if (Cyrillic.TryGetValue(raw, out var mapped)) latin.Append(mapped);
-            else latin.Append(raw);
-        }
+        // 1. Lower case and Cyrillic to Latin (shared with the payment purpose parser); apostrophes (o', g', tutuq
+        //    belgisi) are dropped, so "O'zbekiston", "Oʻzbekiston" and "Ўзбекистон" all give "ozbekiston".
+        var latin = LatinTransliterator.ToLatinLower(name);
 
         // 2. Letters and digits only; everything else (quotes «» " „, dots, dashes, commas) separates words.
         var cleaned = new StringBuilder(latin.Length);
-        foreach (var c in latin.ToString())
+        foreach (var c in latin)
         {
             if (char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.NonSpacingMark) continue; // combining accents
             cleaned.Append(char.IsLetterOrDigit(c) ? c : ' ');
         }
 
-        var text = cleaned.ToString();
-        foreach (var (from, to) in LatinVariants) text = text.Replace(from, to, StringComparison.Ordinal);
+        var text = LatinTransliterator.ApplyLatinVariants(cleaned.ToString());
 
         var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
         var withoutForms = RemoveLegalForms(words);

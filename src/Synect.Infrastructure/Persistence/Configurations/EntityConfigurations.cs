@@ -7,6 +7,7 @@ using Synect.Domain.Common;
 using Synect.Domain.Counterparties;
 using Synect.Domain.Edo;
 using Synect.Domain.Raw;
+using Synect.Domain.Reconciliation;
 using Synect.Domain.Sync;
 using Synect.Domain.Tenants;
 
@@ -160,6 +161,8 @@ internal sealed class EdoDocumentConfiguration : IEntityTypeConfiguration<EdoDoc
         b.Property(e => e.CounterpartyInn).HasMaxLength(16);
         b.Property(e => e.CounterpartyName).HasMaxLength(512);
         b.Property(e => e.ContractNumber).HasMaxLength(256);
+        b.Property(e => e.Currency).HasMaxLength(3).HasDefaultValue("UZS");
+        b.Property(e => e.SellerAccount).HasMaxLength(34);
         b.Property(e => e.SourceHash).HasMaxLength(64).IsFixedLength();
         b.HasOne<Connection>().WithMany().HasForeignKey(e => new { e.TenantId, e.ConnectionId }).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(e => new { e.TenantId, e.ConnectionId, e.ExternalId }).IsUnique();
@@ -269,6 +272,7 @@ internal sealed class ToolAuditLogConfiguration : IEntityTypeConfiguration<ToolA
         b.Property(e => e.Parameters).HasColumnType(TenantEntityConfiguration.Jsonb);
         b.Property(e => e.Status).HasConversion<string>().HasMaxLength(32);
         b.Property(e => e.ErrorMessage).HasMaxLength(2000);
+        b.Property(e => e.Details).HasColumnType(TenantEntityConfiguration.Jsonb);
         b.HasOne<ApiKey>().WithMany().HasForeignKey(e => new { e.TenantId, e.ApiKeyId }).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(e => new { e.TenantId, e.StartedAt });
     }
@@ -286,5 +290,90 @@ internal sealed class CounterpartyAliasConfiguration : IEntityTypeConfiguration<
         b.Property(e => e.Source).HasConversion<string>().HasMaxLength(16);
         b.HasIndex(e => new { e.TenantId, e.CounterpartyInn, e.Source, e.Name }).IsUnique();
         // The trigram GIN index (tenant_id, normalized_name gin_trgm_ops) is created in the migration (pg_trgm, btree_gin).
+    }
+}
+
+internal sealed class ReconciliationRunConfiguration : IEntityTypeConfiguration<ReconciliationRun>
+{
+    public void Configure(EntityTypeBuilder<ReconciliationRun> b)
+    {
+        b.ToTable("reconciliation_runs");
+        b.ConfigureTenantEntity();
+        b.Property(e => e.Scope).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.RulesVersion).HasMaxLength(64);
+        b.HasIndex(e => new { e.TenantId, e.StartedAt });
+    }
+}
+
+internal sealed class ReconciliationMatchConfiguration : IEntityTypeConfiguration<ReconciliationMatch>
+{
+    public void Configure(EntityTypeBuilder<ReconciliationMatch> b)
+    {
+        b.ToTable("reconciliation_matches");
+        b.ConfigureTenantEntity();
+        b.Property(e => e.MatchType).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.Status).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.Reasons).HasColumnType(TenantEntityConfiguration.Jsonb);
+        b.Property(e => e.CounterpartyInn).HasMaxLength(16);
+        b.Property(e => e.Currency).HasMaxLength(3);
+        b.Property(e => e.DocumentOwner).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.Signature).HasMaxLength(64);
+        b.Property(e => e.DecisionComment).HasMaxLength(ReconciliationMatch.MaxCommentLength);
+        b.HasOne<ReconciliationRun>().WithMany().HasForeignKey(e => new { e.TenantId, e.RunId }).OnDelete(DeleteBehavior.Restrict);
+        // Recalculation of one INN, and the per-INN queries.
+        b.HasIndex(e => new { e.TenantId, e.CounterpartyInn, e.Status });
+        b.HasIndex(e => new { e.TenantId, e.Status, e.MatchType });
+    }
+}
+
+internal sealed class ReconciliationMatchDecisionConfiguration : IEntityTypeConfiguration<ReconciliationMatchDecision>
+{
+    public void Configure(EntityTypeBuilder<ReconciliationMatchDecision> b)
+    {
+        b.ToTable("reconciliation_match_decisions");
+        b.ConfigureTenantEntity();
+        b.Property(e => e.PreviousStatus).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.NewStatus).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.Comment).HasMaxLength(ReconciliationMatch.MaxCommentLength);
+        // History lives as long as the match (a Proposed match is never decided, so it has no history to lose).
+        b.HasOne<ReconciliationMatch>().WithMany().HasForeignKey(e => new { e.TenantId, e.MatchId }).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(e => new { e.TenantId, e.MatchId, e.DecidedAt });
+    }
+}
+
+internal sealed class ReconciliationMatchItemConfiguration : IEntityTypeConfiguration<ReconciliationMatchItem>
+{
+    public void Configure(EntityTypeBuilder<ReconciliationMatchItem> b)
+    {
+        b.ToTable("reconciliation_match_items");
+        b.ConfigureTenantEntity();
+        b.Property(e => e.Kind).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.MatchStatus).HasConversion<string>().HasMaxLength(16);
+        b.HasOne<ReconciliationMatch>().WithMany().HasForeignKey(e => new { e.TenantId, e.MatchId }).OnDelete(DeleteBehavior.Cascade);
+        b.HasIndex(e => new { e.TenantId, e.MatchId, e.Kind, e.RefId }).IsUnique();
+        // Which matches a payment or a document is in.
+        b.HasIndex(e => new { e.TenantId, e.Kind, e.RefId });
+        // A payment or a document is in at most one Proposed match at a time.
+        b.HasIndex(e => new { e.TenantId, e.Kind, e.RefId })
+            .IsUnique()
+            .HasFilter("match_status = 'Proposed'")
+            .HasDatabaseName("ux_reconciliation_match_items_proposed");
+    }
+}
+
+internal sealed class ReconciliationFindingConfiguration : IEntityTypeConfiguration<ReconciliationFinding>
+{
+    public void Configure(EntityTypeBuilder<ReconciliationFinding> b)
+    {
+        b.ToTable("reconciliation_findings");
+        b.ConfigureTenantEntity();
+        b.Property(e => e.Kind).HasConversion<string>().HasMaxLength(32);
+        b.Property(e => e.CounterpartyInn).HasMaxLength(16);
+        b.Property(e => e.SubjectKind).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.RelatedKind).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.Reasons).HasColumnType(TenantEntityConfiguration.Jsonb);
+        b.HasOne<ReconciliationRun>().WithMany().HasForeignKey(e => new { e.TenantId, e.RunId }).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(e => new { e.TenantId, e.CounterpartyInn });
+        b.HasIndex(e => new { e.TenantId, e.Kind, e.SubjectId });
     }
 }

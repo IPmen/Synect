@@ -104,6 +104,15 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
                           $"{counts.Totals} monthly total rows, {sw.Elapsed.TotalMinutes:F1} min");
     }
 
+    /// <summary>The golden set tenant with one fake bank and one fake Didox connection (data is loaded by reconcile-eval).</summary>
+    public async Task<(Guid Tenant, Guid Bank, Guid Edo)> EnsureGoldenTenantAsync()
+    {
+        var tenant = await EnsureTenantAsync(ReconciliationGoldenSet.TenantName, "319000001");
+        var bankId = await EnsureConnectionAsync(tenant, AdapterKind.Bank, "Kapital Bank (golden set)");
+        var edoId = await EnsureConnectionAsync(tenant, AdapterKind.Edo, "Didox (golden set)");
+        return (tenant, bankId, edoId);
+    }
+
     public Task<int> RebuildTotalsAsync(Guid tenant) => tenants.InTenantAsync(tenant, (sp, ct) =>
     {
         var db = sp.GetRequiredService<ISynectDbContext>();

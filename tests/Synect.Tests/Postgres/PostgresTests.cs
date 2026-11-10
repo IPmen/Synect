@@ -18,6 +18,8 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
         "connections", "sync_runs", "raw_objects", "bank_accounts", "bank_transactions",
         "bank_daily_balances", "edo_documents", "edo_document_status_logs", "counterparties",
         "sync_jobs", "connection_secrets", "analytics_counterparty_monthly", "tool_audit_log",
+        "counterparty_aliases", "reconciliation_runs", "reconciliation_matches", "reconciliation_match_items",
+        "reconciliation_findings", "reconciliation_match_decisions",
     ];
 
     private void RequirePostgres() => Assert.SkipUnless(fixture.Available, PostgresFixture.SkipReason);
@@ -43,6 +45,12 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
                 $"SELECT relrowsecurity::text || ',' || relforcerowsecurity::text FROM pg_class WHERE relname = '{table}'");
             Assert.Equal("true,true", flags);
         }
+        // No table with a tenant_id column is left out of the list above (api_keys is checked separately).
+        var unlisted = await fixture.ScalarAsync<string>(
+            "SELECT coalesce(string_agg(table_name, ',' ORDER BY table_name), '') FROM information_schema.columns " +
+            "WHERE table_schema = 'public' AND column_name = 'tenant_id' AND table_name <> 'api_keys' AND table_name <> ALL (ARRAY['" +
+            string.Join("','", TenantTables) + "'])");
+        Assert.Equal("", unlisted);
         // api_keys: RLS enabled but not forced, so that only the owner-defined lookup function bypasses it.
         Assert.Equal("true,false", await fixture.ScalarAsync<string>(
             "SELECT relrowsecurity::text || ',' || relforcerowsecurity::text FROM pg_class WHERE relname = 'api_keys'"));

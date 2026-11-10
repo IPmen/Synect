@@ -1,0 +1,37 @@
+{
+  "_comment": "Words of payment purposes, used by PurposeParser. Write entries as people write them (Russian, Uzbek Cyrillic or Latin, any case, with or without apostrophes); they are transliterated and normalized the same way as the purpose. Multi-word entries match consecutive words. Extend freely.",
+  "invoiceKeywords": [
+    "счет-фактура", "счёт-фактура", "счет фактура", "счёт фактура", "счет-фактуре", "счет-фактуры", "счёт-фактуре", "счёт-фактуры", "счёту-фактуре", "счету-фактуре", "счет-фактурам", "счетам-фактурам", "счетам-фактуре",
+    "счетфактура", "сч-ф", "сч/ф", "с/ф", "с-ф", "сф", "эсф", "э-сф", "эл сф", "электронная счет-фактура", "фактура", "фактуре", "фактуры",
+    "hisob-faktura", "hisob faktura", "hisob-fakturaga", "hisob-fakturasi", "hisob-faktura bo'yicha", "hisobvaraq-faktura", "hisobvaraq faktura",
+    "ҳисоб-фактура", "ҳисобварақ-фактура", "хисоб-фактура", "h/f", "x/f", "hf", "esf", "schet-faktura", "schet-fakture", "schet-faktury", "schet faktura", "sf",
+    "invoice", "inv", "faktura"
+  ],
+  "actKeywords": [
+    "акт", "акта", "акту", "акт выполненных работ", "акт оказанных услуг", "акт вып работ", "акт сдачи-приемки",
+    "akt", "dalolatnoma", "dalolatnomasi", "dalolatnomaga", "bajarilgan ishlar dalolatnomasi", "далолатнома"
+  ],
+  "otherDocumentKeywords": [
+    "счет", "счёт", "счету", "счёту", "счета", "сч", "накладная", "накладной", "накладным", "ттн", "товарная накладная",
+    "hisobvaraq", "hisobvaraqqa", "schet", "nakladnaya", "yuk xati", "ҳисобварақ"
+  ],
+  "contractKeywords": [
+    "договор", "договору", "договора", "договоре", "договорам", "дог", "д-р", "д/р", "контракт", "контракту", "контракта",
+    "соглашение", "соглашению", "доп соглашение", "shartnoma", "shartnomaga", "shartnomasi", "shartnomasiga", "shartnomaning",
+    "шартнома", "шартномага", "шартномаси", "kontrakt", "dogovor", "contract", "agreement", "sh/n", "sh-n"
+  ],
+  "numberMarkers": [ "№", "no", "n", "nr", "nomer", "номер", "номеру", "raqam", "raqami", "raqamli", "рақам", "number", "num" ],
+  "fillers": [
+    "по", "к", "за", "согласно", "сог", "согл", "на", "в", "оплата", "оплате", "po", "k", "za", "asosan", "asosida",
+    "boyicha", "bo'yicha", "buyicha", "бўйича", "буйича", "uchun", "учун", "tolov", "to'lov", "тўлов", "oplata"
+  ],
+  "dateMarkers": [ "от", "ot", "sanasi", "sanadagi", "sana", "sanali", "dan", "дан", "санаси", "г", "года", "год", "yil", "yilda", "й" ],
+  "uzbekNumberSuffixes": [ "sonli", "son", "raqamli", "сонли", "сон" ],
+  "listConnectors": [ "и", "va", "ва", "and" ],
+  "months": {
+    "январь": 1, "января": 1, "yanvar": 1, "февраль": 2, "февраля": 2, "fevral": 2, "март": 3, "марта": 3, "mart": 3,
+    "апрель": 4, "апреля": 4, "aprel": 4, "май": 5, "мая": 5, "may": 5, "июнь": 6, "июня": 6, "iyun": 6,
+    "июль": 7, "июля": 7, "iyul": 7, "август": 8, "августа": 8, "avgust": 8, "сентябрь": 9, "сентября": 9, "sentyabr": 9,
+    "октябрь": 10, "октября": 10, "oktyabr": 10, "ноябрь": 11, "ноября": 11, "noyabr": 11, "декабрь": 12, "декабря": 12, "dekabr": 12
+  }
+}

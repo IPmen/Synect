@@ -20,6 +20,9 @@ public sealed class SearchOptions
 
     /// <summary>A single best match must lead the second candidate by at least this much similarity.</summary>
     public double BestMatchMargin { get; set; } = 0.15;
+
+    /// <summary>A warning is logged (once a day per tenant) when a tenant has more name spellings than this; 0 turns it off.</summary>
+    public int AliasWarningThreshold { get; set; } = 30_000;
 }
 
 public sealed record EdoTurnover(string Currency, int IncomingCount, long IncomingSum, int OutgoingCount, long OutgoingSum);

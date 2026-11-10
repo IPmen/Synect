@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 using Synect.Application.Adapters;
 using Synect.Domain.Banking;
+using Synect.Domain.Common;
 
 namespace Synect.Infrastructure.Adapters.KapitalBank;
 
@@ -216,7 +217,7 @@ public static class CurrencyCodes
 {
     /// <summary>
     /// Account currency: the bank's "val" field first; if empty, digits 6-8 of the 20-digit account number.
-    /// "000" and "UZS" become "UZS"; any other code is kept as is.
+    /// Numeric ISO 4217 codes become alphabetic (see <see cref="IsoCurrency"/>); unknown codes are kept as is.
     /// </summary>
     public static string Resolve(string? val, string accountNumber) =>
         string.IsNullOrWhiteSpace(val) ? FromAccount(accountNumber) : Normalize(val);
@@ -224,9 +225,5 @@ public static class CurrencyCodes
     public static string FromAccount(string accountNumber) =>
         accountNumber.Length == 20 ? Normalize(accountNumber.Substring(5, 3)) : string.Empty;
 
-    public static string Normalize(string code)
-    {
-        var trimmed = code.Trim();
-        return trimmed == "000" || trimmed.Equals("UZS", StringComparison.OrdinalIgnoreCase) ? "UZS" : trimmed;
-    }
+    public static string Normalize(string code) => IsoCurrency.Normalize(code);
 }

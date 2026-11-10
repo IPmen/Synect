@@ -78,6 +78,20 @@ public sealed partial class ToolArgs(McpOptions options)
         return id;
     }
 
+    public Guid RequiredGuid(string name, string? value) =>
+        OptionalGuid(name, value) ?? throw new ToolArgumentException($"Parameter '{name}' is required: an id (UUID) as returned by another tool.");
+
+    /// <summary>Optional free-text comment: at most <paramref name="maxLength"/> characters, control characters not allowed.</summary>
+    public string? OptionalComment(string name, string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var text = value.Trim();
+        if (text.Length > maxLength || text.Any(c => char.IsControl(c) && c is not '\n' and not '\r' and not '\t'))
+            throw new ToolArgumentException($"Parameter '{name}' must be at most {maxLength} characters without control characters.");
+        _request[name] = text.Length > 200 ? text[..200] + "…" : text;
+        return text;
+    }
+
     /// <summary>One of the given snake_case values (case-insensitive).</summary>
     public T Enum<T>(string name, string? value, IReadOnlyDictionary<string, T> allowed)
     {
@@ -223,6 +237,29 @@ public static class ToolEnums
             ["new"] = Application.Analytics.Counterparties.CounterpartyChangeKind.New,
             ["lost"] = Application.Analytics.Counterparties.CounterpartyChangeKind.Lost,
         };
+
+    public static readonly IReadOnlyDictionary<string, Domain.Banking.TransactionDirection> PaymentDirection =
+        new Dictionary<string, Domain.Banking.TransactionDirection>
+        {
+            ["incoming"] = Domain.Banking.TransactionDirection.Incoming,
+            ["outgoing"] = Domain.Banking.TransactionDirection.Outgoing,
+        };
+
+    public static readonly IReadOnlyDictionary<string, Domain.Reconciliation.MatchStatus> MatchStatus =
+        new Dictionary<string, Domain.Reconciliation.MatchStatus>
+        {
+            ["proposed"] = Domain.Reconciliation.MatchStatus.Proposed,
+            ["confirmed"] = Domain.Reconciliation.MatchStatus.Confirmed,
+            ["rejected"] = Domain.Reconciliation.MatchStatus.Rejected,
+        };
+
+    /// <summary>include (default): all payments; only: payments without an INN; exclude: payments with an INN.</summary>
+    public static readonly IReadOnlyDictionary<string, bool?> WithoutInn = new Dictionary<string, bool?>
+    {
+        ["include"] = null,
+        ["only"] = true,
+        ["exclude"] = false,
+    };
 
     public static readonly IReadOnlyDictionary<string, string> Source = new Dictionary<string, string>
     {

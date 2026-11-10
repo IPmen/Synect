@@ -24,6 +24,12 @@ public sealed class FakeDidoxDocument
     public decimal TotalVatSum { get; init; }
     public DateTimeOffset Created { get; init; }
     public DateTimeOffset Updated { get; set; }
+
+    /// <summary>Seller's account written in the document (sellerAccount); omitted from the JSON when null.</summary>
+    public string? SellerAccount { get; init; }
+
+    /// <summary>Document currency field; omitted from the JSON when null (Didox default UZS).</summary>
+    public string? Currency { get; init; }
 }
 
 public sealed class FakeEdoScenario
@@ -81,6 +87,12 @@ public sealed class FakeEdoScenario
 
     /// <summary>Issued tokens and their expiry (360 minutes, as in Didox).</summary>
     internal readonly ConcurrentDictionary<string, DateTimeOffset> Tokens = new();
+
+    /// <summary>Uses exactly these documents instead of generated ones (golden data sets).</summary>
+    public void UseDocuments(IEnumerable<FakeDidoxDocument> documents)
+    {
+        lock (Sync) Documents = documents.ToList();
+    }
 
     /// <summary>Base time of seeded documents.</summary>
     public DateTimeOffset BaseTime { get; set; } = new(2026, 10, 1, 9, 0, 0, TimeSpan.FromHours(5));
@@ -216,7 +228,15 @@ public sealed class FakeEdoDataSource(TimeProvider time)
         return s.Documents;
     }
 
-    private static JsonObject ToJson(FakeDidoxDocument d) => new()
+    private static JsonObject ToJson(FakeDidoxDocument d)
+    {
+        var json = BaseJson(d);
+        if (d.SellerAccount is not null) json["sellerAccount"] = d.SellerAccount;
+        if (d.Currency is not null) json["currency"] = d.Currency;
+        return json;
+    }
+
+    private static JsonObject BaseJson(FakeDidoxDocument d) => new()
     {
         ["doc_id"] = d.DocId,
         ["name"] = d.Name,

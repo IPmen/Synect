@@ -5,6 +5,7 @@ using Synect.Application.Abstractions;
 using Synect.Application.Adapters;
 using Synect.Application.Analytics.Totals;
 using Synect.Application.Common;
+using Synect.Application.Reconciliation;
 using Synect.Application.Resilience;
 using Synect.Application.Secrets;
 using Synect.Domain.Banking;
@@ -36,6 +37,9 @@ public sealed class BankSyncService(
     AdapterCallPolicy policy,
     AnalyticsChangeSet changes,
     CounterpartyMonthlyRefresher monthly,
+    ReconciliationService reconciliation,
+    AliasVolumeMonitor aliasMonitor,
+    IOptions<ReconciliationOptions> reconciliationOptions,
     TimeProvider time,
     IOptions<BankSyncOptions> bankOptions,
     IOptions<CircuitBreakerOptions> breakerOptions,
@@ -134,7 +138,11 @@ public sealed class BankSyncService(
                 if (explicitRange is null && rangeFrom is { } f && rangeTo is { } t) run.SetRange(f, t);
                 // Precomputed totals for exactly the (INN, month) pairs this load touched, atomically with success.
                 await monthly.RefreshAsync(changes.Keys, token);
+                // Reconciliation of exactly the INNs whose operations changed (whole history of each), atomically too.
+                if (reconciliationOptions.Value.RunAfterLoad)
+                    await reconciliation.ReconcileAsync(ReconciliationScope.ForInns(changes.Keys.Select(k => k.Inn)), token);
                 changes.Clear();
+                await aliasMonitor.CheckAsync(db, connection.TenantId, token);
                 run.Succeed(now, allDaysClosed, records);
                 connection.MarkSyncSucceeded(now);
                 await db.SaveChangesAsync(token);

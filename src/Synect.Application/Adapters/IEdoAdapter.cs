@@ -7,6 +7,8 @@ namespace Synect.Application.Adapters;
 public sealed record EdoAdapterCapabilities(bool SupportsUpdatedSince, int PageSize);
 
 /// <summary>An EDO document in the common model. Amounts are in minor units.</summary>
+/// <param name="Currency">ISO 4217 alphabetic code; null means the provider default (UZS for Didox).</param>
+/// <param name="SellerAccount">Seller's bank account written in the document, when the provider gives it.</param>
 public sealed record EdoDocumentInfo(
     string ExternalId,
     string DocType,
@@ -25,7 +27,9 @@ public sealed record EdoDocumentInfo(
     string? StatusComment,
     DateTimeOffset? CreatedAt,
     DateTimeOffset? UpdatedAt,
-    RawRecord Raw);
+    RawRecord Raw,
+    string? Currency = null,
+    string? SellerAccount = null);
 
 public sealed record EdoDocumentPage(IReadOnlyList<EdoDocumentInfo> Items, int Page, bool HasMore);
 

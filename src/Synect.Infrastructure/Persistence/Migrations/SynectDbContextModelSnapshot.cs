@@ -91,6 +91,10 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("api_key_id");
 
+                    b.Property<string>("Details")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("details");
+
                     b.Property<int>("DurationMs")
                         .HasColumnType("integer")
                         .HasColumnName("duration_ms");
@@ -599,6 +603,14 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasDefaultValue("UZS")
+                        .HasColumnName("currency");
+
                     b.Property<string>("DocType")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -625,6 +637,11 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)")
                         .HasColumnName("owner");
+
+                    b.Property<string>("SellerAccount")
+                        .HasMaxLength(34)
+                        .HasColumnType("character varying(34)")
+                        .HasColumnName("seller_account");
 
                     b.Property<DateTimeOffset?>("SourceCreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -807,6 +824,334 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_raw_objects_tenant_id_connection_id_object_type_external_id");
 
                     b.ToTable("raw_objects", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Reconciliation.ReconciliationFinding", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Confidence")
+                        .HasColumnType("integer")
+                        .HasColumnName("confidence");
+
+                    b.Property<string>("CounterpartyInn")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("counterparty_inn");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Reasons")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("reasons");
+
+                    b.Property<Guid?>("RelatedId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("related_id");
+
+                    b.Property<string>("RelatedKind")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("related_kind");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("run_id");
+
+                    b.Property<Guid>("SubjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("subject_id");
+
+                    b.Property<string>("SubjectKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("subject_kind");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_reconciliation_findings");
+
+                    b.HasIndex("TenantId", "CounterpartyInn")
+                        .HasDatabaseName("ix_reconciliation_findings_tenant_id_counterparty_inn");
+
+                    b.HasIndex("TenantId", "RunId")
+                        .HasDatabaseName("ix_reconciliation_findings_tenant_id_run_id");
+
+                    b.HasIndex("TenantId", "Kind", "SubjectId")
+                        .HasDatabaseName("ix_reconciliation_findings_tenant_id_kind_subject_id");
+
+                    b.ToTable("reconciliation_findings", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Reconciliation.ReconciliationMatch", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Confidence")
+                        .HasColumnType("integer")
+                        .HasColumnName("confidence");
+
+                    b.Property<string>("CounterpartyInn")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("counterparty_inn");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<DateTimeOffset?>("DecidedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("decided_at");
+
+                    b.Property<Guid?>("DecidedByKey")
+                        .HasColumnType("uuid")
+                        .HasColumnName("decided_by_key");
+
+                    b.Property<string>("DecisionComment")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("decision_comment");
+
+                    b.Property<string>("DocumentOwner")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("document_owner");
+
+                    b.Property<long>("DocumentsTotal")
+                        .HasColumnType("bigint")
+                        .HasColumnName("documents_total");
+
+                    b.Property<string>("MatchType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("match_type");
+
+                    b.Property<long>("PaymentsTotal")
+                        .HasColumnType("bigint")
+                        .HasColumnName("payments_total");
+
+                    b.Property<string>("Reasons")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("reasons");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("run_id");
+
+                    b.Property<string>("Signature")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("signature");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_reconciliation_matches");
+
+                    b.HasIndex("TenantId", "RunId")
+                        .HasDatabaseName("ix_reconciliation_matches_tenant_id_run_id");
+
+                    b.HasIndex("TenantId", "CounterpartyInn", "Status")
+                        .HasDatabaseName("ix_reconciliation_matches_tenant_id_counterparty_inn_status");
+
+                    b.HasIndex("TenantId", "Status", "MatchType")
+                        .HasDatabaseName("ix_reconciliation_matches_tenant_id_status_match_type");
+
+                    b.ToTable("reconciliation_matches", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Reconciliation.ReconciliationMatchDecision", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Comment")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("comment");
+
+                    b.Property<DateTimeOffset>("DecidedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("decided_at");
+
+                    b.Property<Guid?>("DecidedByKey")
+                        .HasColumnType("uuid")
+                        .HasColumnName("decided_by_key");
+
+                    b.Property<Guid>("MatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("match_id");
+
+                    b.Property<string>("NewStatus")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("new_status");
+
+                    b.Property<string>("PreviousStatus")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("previous_status");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_reconciliation_match_decisions");
+
+                    b.HasIndex("TenantId", "MatchId", "DecidedAt")
+                        .HasDatabaseName("ix_reconciliation_match_decisions_tenant_id_match_id_decided_at");
+
+                    b.ToTable("reconciliation_match_decisions", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Reconciliation.ReconciliationMatchItem", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<long>("AllocatedAmountMinor")
+                        .HasColumnType("bigint")
+                        .HasColumnName("allocated_amount_minor");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid>("MatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("match_id");
+
+                    b.Property<string>("MatchStatus")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("match_status");
+
+                    b.Property<Guid>("RefId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ref_id");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_reconciliation_match_items");
+
+                    b.HasIndex("TenantId", "Kind", "RefId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_reconciliation_match_items_proposed")
+                        .HasFilter("match_status = 'Proposed'");
+
+                    b.HasIndex("TenantId", "MatchId", "Kind", "RefId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_reconciliation_match_items_tenant_id_match_id_kind_ref_id");
+
+                    b.ToTable("reconciliation_match_items", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Reconciliation.ReconciliationRun", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("CreatedCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("created_count");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finished_at");
+
+                    b.Property<int>("MatchCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("match_count");
+
+                    b.Property<int>("RemovedCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("removed_count");
+
+                    b.Property<string>("RulesVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("rules_version");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("scope");
+
+                    b.PrimitiveCollection<string[]>("ScopeInns")
+                        .HasColumnType("text[]")
+                        .HasColumnName("scope_inns");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_reconciliation_runs");
+
+                    b.HasIndex("TenantId", "StartedAt")
+                        .HasDatabaseName("ix_reconciliation_runs_tenant_id_started_at");
+
+                    b.ToTable("reconciliation_runs", (string)null);
                 });
 
             modelBuilder.Entity("Synect.Domain.Sync.Connection", b =>
@@ -1267,6 +1612,84 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_raw_objects_connections_tenant_id_connection_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Reconciliation.ReconciliationFinding", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_reconciliation_findings_tenants_tenant_id");
+
+                    b.HasOne("Synect.Domain.Reconciliation.ReconciliationRun", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "RunId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_reconciliation_findings_reconciliation_runs_tenant_id_run_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Reconciliation.ReconciliationMatch", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_reconciliation_matches_tenants_tenant_id");
+
+                    b.HasOne("Synect.Domain.Reconciliation.ReconciliationRun", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "RunId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_reconciliation_matches_reconciliation_runs_tenant_id_run_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Reconciliation.ReconciliationMatchDecision", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_reconciliation_match_decisions_tenants_tenant_id");
+
+                    b.HasOne("Synect.Domain.Reconciliation.ReconciliationMatch", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "MatchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_reconciliation_match_decisions_reconciliation_matches_tenan");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Reconciliation.ReconciliationMatchItem", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_reconciliation_match_items_tenants_tenant_id");
+
+                    b.HasOne("Synect.Domain.Reconciliation.ReconciliationMatch", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "MatchId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_reconciliation_match_items_reconciliation_matches_tenant_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Reconciliation.ReconciliationRun", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_reconciliation_runs_tenants_tenant_id");
                 });
 
             modelBuilder.Entity("Synect.Domain.Sync.Connection", b =>

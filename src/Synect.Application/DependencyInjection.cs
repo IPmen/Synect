@@ -7,6 +7,7 @@ using Synect.Application.Analytics;
 using Synect.Application.Analytics.Totals;
 using Synect.Application.Freshness;
 using Synect.Application.Queue;
+using Synect.Application.Reconciliation;
 using Synect.Application.Resilience;
 using Synect.Application.Secrets;
 using Synect.Application.Sync;
@@ -64,6 +65,13 @@ public static class DependencyInjection
         services.AddOptions<AnalyticsOptions>();
         services.AddScoped<AnalyticsChangeSet>();
         services.AddScoped<CounterpartyMonthlyRefresher>();
+        services.AddSingleton<AliasVolumeMonitor>();
+
+        // Reconciliation of payments with documents (reads and writes only Synect's own tables).
+        services.AddOptions<ReconciliationOptions>();
+        services.AddScoped<ReconciliationService>();
+        services.AddScoped<ReconciliationReviewService>();
+        services.AddScoped<ReconciliationQueries>();
         services.AddSynectAnalytics();
         return services;
     }

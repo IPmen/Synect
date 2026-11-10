@@ -128,7 +128,17 @@ public sealed class TestHost : IAsyncDisposable
 
     /// <param name="appConnectionString">Connection string the application uses (may run as a restricted role).</param>
     public static TestHost CreatePostgres(string appConnectionString, Func<Task> cleanup, Action<IServiceCollection>? configure = null) =>
-        Build(o => o.UseSynectNpgsql(appConnectionString).AddInterceptors(new TenantSessionInterceptor()), configure, cleanup);
+        Build(o => o.UseSynectNpgsql(appConnectionString).AddInterceptors(new TenantSessionInterceptor()), services =>
+        {
+            // Test hosts only (production keeps Analytics:QueryTimeout = 5 s): the timeout covers the whole call,
+            // including opening a connection, and the whole suite runs in parallel on one local server. After a
+            // reboot that alone pushed two analytics tests past 5 s. Tests that check the timeout set their own
+            // value; BalanceStatsVolumeTests runs a long query with the production 5 s.
+            services.Configure<Synect.Application.Analytics.AnalyticsOptions>(o => o.QueryTimeout = TestQueryTimeout);
+            configure?.Invoke(services);
+        }, cleanup);
+
+    public static readonly TimeSpan TestQueryTimeout = TimeSpan.FromSeconds(30);
 
     private static TestHost Build(Action<DbContextOptionsBuilder> configureDb, Action<IServiceCollection>? configure, Func<Task>? cleanup)
     {

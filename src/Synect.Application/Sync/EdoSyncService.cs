@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Synect.Application.Abstractions;
 using Synect.Application.Adapters;
 using Synect.Application.Analytics.Totals;
+using Synect.Application.Reconciliation;
 using Synect.Application.Resilience;
 using Synect.Application.Secrets;
 using Synect.Domain.Counterparties;
@@ -37,6 +38,9 @@ public sealed class EdoSyncService(
     AdapterCallPolicy policy,
     AnalyticsChangeSet changes,
     CounterpartyMonthlyRefresher monthly,
+    ReconciliationService reconciliation,
+    AliasVolumeMonitor aliasMonitor,
+    IOptions<ReconciliationOptions> reconciliationOptions,
     TimeProvider time,
     IOptions<EdoSyncOptions> options,
     IOptions<CircuitBreakerOptions> breakerOptions,
@@ -104,7 +108,11 @@ public sealed class EdoSyncService(
             {
                 var now = time.GetUtcNow();
                 await monthly.RefreshAsync(changes.Keys, token);
+                // Reconciliation of exactly the INNs whose documents changed (whole history of each), atomically too.
+                if (reconciliationOptions.Value.RunAfterLoad)
+                    await reconciliation.ReconcileAsync(ReconciliationScope.ForInns(changes.Keys.Select(k => k.Inn)), token);
                 changes.Clear();
+                await aliasMonitor.CheckAsync(db, connection.TenantId, token);
                 run.Succeed(now, complete, records);
                 connection.MarkSyncSucceeded(now);
                 await db.SaveChangesAsync(token);
@@ -181,6 +189,8 @@ public sealed class EdoSyncService(
             doc.TotalVatSum = info.TotalVatSum;
             doc.TotalDeliverySum = info.TotalDeliverySum;
             doc.TotalDeliverySumWithVat = info.TotalDeliverySumWithVat;
+            doc.Currency = string.IsNullOrEmpty(info.Currency) ? "UZS" : info.Currency;
+            doc.SellerAccount = info.SellerAccount;
             doc.StatusComment = info.StatusComment;
             doc.SourceCreatedAt = info.CreatedAt;
             doc.SourceUpdatedAt = info.UpdatedAt;

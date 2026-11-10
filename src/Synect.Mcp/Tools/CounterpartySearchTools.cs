@@ -53,6 +53,7 @@ public sealed class CounterpartySearchTools(ToolRunner runner, Presenter p, Coun
                         ? "No counterparty matches. Try another spelling, a shorter fragment, or the INN."
                         : "No single clear match: show the candidates to the user and ask which one they mean before calling other tools.",
                 $"Similarity threshold Search:MinSimilarity = {s.MinSimilarity:0.##}; names are compared after normalization (legal forms and quotes removed, Cyrillic transliterated).",
+                "Document and payment totals here are activity by INN, not a matching of payments with documents (see the reconciliation tools).",
             };
             return new ToolOutput(new
             {

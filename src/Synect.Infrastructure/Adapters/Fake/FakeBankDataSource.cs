@@ -4,6 +4,30 @@ using Synect.Application.Adapters;
 
 namespace Synect.Infrastructure.Adapters.Fake;
 
+/// <summary>An explicit operation of the fake bank (golden data sets): sent in the statement of its account and day.</summary>
+public sealed class FakeBankOperation
+{
+    /// <summary>Name used by tests and the golden set; the bank id (b2_id) is derived from the position in the list.</summary>
+    public required string Key { get; init; }
+    public int AccountIndex { get; init; }
+    public DateOnly Day { get; init; }
+
+    /// <summary>1 = incoming, 2 = outgoing (Kapital Bank dir).</summary>
+    public int Dir { get; init; } = 1;
+
+    /// <summary>Amount in tiyin (or cents of the account currency).</summary>
+    public long Amount { get; init; }
+
+    public string? Inn { get; init; }
+    public string? Name { get; init; }
+
+    /// <summary>The counterparty's account (acc_dt of incoming, acc_ct of outgoing operations).</summary>
+    public string? Account { get; init; }
+
+    public string? Purpose { get; init; }
+    public int Err { get; init; }
+}
+
 /// <summary>Controls how the fake bank behaves for one connection. Mutable on purpose (tests, demos).</summary>
 public sealed class FakeBankScenario
 {
@@ -22,6 +46,18 @@ public sealed class FakeBankScenario
 
     /// <summary>Share of operations sent without counterparty INN (fees, cash).</summary>
     public double NoInnShare { get; set; }
+
+    /// <summary>Explicit operations, added to the statements of their account and day.</summary>
+    public List<FakeBankOperation> FixedOperations { get; } = [];
+
+    /// <summary>Statements contain only <see cref="FixedOperations"/> (no random operations).</summary>
+    public bool OnlyFixedOperations { get; set; }
+
+    /// <summary>b2_id of the fixed operation with this key.</summary>
+    public string OperationIdOf(string key) =>
+        (FixedOperationIdBase + FixedOperations.FindIndex(o => o.Key == key)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    internal const long FixedOperationIdBase = 9_000_000_000;
 
     /// <summary>Days that get one extra incoming operation (INN 309999999, 1 234.00), to simulate late changes.</summary>
     public HashSet<DateOnly> ExtraDays { get; } = [];
@@ -177,7 +213,7 @@ public sealed class FakeBankDataSource
 
         var content = new JsonArray();
         long debit = 0, credit = 0;
-        var count = s.EmptyDays.Contains(day) ? 0 : random.Next(s.MinOperationsPerDay, s.MaxOperationsPerDay + 1);
+        var count = s.EmptyDays.Contains(day) || s.OnlyFixedOperations ? 0 : random.Next(s.MinOperationsPerDay, s.MaxOperationsPerDay + 1);
         for (var i = 0; i < count; i++)
         {
             var dir = random.Next(1, 3);
@@ -186,6 +222,23 @@ public sealed class FakeBankDataSource
             var op = Operation(s, account, day, accountIndex, i, dir, amount, random, err: 0);
             content.Add(op);
             if (s.DuplicateDays.Contains(day)) content.Add(op.DeepClone());
+        }
+
+        for (var k = 0; k < s.FixedOperations.Count; k++)
+        {
+            var f = s.FixedOperations[k];
+            if (f.Day != day || f.AccountIndex != accountIndex) continue;
+            var op = Operation(s, account, day, accountIndex, 0, f.Dir, f.Amount, random, f.Err);
+            var side = f.Dir == 1 ? "dt" : "ct";
+            op["b2_id"] = FakeBankScenario.FixedOperationIdBase + k;
+            op["inn_" + side] = f.Inn ?? "";
+            op["name_" + side] = f.Name ?? (string.IsNullOrEmpty(f.Inn) ? "BANK" : "PARTNER " + f.Inn);
+            op["acc_" + side] = f.Account ?? $"20208000{k:D9}001";
+            op["purpose"] = f.Purpose ?? "";
+            op["num"] = (5000 + k).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            content.Add(op);
+            if (f.Err != 0) continue; // rejected by the bank: not in the day totals
+            if (f.Dir == 1) credit += f.Amount; else debit += f.Amount;
         }
 
         if (s.ExtraDays.Contains(day))

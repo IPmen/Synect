@@ -61,15 +61,28 @@ public sealed class BalancesAnalytics(AnalyticsContext ctx)
         DatePeriod period, CancellationToken ct) =>
         ctx.RunAsync<IReadOnlyList<AccountBalanceStats>>(async token =>
         {
-            var sql = DaysCte(period, null)
-                .Raw(", series as (select d.account_id, d.account_number, d.currency, d.date, b.closing_balance as balance")
-                .Raw(" from days d left join lateral (select x.closing_balance from bank_daily_balances x")
-                .Raw(" where x.tenant_id = ").P(ctx.TenantId)
-                .Raw(" and x.bank_account_id = d.account_id and x.date <= d.date order by x.date desc limit 1) b on true)")
-                .Raw(" select account_id, account_number, currency, count(balance)::int as days,")
-                .Raw(" round(avg(balance))::bigint as average, min(balance) as minimum, max(balance) as maximum,")
-                .Raw(" (array_agg(date order by balance, date) filter (where balance is not null))[1] as minimum_date")
-                .Raw(" from series group by account_id, account_number, currency having count(balance) > 0")
+            // Same result as "the balance of every day = the last row on or before it", but computed over
+            // segments between consecutive balance rows instead of one index lookup per account and day:
+            // the cost grows with the number of rows, not with the length of the period (a 1950-2026 period
+            // over 30 accounts took ~7 s per-day and broke the 5 s analytics timeout).
+            var tenant = ctx.TenantId;
+            var sql = new Sql()
+                .Raw("with acc as (select a.id, a.account_number, a.currency,")
+                .Raw(" coalesce((select max(y.date) from bank_daily_balances y where y.tenant_id = ").P(tenant)
+                .Raw(" and y.bank_account_id = a.id and y.date <= ").P(period.From).Raw("::date), ").P(period.From).Raw("::date) as start_date")
+                .Raw(" from bank_accounts a where a.tenant_id = ").P(tenant).Raw(")")
+                .Raw(", rows as (select acc.id as account_id, acc.account_number, acc.currency, x.closing_balance as balance, x.date,")
+                .Raw(" lead(x.date) over (partition by acc.id order by x.date) as next_date")
+                .Raw(" from acc join bank_daily_balances x on x.tenant_id = ").P(tenant)
+                .Raw(" and x.bank_account_id = acc.id and x.date >= acc.start_date and x.date <= ").P(period.To).Raw("::date)")
+                .Raw(", seg as (select account_id, account_number, currency, balance,")
+                .Raw(" greatest(date, ").P(period.From).Raw("::date) as seg_from,")
+                .Raw(" least(coalesce(next_date - 1, ").P(period.To).Raw("::date), ").P(period.To).Raw("::date) as seg_to from rows)")
+                .Raw(" select account_id, account_number, currency, sum(seg_to - seg_from + 1)::int as days,")
+                .Raw(" round(sum(balance::numeric * (seg_to - seg_from + 1)) / sum(seg_to - seg_from + 1))::bigint as average,")
+                .Raw(" min(balance) as minimum, max(balance) as maximum,")
+                .Raw(" (array_agg(seg_from order by balance, seg_from))[1] as minimum_date")
+                .Raw(" from seg where seg_to >= seg_from group by account_id, account_number, currency")
                 .Raw(" order by currency, account_number");
             var rows = await ctx.QueryAsync<StatsRow>(sql, token);
             return rows.Select(r => new AccountBalanceStats(r.AccountId, r.AccountNumber, r.Currency, r.Days,

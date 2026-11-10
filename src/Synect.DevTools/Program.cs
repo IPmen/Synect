@@ -23,6 +23,11 @@ using Synect.Infrastructure.Persistence;
 //   revoke-api-key <tenant> <key id|key prefix>
 //   list-api-keys <tenant>                        id, prefix, scopes, created/last used/revoked (never the key)
 //   test-db-leftovers [--drop]                    temporary databases/roles left by PostgreSQL tests
+//   reconcile --tenant <name|id> [--inn 301000001,302000002]   recalculates the reconciliation (full, or these INNs)
+//   rebuild-reconciliation --tenant <name|id>     drops Proposed matches and findings, recalculates everything
+//   reconcile-eval                                golden set: precision, recall and errors of automatic matches
+//   reconcile-bench --tenant <name|id> [--runs 5] time of a full and of single-INN recalculations
+//   normalize-currency --tenant <name|id>|--all   numeric ISO 4217 codes (860, 840, 978, 643) in loaded data -> letters
 
 var command = args.FirstOrDefault() ?? "help";
 var options = CliArgs.Parse(args.Skip(1).ToArray());
@@ -45,6 +50,7 @@ builder.Services.ConfigureAll<RateLimitOptions>(o =>
 });
 builder.Services.AddSingleton<Seeder>();
 builder.Services.AddSingleton<QueryCatalog>();
+builder.Services.AddSingleton<ReconciliationCommands>();
 
 using var host = builder.Build();
 var services = host.Services;
@@ -93,10 +99,26 @@ try
             return await ApiKeyCommands.RevokeAsync(services, await Tenant(), Positional(2) ?? throw new ArgumentException("revoke-api-key <tenant> <key id|key prefix>"));
         case "list-api-keys":
             return await ApiKeyCommands.ListAsync(services, await Tenant());
+        case "reconcile":
+            await services.GetRequiredService<ReconciliationCommands>().ReconcileAsync(await Tenant(), options.Get("inn"));
+            break;
+        case "rebuild-reconciliation":
+            await services.GetRequiredService<ReconciliationCommands>().RebuildAsync(await Tenant());
+            break;
+        case "reconcile-eval":
+            return await services.GetRequiredService<ReconciliationCommands>().EvalAsync();
+        case "reconcile-bench":
+            await services.GetRequiredService<ReconciliationCommands>().BenchAsync(await Tenant(), options.Int("runs", 5));
+            break;
+        case "normalize-currency":
+            await services.GetRequiredService<ReconciliationCommands>().NormalizeCurrencyAsync(options.Get("all") == "true" ? await AllTenants() : [await Tenant()]);
+            break;
         case "test-db-leftovers":
             return await TestDbLeftovers.RunAsync(builder.Configuration, options.Get("drop") == "true");
         default:
-            Console.WriteLine("Commands: seed-demo, seed-load, rebuild-totals, rebuild-counterparty-aliases, list-queries, query <name>, bench, explain, create-api-key, revoke-api-key, list-api-keys, test-db-leftovers. See Program.cs.");
+            Console.WriteLine("Commands: seed-demo, seed-load, rebuild-totals, rebuild-counterparty-aliases, list-queries, query <name>, bench, explain, " +
+                              "create-api-key, revoke-api-key, list-api-keys, test-db-leftovers, reconcile, rebuild-reconciliation, reconcile-eval, " +
+                              "reconcile-bench, normalize-currency. See Program.cs.");
             break;
     }
 }

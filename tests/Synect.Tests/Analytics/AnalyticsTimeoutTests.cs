@@ -26,7 +26,7 @@ public class AnalyticsTimeoutTests(PostgresFixture fixture) : IClassFixture<Post
             sp.GetRequiredService<BalancesAnalytics>().GetStatsAsync(period, CancellationToken.None)));
         Assert.Contains("did not finish", ex.Message);
 
-        // The normal host with the default 5 s answers the same query.
+        // The regular test host (TestHost.TestQueryTimeout) answers the same query.
         var ok = await fixture.Host.InTenantAsync(tenant, sp =>
             sp.GetRequiredService<BalancesAnalytics>().GetStatsAsync(period, CancellationToken.None));
         Assert.NotEmpty(ok.Data);

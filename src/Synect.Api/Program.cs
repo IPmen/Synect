@@ -11,6 +11,8 @@ builder.Services.AddSynectMcp(builder.Configuration);
 var app = builder.Build();
 
 app.UseAuthentication();
+// HTTP limits of /mcp (per key, per IP, failed authentications); every request counts, tools/list and initialize too.
+app.UseSynectMcpHttpLimits();
 app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));

@@ -8,7 +8,7 @@ namespace Synect.Application.Access;
 
 public sealed record ToolAuditEntry(
     Guid TenantId, Guid ApiKeyId, string Tool, string ParametersJson, DateTimeOffset StartedAt,
-    TimeSpan Duration, int? RowCount, ToolCallStatus Status, string? ErrorMessage);
+    TimeSpan Duration, int? RowCount, ToolCallStatus Status, string? ErrorMessage, string? DetailsJson = null);
 
 /// <summary>
 /// Writes tool_audit_log in its own scope and transaction, so that the row exists even when the tool call
@@ -37,6 +37,7 @@ public sealed class ToolAuditWriter(TenantScopeRunner scopes, ILogger<ToolAuditW
                         RowCount = entry.RowCount,
                         Status = entry.Status,
                         ErrorMessage = entry.ErrorMessage is { Length: > MaxErrorLength } m ? m[..MaxErrorLength] : entry.ErrorMessage,
+                        Details = entry.DetailsJson,
                     });
                     await db.SaveChangesAsync(t);
                 }, token);

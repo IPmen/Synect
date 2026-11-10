@@ -66,6 +66,8 @@ public sealed class CounterpartyTools(ToolRunner runner, Presenter p, Counterpar
     [McpServerTool(Name = "get_counterparty_summary", Title = "Counterparty summary and balance", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Documents (Didox, counted statuses) and payments with one counterparty in a period and the open difference: " +
                  "receivable = our outgoing documents - their payments; payable = their documents - our payments, in the Didox currency (B3, B4). " +
+                 "This compares totals by INN and does NOT match payments with documents; for paid / unpaid documents and a matched balance estimate use " +
+                 "get_paid_documents, get_unpaid_documents and get_counterparty_balance_estimate. " +
                  "Examples: «Сколько нам должен ООО Альфа?», «Какой долг перед поставщиком 302000002?», «Сверка с контрагентом за год»." + InnHint + Common)]
     public Task<CallToolResult> GetCounterpartySummary(
         [Description("Counterparty INN: 9 or 14 digits.")] string inn,
@@ -94,6 +96,7 @@ public sealed class CounterpartyTools(ToolRunner runner, Presenter p, Counterpar
             [
                 $"Receivable and payable compare Didox documents with bank payments in {s.EdoCurrency} only; payments in other currencies are listed but not netted.",
                 "The difference covers only the period; balances from before the period are not included.",
+                runner.Options.Notes.NotReconciliation,
             ]);
         }, cancellationToken);
 
@@ -165,6 +168,7 @@ public sealed class CounterpartyTools(ToolRunner runner, Presenter p, Counterpar
 
     [McpServerTool(Name = "get_payments_without_documents", Title = "Payments without documents", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Outgoing payments of a period to INNs that have no Didox document at all (counted statuses) (B8). " +
+                 "This checks whether documents exist for the INN, it does NOT match payments with documents; for payments not matched to any document use get_unmatched_payments. " +
                  "Examples: «Каким контрагентам мы платили без документов?», «Платежи без счетов-фактур за октябрь»." + Common)]
     public Task<CallToolResult> GetPaymentsWithoutDocuments(
         [Description("Period start, yyyy-MM-dd. " + Dates)] string from,
@@ -184,7 +188,7 @@ public sealed class CounterpartyTools(ToolRunner runner, Presenter p, Counterpar
                 u.Count,
                 u.FirstDate,
                 u.LastDate,
-            });
+            }, [runner.Options.Notes.NotReconciliation]);
         }, cancellationToken);
 
     [McpServerTool(Name = "get_counterparty_concentration", Title = "Counterparty concentration", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]

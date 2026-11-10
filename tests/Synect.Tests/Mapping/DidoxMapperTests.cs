@@ -53,6 +53,29 @@ public class DidoxMapperTests
     }
 
     [Fact]
+    public void Currency_is_normalized_and_seller_account_is_read()
+    {
+        var list = Mapper.MapDocumentList(ListJson);
+        Assert.Equal("UZS", list.Items[0].Currency); // no currency field: Didox default
+        Assert.Null(list.Items[0].SellerAccount);
+
+        static string Doc(string extra) => $$"""{ "doc_id": "x", "doc_status": 3, "owner": 0, "total_sum": 1 {{extra}} }""";
+        Assert.Equal("UZS", Mapper.MapSingleDocument(Doc(""", "currency": "860" """)).Currency);
+        Assert.Equal("USD", Mapper.MapSingleDocument(Doc(""", "currency_code": 840 """)).Currency);
+        Assert.Equal("RUB", Mapper.MapSingleDocument(Doc(""", "currency": "rub" """)).Currency);
+        Assert.Equal("999", Mapper.MapSingleDocument(Doc(""", "currency": "999" """)).Currency);
+        var withAccount = Mapper.MapSingleDocument(Doc(""", "currency": "978", "sellerAccount": "20208000900000000001" """));
+        Assert.Equal(("EUR", "20208000900000000001"), (withAccount.Currency, withAccount.SellerAccount));
+        Assert.Contains("\"currency\": \"978\"", withAccount.Raw.Json); // the source value stays in the raw JSON
+        // Both currency fields are optional (not confirmed by the Didox documentation): absent, empty or not a string -> UZS.
+        Assert.Equal("UZS", Mapper.MapSingleDocument(Doc(""", "currency": "" """)).Currency);
+        Assert.Equal("UZS", Mapper.MapSingleDocument(Doc(""", "currency": null, "currency_code": null """)).Currency);
+        Assert.Equal("UZS", Mapper.MapSingleDocument(Doc(""", "currency": { "code": "USD" } """)).Currency);
+        // Only the documented sellerAccount is read; other spellings are not guessed.
+        Assert.Null(Mapper.MapSingleDocument(Doc(""", "seller_account": "20208000900000000001" """)).SellerAccount);
+    }
+
+    [Fact]
     public void Sums_are_converted_to_tiyin()
     {
         var doc = Mapper.MapDocumentList(ListJson).Items[0];

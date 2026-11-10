@@ -7,6 +7,7 @@ using Synect.Domain.Banking;
 using Synect.Domain.Counterparties;
 using Synect.Domain.Edo;
 using Synect.Domain.Raw;
+using Synect.Domain.Reconciliation;
 using Synect.Domain.Sync;
 using Synect.Domain.Tenants;
 
@@ -34,6 +35,11 @@ public interface ISynectDbContext
     DbSet<ApiKey> ApiKeys { get; }
     DbSet<CounterpartyAlias> CounterpartyAliases { get; }
     DbSet<ToolAuditLog> ToolAuditLogs { get; }
+    DbSet<ReconciliationRun> ReconciliationRuns { get; }
+    DbSet<ReconciliationMatch> ReconciliationMatches { get; }
+    DbSet<ReconciliationMatchItem> ReconciliationMatchItems { get; }
+    DbSet<ReconciliationFinding> ReconciliationFindings { get; }
+    DbSet<ReconciliationMatchDecision> ReconciliationMatchDecisions { get; }
 
     DatabaseFacade Database { get; }
     ChangeTracker ChangeTracker { get; }

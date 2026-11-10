@@ -26,6 +26,8 @@ public sealed class McpOptions
 
     public McpRateLimitOptions RateLimit { get; set; } = new();
 
+    public McpHttpRateLimitOptions HttpRateLimit { get; set; } = new();
+
     public McpNotesOptions Notes { get; set; } = new();
 }
 
@@ -39,6 +41,21 @@ public sealed class McpRateLimitOptions
     public int MaxConcurrentPerTenant { get; set; } = 4;
 
     /// <summary>Window of the per-key limit.</summary>
+    public TimeSpan Window { get; set; } = TimeSpan.FromMinutes(1);
+}
+
+/// <summary>Mcp:HttpRateLimit. Every HTTP request to /mcp counts (initialize and tools/list too).</summary>
+public sealed class McpHttpRateLimitOptions
+{
+    /// <summary>Requests per window and API key (authenticated requests).</summary>
+    public int RequestsPerMinutePerKey { get; set; } = 300;
+
+    /// <summary>Requests per window and client IP (any request).</summary>
+    public int RequestsPerMinutePerIp { get; set; } = 300;
+
+    /// <summary>Failed authentications (HTTP 401) per window and client IP; further requests get 429 until the window ends.</summary>
+    public int FailedAuthPerMinutePerIp { get; set; } = 20;
+
     public TimeSpan Window { get; set; } = TimeSpan.FromMinutes(1);
 }
 
@@ -60,4 +77,16 @@ public sealed class McpNotesOptions
     [
         "Top, comparison, new/lost and concentration answers use whole calendar months touched by the period.",
     ];
+
+    public string[] Reconciliation { get; set; } =
+    [
+        "Results are possible matches with a confidence score (0-100) and their reasons; the accountant makes the decision.",
+        "Matching rules and weights (Reconciliation:*) are assumptions still to be checked on real data.",
+        "Only UZS payments are matched with Didox documents (documents are in UZS); payments in other currencies are listed as excluded, never converted.",
+        "Payments without a counterparty INN are never matched automatically.",
+    ];
+
+    /// <summary>Added to tools that compare documents and payments by INN without the reconciliation.</summary>
+    public string NotReconciliation { get; set; } =
+        "This is a check whether Didox documents exist for the INN, not a matching of payments with documents (Это проверка наличия документов по ИНН, а не сопоставление платежей с документами). For matches use the reconciliation tools (get_paid_documents, get_unpaid_documents, get_unmatched_payments, get_counterparty_balance_estimate).";
 }

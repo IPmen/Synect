@@ -7,13 +7,13 @@ database and never call external systems.
 
 | Project | Purpose |
 |---|---|
-| `Synect.Domain` | Entities: tenants, connections (states), sync runs, sync jobs, connection secrets, raw objects, bank, EDO, counterparties, monthly counterparty totals, counterparty name spellings (aliases), API keys, tool audit log |
-| `Synect.Application` | Adapter contracts and registry, sync services, queue (planner, dispatcher, requests), rate limiting and retries, secrets and credentials contracts, freshness query, read-only analytics (`Analytics/`), API keys and tool audit (`Access/`) |
+| `Synect.Domain` | Entities: tenants, connections (states), sync runs, sync jobs, connection secrets, raw objects, bank, EDO, counterparties, monthly counterparty totals, counterparty name spellings (aliases), API keys, tool audit log, reconciliation runs / matches / match items / findings; shared transliteration (`Text/`) and currency codes (`Common/IsoCurrency`) |
+| `Synect.Application` | Adapter contracts and registry, sync services, queue (planner, dispatcher, requests), rate limiting and retries, secrets and credentials contracts, freshness query, read-only analytics (`Analytics/`), reconciliation of payments with documents (`Reconciliation/`), API keys and tool audit (`Access/`) |
 | `Synect.Infrastructure` | EF Core + Npgsql, migrations, RLS interceptor, Data Protection secret store, Kapital Bank / Didox mappers, session and token caches, fake adapters |
 | `Synect.Api` | HTTP host: `/health` and the MCP endpoint `/mcp` (Streamable HTTP, API key) |
-| `Synect.Mcp` | MCP tools over `Analytics`, `ISourceFreshnessQuery` and `SyncRequestService`; API key authentication, limits, tool call journal. No reference to Infrastructure, adapters, queue internals or secrets (enforced by a test) |
+| `Synect.Mcp` | MCP tools over `Analytics`, `Reconciliation`, `ISourceFreshnessQuery` and `SyncRequestService`; API key authentication, HTTP and tool limits, tool call journal. No reference to Infrastructure, adapters, queue internals or secrets (enforced by a test) |
 | `Synect.Worker` | Hosts the sync queue (`SyncWorker`) |
-| `Synect.DevTools` | Development only: demo/load data, `query`, `bench`, `explain`, API keys, test database cleanup (not referenced by Api or Worker) |
+| `Synect.DevTools` | Development only: demo/load data, `query`, `bench`, `explain`, API keys, reconciliation (`reconcile`, `rebuild-reconciliation`, `reconcile-eval`, `reconcile-bench`), `normalize-currency`, test database cleanup (not referenced by Api or Worker) |
 | `Synect.Tests` | xUnit v3 tests (SQLite temporary file + local PostgreSQL) |
 
 ## Local database (no Docker)
@@ -95,7 +95,22 @@ Counterparty blocks B2, B5, B6 and B9 read `analytics_counterparty_monthly`, whi
 exactly the (INN, month) pairs it touched (old and new values of every changed row). `dotnet run --project src/Synect.DevTools -- rebuild-totals --tenant <name>` rebuilds it fully.
 
 **Assumption to confirm:** Didox statuses counted in sums (VAT, tops, turnover) are `Analytics:Edo:CountedStatuses`
-= 1, 2, 3, 6, 8, 60 (draft 0, rejected 4 and invalid 40 excluded). Didox amounts are treated as UZS.
+= 1, 2, 3, 6, 8, 60 (draft 0, rejected 4 and invalid 40 excluded). Didox amounts are treated as UZS by the analytics
+(blocks A, B, V); `edo_documents.currency` (UZS unless the optional `currency` / `currency_code` field is present; that field is not in
+the Didox document list description, so it is not confirmed and must be verified on a real response)
+is used by the reconciliation only.
+
+A warning is logged (level Warning, at most once a day per tenant and process) after a load when a tenant has more than
+`Search:AliasWarningThreshold` (30 000) name spellings in `counterparty_aliases`, because name search compares them one by
+one (see above).
+
+**Currency codes.** The Kapital Bank and Didox mappers normalize numeric ISO 4217 codes at load time: 860 and the
+account-number code 000 become UZS, 840 USD, 978 EUR, 643 RUB; letter codes are upper-cased; an unknown numeric code is
+stored as is. The source value always stays in `raw_objects`. Data loaded before stage 5 is fixed with
+`dotnet run --project src/Synect.DevTools -- normalize-currency --all` (accounts, operations, documents; it also fills the
+new `edo_documents.currency` and `seller_account` of documents loaded before stage 5 from their raw Didox JSON, because
+unchanged documents are not rewritten by a load; monthly totals and the reconciliation are refreshed). Run it once after
+applying the stage 5 migration.
 
 ## MCP server
 
@@ -105,7 +120,7 @@ them calls Didox, a bank or 1C. The only non-read-only tool, `request_data_refre
 `SyncRequestService` and returns at once.
 
 **Authentication.** `Authorization: Bearer <key>`. Keys are `sk_synect_` + 32 random bytes (base64url); `api_keys`
-stores only the SHA-256 hash, a 16-character prefix for recognition, scopes (`read`, `sync_request`), created / last
+stores only the SHA-256 hash, a 16-character prefix for recognition, scopes (`read`, `sync_request`, `review`), created / last
 used / revoked times. The key is printed once by `create-api-key` and never stored or logged. A missing, malformed,
 unknown or revoked key gives `401` with `WWW-Authenticate: Bearer` and an empty body. The tenant comes from the key,
 never from tool arguments. The scheme is an ordinary ASP.NET Core authentication scheme (`SynectApiKey`), so OAuth can
@@ -119,8 +134,12 @@ for `synect_app`) takes the SHA-256 of a presented key, matches one non-revoked 
 forced RLS. Tested: without a tenant the app role sees no keys; with tenant A only A's; it cannot change B's keys; the
 function returns nothing for unknown, short or NULL hashes.
 
-**Limits and journal.** Per API key 60 tool calls a minute, per tenant 4 at once; over a limit the answer is the error
-`rate_limited` with `retry_after_seconds`. Each call has a 5 s timeout. Every tool call, including refused, failed and
+**Limits and journal.** HTTP level, for every request to `/mcp` (initialize and tools/list too): at most
+`Mcp:HttpRateLimit:RequestsPerMinutePerKey` (300) requests a minute per API key and `RequestsPerMinutePerIp` (300) per
+client IP, and at most `FailedAuthPerMinutePerIp` (20) failed authentications (401) a minute per IP; over a limit the
+answer is HTTP 429 with `Retry-After` (in memory, per process; behind a reverse proxy configure forwarded headers so that
+the client IP is real). Tool level: per API key 60 tool calls a minute, per tenant 4 at once; over a limit the answer is
+the error `rate_limited` with `retry_after_seconds`. Each call has a 5 s timeout. Every tool call, including refused, failed and
 timed-out ones, is written to `tool_audit_log` (RLS): key, tool, arguments as JSON (long values cut, secret-looking names
 redacted), start, duration, returned rows, status (`Ok`, `Error`, `RateLimited`, `Timeout`), error message.
 
@@ -134,6 +153,11 @@ completeness), `notes` (configured warnings such as the unconfirmed Kapital Bank
 in sums, B6 history depth). Money is `{amount_minor, amount, currency}`; currencies are never added together.
 Third-party text is returned as `{"untrusted_text": "..."}`, cut to 300 characters with control and invisible
 formatting characters removed; tool descriptions tell the model never to follow instructions in it.
+Every tool description also carries the rules for the model: no recommendations, no conclusions beyond the returned data,
+always state `data_freshness` and `notes`, call `find_counterparties` first when a counterparty is named. The same rules
+for a Claude project are in [docs/model-instructions.md](docs/model-instructions.md) (reference text for clients). Tools
+that only compare documents and payments by INN (`get_payments_without_documents`, `get_counterparty_summary`,
+`find_counterparties`) say in `notes` that they check whether documents exist, not a matching of payments with documents.
 Errors are answers with `isError: true` and `error.code`: `invalid_argument`, `timeout`, `forbidden`, `rate_limited`,
 `internal_error`.
 
@@ -143,6 +167,8 @@ Errors are answers with `isError: true` and `error.code`: `invalid_argument`, `t
 | Money | `get_account_balances` (A1, A2), `get_balance_history` (A4), `get_balance_stats` (A11), `get_cash_flow` (A3), `get_largest_transactions` (A5), `get_transactions_for_day` (A6), `find_idle_accounts` (A9), `check_balance_integrity` (A7, A10) |
 | Counterparties | `find_counterparties` (search by name or INN), `get_counterparty_payments` (B1), `get_top_counterparties` (B2), `get_counterparty_summary` (B3, B4), `compare_counterparty_periods` (B5), `get_counterparty_changes` (B6), `get_payments_without_documents` (B8), `get_counterparty_concentration` (B9) |
 | Documents | `get_documents_awaiting_our_signature` (V1), `get_documents_awaiting_partner_signature` (V2), `get_document_counts` (V3), `get_rejected_documents` (V4), `search_documents` (V5), `get_largest_documents` (V6), `get_vat_summary` (V7 with status breakdown) |
+| Reconciliation | `get_paid_documents` (G1), `get_unpaid_documents` (G2), `get_partially_paid_documents` (G3), `get_unmatched_payments` (G4, G5 with `direction = outgoing`), `get_signed_unpaid_acts` (G6), `get_multi_document_payments` (G7), `get_amount_differences` (G8), `get_payments_without_reference` (G9), `get_payment_delay_stats` (G10, E11), `get_account_mismatches` (G11), `get_possible_duplicate_payments` (G12), `get_counterparty_balance_estimate` (E3 with `inn`; without `inn` an extension of E3 to all counterparties), `get_match_details` |
+| Review | `confirm_match`, `reject_match` (scope `review`; change only Synect's reconciliation data) |
 | Refresh | `request_data_refresh` (scope `sync_request`) |
 
 Typical questions and the tool for each: [docs/demo-questions.md](docs/demo-questions.md).
@@ -160,6 +186,7 @@ Typical questions and the tool for each: [docs/demo-questions.md](docs/demo-ques
    ```
    dotnet run --project src/Synect.DevTools -- create-api-key "Demo client 1" --scopes read,sync_request --name "Claude Code"
    ```
+   Add `review` to the scopes (`--scopes read,review`) for a key that may confirm or reject reconciliation matches.
 4. Claude Code (remote HTTP server, https://code.claude.com/docs/en/mcp):
    ```
    claude mcp add --transport http synect http://localhost:5299/mcp --header "Authorization: Bearer <key>"
@@ -184,6 +211,115 @@ Typical questions and the tool for each: [docs/demo-questions.md](docs/demo-ques
 OAuth, no authentication, or fixed request headers such as an API key, so the bearer key can be used there once the
 server is published.
 
+## Reconciliation (block G)
+
+`Synect.Application/Reconciliation` matches bank payments with Didox documents deterministically (no machine learning);
+every match is explainable by its reasons. It reads and writes only Synect's own tables and has no dependency on
+adapters, sync, queue, secrets or Infrastructure (enforced by a test). Analytics and MCP read its results.
+
+**Tables** (row-level security like every tenant table, `tenant_id` first in every index, migration `ReconciliationStage5`):
+
+| Table | Content |
+|---|---|
+| `reconciliation_runs` | one recalculation: started / finished, scope (`Full` or `Inns` with the INN list), proposed matches, created / removed, rules version (`r1-<hash of Reconciliation:*>`) |
+| `reconciliation_matches` | `match_type` (`Exact`, `OneToMany`, `ManyToOne`, `Partial`), `status` (`Proposed`, `Confirmed`, `Rejected`), `confidence` 0-100, `reasons` jsonb (`[{code, weight, params}]`), INN, currency, document direction, payment and document totals, signature, created / updated / decided at, `decided_by_key`, decision comment |
+| `reconciliation_match_items` | `kind` (`BankTransaction` or `EdoDocument`), `ref_id`, `allocated_amount_minor`; a copy of the match status lets a partial unique index keep every payment and document in at most one Proposed match |
+| `reconciliation_findings` | derived facts of the last recalculation per INN: `NearestCandidate` (closest candidate of an unmatched payment or document, below the threshold), `PossibleDuplicate`, `NoReference` (purpose without a document or contract number) |
+
+The migration also adds `edo_documents.currency` (default UZS) and `edo_documents.seller_account`, and allows the API key
+scope `review`.
+
+**Decisions are kept.** Confirmed and Rejected matches are never changed or removed by a recalculation; amounts of
+Confirmed matches are subtracted before matching; payment-document pairs of a Rejected match are never proposed again.
+Proposed matches are recalculated: a match with the same signature (type, items, allocations) keeps its row and id, so
+`ReconcileAsync` is idempotent. Recalculations and decisions of one tenant are serialized with a PostgreSQL advisory lock.
+`confirm_match` / `reject_match` (scope `review`) store the latest decision, time, API key and optional comment on the
+match. Decisions are not irreversible: a Confirmed match can be rejected and a Rejected match confirmed. Every change
+(including the first decision) is appended to `reconciliation_match_decisions` (who = API key, when, previous and new
+status, comment), and the tool call is in `tool_audit_log` with `details` = match, previous and new status. After a change
+of an already decided match the counterparty's INN is recalculated in the same transaction. Confirming a Rejected match
+whose payments or documents are already fully used by other Confirmed matches is refused (`Conflict`, with those match
+ids); one of them has to be rejected first.
+
+**Inputs.**
+- Payments: `bank_transactions` without errors (`WithoutErrors()`), only `Reconciliation:Currency` (UZS); other currencies
+  are listed as `currency_not_reconciled`. Payments without an INN are never matched automatically (category "without INN").
+- Documents: `edo_documents` in `Analytics:Edo:CountedStatuses`, of the paid types `Reconciliation:DocumentTypes`
+  (002, 008, 023 invoices, 005 acts), in UZS; amount = `total_delivery_sum_with_vat` (`total_sum` when it is 0); date =
+  document date (creation date when missing). Contracts, powers of attorney, reconciliation acts etc. are never matched.
+- Direction: an outgoing document (owner 1, we sell) pairs with incoming payments, an incoming document (owner 0, we buy)
+  with outgoing payments. The INN of the payment must equal the INN of the document.
+
+**Purpose parser** (`PurposeParser`): document and contract numbers and dates from Russian and Uzbek (Latin and
+Cyrillic) purposes: "счёт-фактура / с/ф / СФ / ЭСФ / акт / накладная № 15 от 12.10.2026", "договор № 7/2026",
+"hisob-faktura №45 bo'yicha", "15-sonli shartnoma", "45-сонли ҳисоб-фактура", lists ("№ 10, 11 и 12"), month names. It
+reuses `LatinTransliterator` (shared with `CounterpartyNameNormalizer`, including o' and g'); the words live in the
+embedded `Reconciliation/PurposeDictionary.json` and can be extended without code changes. Numbers are compared by keys
+(letters and digits, upper case, leading zeros dropped: "INV-0012" = "inv 12"; a digits-only reference also matches the
+digits of the number: "№ 101" = "СФ-101"). Numbers of 16 and more digits (accounts) are never references.
+
+**Rules and weights** (`Reconciliation:Weights`; confidence = sum of the signals present, clamped to 0..100):
+
+| Signal | Weight |
+|---|---|
+| Document number in the purpose (`DocumentNumberInPurpose`; share of the documents named for combinations) | 50 |
+| Equal amount 1:1 (`AmountEqual`, within `AmountTolerance`) / exact sum of a combination (`AmountSumEqual`) | 35 / 35 |
+| Contract number in the purpose (`ContractNumberInPurpose`) | 15 |
+| Payment date minus document date within `DateWindowFromDays..DateWindowToDays` = -30..180 (`DateInWindow`) | 10 |
+| Document date written in the purpose (`DocumentDateInPurpose`) | 5 |
+| The only candidate on both sides (`UniqueCandidate`; amount and combination matches only) | 25 |
+| Less paid than documented (`PartialPayment`) / more (`Overpaid`), counted only with a number reference | 15 / 10 |
+| Incoming document: payee account (`acc_ct`) equals `sellerAccount` (`AccountMatch`) / differs (`AccountMismatch`, a warning, not a veto) | 5 / -15 |
+
+Order: (1) document numbers in the purpose (several payments naming one document: one payment of exactly the document
+amount wins, else an exact subset, else all of them in date order); (2) equal amounts inside the date window, narrowed by
+a contract number in the purpose; (3) exact combinations: one payment for several documents (`OneToMany`) and several
+payments for one document (`ManyToOne`), from at most `MaxCombinationCandidates` (12) nearest candidates and subsets of at
+most `MaxCombinationSize` (6). Matches below `AutoMatchThreshold` (70) are not created; the items stay unmatched and the
+closest candidate (from `HintMinConfidence` = 30) is stored as a hint. Resulting confidences: number + amount 95 (100 with
+the document date), amount + window + unique 70, contract + amount + window + unique 85, number + partial payment 75,
+number + overpayment 70, unique exact combination 70; amount + window alone (45) and ambiguous candidates never pass.
+Types: equal totals 1:1 `Exact`, 1:N `OneToMany`, N:1 `ManyToOne`; different totals `Partial` (reason `PartialPayment`
+or `Overpaid`). The smaller side is allocated in full, the larger one oldest first. Ties are broken by date and id;
+inputs are sorted, so the result does not depend on row order. Possible double payments (G12): same direction, currency
+and amount and the same document named in both purposes (90; never when both together fit into that document, which is
+an instalment), the same purpose within `DuplicateSamePurposeDays` (30 days, 70), dates within
+`DuplicateSameAmountDays` (3 days, 50).
+
+**Assumptions to check on real data:** every `Reconciliation:*` value above (weights, threshold, window, tolerance,
+document types, combination limits, duplicate windows), the Didox currency field (`currency` / `currency_code`,
+read as optional, not confirmed by documentation; `sellerAccount` is confirmed), that Didox documents are in UZS, and that the document date (not a signing date, which the Didox list
+does not confirm) is the right base for G10.
+
+**Recalculation.** `ReconciliationService.ReconcileAsync(scope)` (tenant from the context). After every successful bank or
+Didox load, in the same transaction as the monthly totals, it recalculates exactly the INNs whose operations or documents
+changed (old and new INN of every changed row), each with its whole history; a load that changed nothing records no run
+(`Reconciliation:RunAfterLoad`). `reconcile --tenant X [--inn ...]` recalculates (idempotent), `rebuild-reconciliation`
+drops Proposed matches and findings first.
+
+Timings on the load-test data ("Load test": 203 865 operations, 30 000 documents of which 9 427 are of paid types in
+counted statuses, 2 001 INNs; `reconcile-bench`): full recalculation 5.1 s (6.0 s with the rebuild), incremental
+recalculation of one INN 0.2-0.4 s for the busiest INNs (130-140 payments). The fake load data produces almost no matches
+(random amounts and numbers), so these times measure reading, parsing and writing, not a high match count.
+
+**Golden set.** The fake adapters carry a deterministic data set with known answers (`ReconciliationGoldenSet`: numbers
+in Russian, Uzbek Latin and Uzbek Cyrillic purposes, no number, contract number, partial payments, one payment for several
+documents, several payments for one document, overpayment, double payment, payment to another account, without INN, in
+USD, uncounted status, the same number at two counterparties, equal amounts at two counterparties, ambiguous candidates,
+opposite directions, a signed act without payment). `dotnet run --project src/Synect.DevTools -- reconcile-eval` loads it
+through the sync services and prints precision, recall and every error; tests pin the result (14 expected matches,
+precision 1.0, recall 1.0; ambiguous and excluded cases are expected "not found").
+
+**Queries** (`ReconciliationQueries`, read only, `DataFreshness`, keyset paging, local dates, currencies never mixed;
+every row carries the reasons, confidence, decision status and the document and payment directions as explicit fields):
+G1 paid documents (paid amount, last payment date), G2 unpaid (nearest candidate), G3 partially paid (remaining amount),
+G4 unmatched payments (without-INN flag, exclusion reason, nearest candidate), G5 = G4 for outgoing payments (whether the
+counterparty has documents at all), G6 signed (status 3) acts not fully paid, G7 one-to-many and many-to-one matches,
+G8 amount differences, G9 payments without a document or contract number, G10 / E11 days from the document date to payment per
+counterparty and overall (from the document date: the Didox list gives no confirmed signing date), G11 payments to an account other than `sellerAccount`, G12 possible double payments, E3 balance
+estimate (documents minus matched payments by INN; an estimate from bank and Didox data, not the accounting debt; without an
+INN the same estimate for every counterparty, an extension of E3), and the details of one match.
+
 ## Developer tools
 
 ```
@@ -199,6 +335,11 @@ dotnet run --project src/Synect.DevTools -- create-api-key "Demo client 1" --sco
 dotnet run --project src/Synect.DevTools -- list-api-keys "Demo client 1"
 dotnet run --project src/Synect.DevTools -- revoke-api-key "Demo client 1" <key id or prefix>
 dotnet run --project src/Synect.DevTools -- test-db-leftovers [--drop]
+dotnet run --project src/Synect.DevTools -- normalize-currency --all
+dotnet run --project src/Synect.DevTools -- reconcile --tenant "Demo client 1" [--inn 300000005]
+dotnet run --project src/Synect.DevTools -- rebuild-reconciliation --tenant "Demo client 1"
+dotnet run --project src/Synect.DevTools -- reconcile-eval
+dotnet run --project src/Synect.DevTools -- reconcile-bench --tenant "Load test" --runs 7
 ```
 
 Data is loaded through the real sync services and the fake adapters. Timings are measured by `bench`, never asserted in tests.
@@ -228,6 +369,12 @@ dotnet user-secrets set "ConnectionStrings:SynectTestAdmin" "Host=localhost;User
 ```
 
 or the `SYNECT_TEST_PG` environment variable.
+
+Each temporary database is warmed up right after the migrations (every table touched once as the application role), and
+test hosts use `Analytics:QueryTimeout` = 30 s: the timeout covers the whole call including opening a connection, and the
+whole suite runs in parallel on one local server, which on a cold server (after a reboot) pushed analytics calls past
+5 s. Production keeps 5 s; `BalanceStatsVolumeTests` runs a long A11 query on 30 accounts x 3 years with the production
+timeout, so a genuinely slow query still fails.
 
 ## Configuration
 
@@ -264,6 +411,20 @@ or the `SYNECT_TEST_PG` environment variable.
 | `Search:DefaultPeriodMonths` | 12 | Activity period of search candidates when none is given. |
 | `Search:MaxCandidates` | 200 | Best-scoring INNs considered before ordering by activity and paging. |
 | `Search:BestMatchMargin` | 0.15 | Lead over the second candidate needed for `best_match`. |
+| `Search:AliasWarningThreshold` | 30000 | Name spellings per tenant above which a warning is logged (once a day); 0 turns it off. |
+| `Reconciliation:Currency` | UZS | Only payments in this currency are matched. |
+| `Reconciliation:DocumentTypes` / `ActDocumentTypes` | 002, 008, 023, 005 / 005 | Paid document types / acts for G6. **Assumption.** |
+| `Reconciliation:SignedStatus` | 3 | Signed status for G6. |
+| `Reconciliation:AmountTolerance` | 0 | Minor units. **Assumption.** |
+| `Reconciliation:DateWindowFromDays` / `DateWindowToDays` | -30 / 180 | Payment date minus document date. **Assumption.** |
+| `Reconciliation:AutoMatchThreshold` / `HintMinConfidence` | 70 / 30 | Matches below the threshold are not created; hints from 30. **Assumption.** |
+| `Reconciliation:MaxCombinationCandidates` / `MaxCombinationSize` | 12 / 6 | Combination search limits. |
+| `Reconciliation:DuplicateSamePurposeDays` / `DuplicateSameAmountDays` | 30 / 3 | Possible double payments. **Assumption.** |
+| `Reconciliation:RunAfterLoad` | true | Recalculate touched INNs after each load. |
+| `Reconciliation:Weights:*` | see Reconciliation | Signal weights. **Assumption.** |
+| `Mcp:HttpRateLimit:RequestsPerMinutePerKey` / `PerIp` | 300 / 300 | HTTP requests to `/mcp` per window (1 min). |
+| `Mcp:HttpRateLimit:FailedAuthPerMinutePerIp` | 20 | Failed authentications per IP per window, then 429. |
+| `Mcp:Notes:Reconciliation` / `NotReconciliation` | see `McpOptions` | Notes of the reconciliation tools / of tools that only compare totals by INN. |
 | `Mcp:DefaultLimit` / `MaxLimit` | 50 / 200 | Rows per MCP answer (smaller than Analytics to keep model context small). |
 | `Mcp:MaxPeriodDays` | 1827 | Longest period a tool accepts (5 years). |
 | `Mcp:CallTimeout` | 5 s | Per tool call; the timeout answer asks to narrow the period. |
@@ -277,4 +438,4 @@ or the `SYNECT_TEST_PG` environment variable.
 All money is stored as `long` in minor units.
 
 Bank operations with `err != 0` are stored with `has_error = true`, `error_code`, `error_message`; balances and
-reconciliation must use `BankTransactionQueries.WithoutErrors()`.
+reconciliation use `BankTransactionQueries.WithoutErrors()`.

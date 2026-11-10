@@ -38,6 +38,15 @@ public class EdoDocument : TenantEntity
     public long TotalDeliverySum { get; set; }
     public long TotalDeliverySumWithVat { get; set; }
 
+    /// <summary>
+    /// ISO 4217 alphabetic code (numeric codes normalized at load). Didox documents are in UZS unless the source says
+    /// otherwise; the source value stays in the raw JSON.
+    /// </summary>
+    public string Currency { get; set; } = "UZS";
+
+    /// <summary>Seller's bank account as written in the document (Didox sellerAccount), when the source gives it.</summary>
+    public string? SellerAccount { get; set; }
+
     /// <summary>Creation time reported by the source.</summary>
     public DateTimeOffset? SourceCreatedAt { get; set; }
 

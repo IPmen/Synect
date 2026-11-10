@@ -23,6 +23,8 @@ public static class ToolCallFilter
     public static readonly IReadOnlyDictionary<string, string> RequiredScopes = new Dictionary<string, string>
     {
         [SourceTools.RequestDataRefresh] = ApiKey.ScopeSyncRequest,
+        [ReviewTools.ConfirmMatch] = ApiKey.ScopeReview,
+        [ReviewTools.RejectMatch] = ApiKey.ScopeReview,
     };
 
     public static string RequiredScope(string tool) => RequiredScopes.GetValueOrDefault(tool, ApiKey.ScopeRead);
@@ -38,6 +40,7 @@ public static class ToolCallFilter
 
         // The tenant comes from the key only. Every service of this call (analytics, freshness, queue) reads it.
         services.GetRequiredService<TenantContext>().Set(id.TenantId);
+        services.GetRequiredService<McpCaller>().ApiKeyId = id.ApiKeyId;
 
         var time = services.GetRequiredService<TimeProvider>();
         var started = time.GetUtcNow();
@@ -73,7 +76,8 @@ public static class ToolCallFilter
         {
             var (status, rows, error) = Outcome(result, failure, cancellationToken);
             await services.GetRequiredService<ToolAuditWriter>().WriteAsync(
-                new ToolAuditEntry(id.TenantId, id.ApiKeyId, tool, parameters, started, stopwatch.Elapsed, rows, status, error),
+                new ToolAuditEntry(id.TenantId, id.ApiKeyId, tool, parameters, started, stopwatch.Elapsed, rows, status, error,
+                    services.GetRequiredService<McpCaller>().AuditDetails),
                 CancellationToken.None);
         }
     };
@@ -100,6 +104,15 @@ public static class ToolCallFilter
         };
         return (status, rows, $"{code}: {message}");
     }
+}
+
+/// <summary>The API key of the current tool call (set by <see cref="ToolCallFilter"/>), e.g. to record who decided a match.</summary>
+public sealed class McpCaller
+{
+    public Guid? ApiKeyId { get; set; }
+
+    /// <summary>Set by a changing tool: what it did, as JSON, written to tool_audit_log.details.</summary>
+    public string? AuditDetails { get; set; }
 }
 
 /// <summary>Tool arguments for tool_audit_log: JSON, long strings cut, secret-looking names redacted.</summary>

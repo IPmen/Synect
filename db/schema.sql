@@ -1176,3 +1176,393 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE edo_documents ADD currency character varying(3) NOT NULL DEFAULT 'UZS';
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE edo_documents ADD seller_account character varying(34);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE TABLE reconciliation_runs (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        started_at timestamp with time zone NOT NULL,
+        finished_at timestamp with time zone,
+        scope character varying(16) NOT NULL,
+        scope_inns text[],
+        match_count integer NOT NULL,
+        created_count integer NOT NULL,
+        removed_count integer NOT NULL,
+        rules_version character varying(64) NOT NULL,
+        CONSTRAINT pk_reconciliation_runs PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_reconciliation_runs_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE TABLE reconciliation_findings (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        run_id uuid NOT NULL,
+        kind character varying(32) NOT NULL,
+        counterparty_inn character varying(16) NOT NULL,
+        subject_kind character varying(16) NOT NULL,
+        subject_id uuid NOT NULL,
+        related_kind character varying(16),
+        related_id uuid,
+        confidence integer NOT NULL,
+        reasons jsonb NOT NULL,
+        created_at timestamp with time zone NOT NULL,
+        CONSTRAINT pk_reconciliation_findings PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_reconciliation_findings_reconciliation_runs_tenant_id_run_id FOREIGN KEY (tenant_id, run_id) REFERENCES reconciliation_runs (tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_reconciliation_findings_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE TABLE reconciliation_matches (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        run_id uuid NOT NULL,
+        match_type character varying(16) NOT NULL,
+        status character varying(16) NOT NULL,
+        confidence integer NOT NULL,
+        reasons jsonb NOT NULL,
+        counterparty_inn character varying(16) NOT NULL,
+        currency character varying(3) NOT NULL,
+        document_owner character varying(16) NOT NULL,
+        payments_total bigint NOT NULL,
+        documents_total bigint NOT NULL,
+        signature character varying(64) NOT NULL,
+        created_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        decided_at timestamp with time zone,
+        decided_by_key uuid,
+        decision_comment character varying(1000),
+        CONSTRAINT pk_reconciliation_matches PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_reconciliation_matches_reconciliation_runs_tenant_id_run_id FOREIGN KEY (tenant_id, run_id) REFERENCES reconciliation_runs (tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_reconciliation_matches_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE TABLE reconciliation_match_items (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        match_id uuid NOT NULL,
+        kind character varying(16) NOT NULL,
+        ref_id uuid NOT NULL,
+        allocated_amount_minor bigint NOT NULL,
+        match_status character varying(16) NOT NULL,
+        CONSTRAINT pk_reconciliation_match_items PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_reconciliation_match_items_reconciliation_matches_tenant_id FOREIGN KEY (tenant_id, match_id) REFERENCES reconciliation_matches (tenant_id, id) ON DELETE CASCADE,
+        CONSTRAINT fk_reconciliation_match_items_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE INDEX ix_reconciliation_findings_tenant_id_counterparty_inn ON reconciliation_findings (tenant_id, counterparty_inn);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE INDEX ix_reconciliation_findings_tenant_id_kind_subject_id ON reconciliation_findings (tenant_id, kind, subject_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE INDEX ix_reconciliation_findings_tenant_id_run_id ON reconciliation_findings (tenant_id, run_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE UNIQUE INDEX ix_reconciliation_match_items_tenant_id_match_id_kind_ref_id ON reconciliation_match_items (tenant_id, match_id, kind, ref_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE UNIQUE INDEX ux_reconciliation_match_items_proposed ON reconciliation_match_items (tenant_id, kind, ref_id) WHERE match_status = 'Proposed';
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE INDEX ix_reconciliation_matches_tenant_id_counterparty_inn_status ON reconciliation_matches (tenant_id, counterparty_inn, status);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE INDEX ix_reconciliation_matches_tenant_id_run_id ON reconciliation_matches (tenant_id, run_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE INDEX ix_reconciliation_matches_tenant_id_status_match_type ON reconciliation_matches (tenant_id, status, match_type);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE INDEX ix_reconciliation_runs_tenant_id_started_at ON reconciliation_runs (tenant_id, started_at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_runs ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_runs FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE POLICY tenant_isolation ON reconciliation_runs USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_matches ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_matches FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE POLICY tenant_isolation ON reconciliation_matches USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_match_items ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_match_items FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE POLICY tenant_isolation ON reconciliation_match_items USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_findings ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_findings FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    CREATE POLICY tenant_isolation ON reconciliation_findings USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_matches ADD CONSTRAINT ck_reconciliation_matches_confidence CHECK (confidence BETWEEN 0 AND 100);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_matches ADD CONSTRAINT ck_reconciliation_matches_status CHECK (status IN ('Proposed', 'Confirmed', 'Rejected'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_matches ADD CONSTRAINT ck_reconciliation_matches_type CHECK (match_type IN ('Exact', 'OneToMany', 'ManyToOne', 'Partial'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_match_items ADD CONSTRAINT ck_reconciliation_match_items_kind CHECK (kind IN ('BankTransaction', 'EdoDocument'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE reconciliation_match_items ADD CONSTRAINT ck_reconciliation_match_items_amount CHECK (allocated_amount_minor >= 0);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE api_keys DROP CONSTRAINT ck_api_keys_scopes;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_scopes CHECK (scopes <@ ARRAY['read', 'sync_request', 'review']::text[]);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110031802_ReconciliationStage5') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261110031802_ReconciliationStage5', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110085407_ReversibleMatchDecisions') THEN
+    ALTER TABLE tool_audit_log ADD details jsonb;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110085407_ReversibleMatchDecisions') THEN
+    CREATE TABLE reconciliation_match_decisions (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        match_id uuid NOT NULL,
+        previous_status character varying(16) NOT NULL,
+        new_status character varying(16) NOT NULL,
+        decided_at timestamp with time zone NOT NULL,
+        decided_by_key uuid,
+        comment character varying(1000),
+        CONSTRAINT pk_reconciliation_match_decisions PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_reconciliation_match_decisions_reconciliation_matches_tenan FOREIGN KEY (tenant_id, match_id) REFERENCES reconciliation_matches (tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_reconciliation_match_decisions_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110085407_ReversibleMatchDecisions') THEN
+    CREATE INDEX ix_reconciliation_match_decisions_tenant_id_match_id_decided_at ON reconciliation_match_decisions (tenant_id, match_id, decided_at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110085407_ReversibleMatchDecisions') THEN
+    ALTER TABLE reconciliation_match_decisions ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110085407_ReversibleMatchDecisions') THEN
+    ALTER TABLE reconciliation_match_decisions FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110085407_ReversibleMatchDecisions') THEN
+    CREATE POLICY tenant_isolation ON reconciliation_match_decisions USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110085407_ReversibleMatchDecisions') THEN
+    ALTER TABLE reconciliation_match_decisions ADD CONSTRAINT ck_reconciliation_match_decisions_previous CHECK (previous_status IN ('Proposed', 'Confirmed', 'Rejected'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110085407_ReversibleMatchDecisions') THEN
+    ALTER TABLE reconciliation_match_decisions ADD CONSTRAINT ck_reconciliation_match_decisions_new CHECK (new_status IN ('Confirmed', 'Rejected') AND new_status <> previous_status);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110085407_ReversibleMatchDecisions') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261110085407_ReversibleMatchDecisions', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+

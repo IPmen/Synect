@@ -52,6 +52,12 @@ public sealed class McpFixture : IAsyncLifetime
     public CreatedApiKey KeyCSync { get; private set; } = null!;
     public CreatedApiKey KeyRevoked { get; private set; } = null!;
 
+    /// <summary>Tenant with the reconciliation golden set (loaded through the fake adapters and the sync services).</summary>
+    public Guid TenantG { get; private set; }
+    public Guid GBank { get; private set; }
+    public CreatedApiKey KeyG { get; private set; } = null!;
+    public CreatedApiKey KeyGReview { get; private set; } = null!;
+
     /// <summary>Every key created by the fixture, for the leak checks.</summary>
     public List<string> AllKeys { get; } = [];
 
@@ -65,7 +71,8 @@ public sealed class McpFixture : IAsyncLifetime
         if (!_data.Available) return;
 
         await SeedTenantCAsync();
-        foreach (var tenant in new[] { _data.TenantA, _data.TenantB, TenantC })
+        (TenantG, GBank, _) = await Synect.Tests.Reconciliation.GoldenSetLoader.LoadAsync(Host, "MCP golden set");
+        foreach (var tenant in new[] { _data.TenantA, _data.TenantB, TenantC, TenantG })
             await Host.InTenantAsync(tenant, sp => sp.GetRequiredService<Synect.Application.Sync.CounterpartyAliasRebuilder>().RebuildAsync(CancellationToken.None));
         KeyA = await CreateKeyAsync(_data.TenantA, "A read", ApiKey.ScopeRead);
         KeyASync = await CreateKeyAsync(_data.TenantA, "A sync", ApiKey.ScopeRead, ApiKey.ScopeSyncRequest);
@@ -73,6 +80,8 @@ public sealed class McpFixture : IAsyncLifetime
         KeyC = await CreateKeyAsync(TenantC, "C read", ApiKey.ScopeRead);
         KeyCSync = await CreateKeyAsync(TenantC, "C sync", ApiKey.ScopeRead, ApiKey.ScopeSyncRequest);
         KeyRevoked = await CreateKeyAsync(_data.TenantA, "A revoked", ApiKey.ScopeRead);
+        KeyG = await CreateKeyAsync(TenantG, "G read", ApiKey.ScopeRead);
+        KeyGReview = await CreateKeyAsync(TenantG, "G review", ApiKey.ScopeRead, ApiKey.ScopeReview);
         await Host.InTenantAsync(_data.TenantA, sp => sp.GetRequiredService<ApiKeyService>().RevokeAsync(KeyRevoked.Id.ToString(), CancellationToken.None));
 
         Api = CreateApi();
@@ -89,6 +98,10 @@ public sealed class McpFixture : IAsyncLifetime
             b.UseSetting("ConnectionStrings:Synect", _data.Postgres.AppConnectionString);
             b.UseSetting("Secrets:KeysPath", _keysPath);
             b.UseSetting("Mcp:RateLimit:RequestsPerMinutePerKey", "10000");
+            b.UseSetting("Mcp:HttpRateLimit:RequestsPerMinutePerKey", "100000");
+            b.UseSetting("Mcp:HttpRateLimit:RequestsPerMinutePerIp", "100000");
+            b.UseSetting("Mcp:HttpRateLimit:FailedAuthPerMinutePerIp", "100000");
+            b.UseSetting("Analytics:QueryTimeout", TestHost.TestQueryTimeout.ToString()); // see TestHost.CreatePostgres
             foreach (var (key, value) in settings) b.UseSetting(key, value);
             b.ConfigureLogging(l => l.AddProvider(ApiLogs).SetMinimumLevel(LogLevel.Trace));
             b.ConfigureTestServices(services =>

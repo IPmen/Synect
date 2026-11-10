@@ -74,7 +74,36 @@ public sealed class PostgresFixture : IAsyncLifetime
 
         // The application session switches to the restricted role right at connection start.
         AppConnectionString = new NpgsqlConnectionStringBuilder(AdminDbConnectionString) { Options = $"-c role={AppRole}" }.ConnectionString;
+        await WarmUpAsync();
         Host = TestHost.CreatePostgres(AppConnectionString, CleanupAsync);
+    }
+
+    /// <summary>
+    /// The first queries in a freshly created database are slow on a cold server (right after a reboot):
+    /// a new backend process per connection, empty OS file cache, catalog caches of the new database built
+    /// from disk. Analytics measures its timeout over the whole call, so two analytics tests used to fail
+    /// at ~6 s after a reboot. Here every table is touched once as the application role on a few parallel
+    /// connections, so that the tests start on a warm database. Real slowness is still caught: see
+    /// BalanceStatsVolumeTests, which runs with the production timeout.
+    /// </summary>
+    private async Task WarmUpAsync()
+    {
+        string touchAll;
+        await using (var admin = new NpgsqlConnection(AdminDbConnectionString))
+        {
+            await admin.OpenAsync();
+            await using var list = new NpgsqlCommand(
+                "SELECT string_agg(format('(SELECT 1 FROM %I LIMIT 1)', tablename), ' UNION ALL ') FROM pg_tables WHERE schemaname = 'public'",
+                admin);
+            touchAll = (string)(await list.ExecuteScalarAsync())!;
+        }
+        await Task.WhenAll(Enumerable.Range(0, 3).Select(async _ =>
+        {
+            await using var connection = new NpgsqlConnection(AppConnectionString);
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand(touchAll, connection) { CommandTimeout = 120 };
+            await command.ExecuteNonQueryAsync();
+        }));
     }
 
     public async ValueTask DisposeAsync()

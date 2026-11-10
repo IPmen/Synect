@@ -26,4 +26,7 @@ public class ToolAuditLog : TenantEntity
 
     /// <summary>Error message without secrets (never the API key).</summary>
     public string? ErrorMessage { get; set; }
+
+    /// <summary>What a changing tool did, as JSON (e.g. confirm_match: previous and new status of the match); null for reads.</summary>
+    public string? Details { get; set; }
 }

@@ -10,7 +10,11 @@ public class ApiKey : TenantEntity
 {
     public const string ScopeRead = "read";
     public const string ScopeSyncRequest = "sync_request";
-    public static readonly string[] KnownScopes = [ScopeRead, ScopeSyncRequest];
+
+    /// <summary>Confirming and rejecting reconciliation matches (changes only Synect's own reconciliation data).</summary>
+    public const string ScopeReview = "review";
+
+    public static readonly string[] KnownScopes = [ScopeRead, ScopeSyncRequest, ScopeReview];
 
     public string Name { get; set; } = string.Empty;
 

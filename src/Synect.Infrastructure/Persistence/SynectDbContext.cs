@@ -7,6 +7,7 @@ using Synect.Domain.Common;
 using Synect.Domain.Counterparties;
 using Synect.Domain.Edo;
 using Synect.Domain.Raw;
+using Synect.Domain.Reconciliation;
 using Synect.Domain.Sync;
 using Synect.Domain.Tenants;
 
@@ -40,6 +41,11 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<CounterpartyAlias> CounterpartyAliases => Set<CounterpartyAlias>();
     public DbSet<ToolAuditLog> ToolAuditLogs => Set<ToolAuditLog>();
+    public DbSet<ReconciliationRun> ReconciliationRuns => Set<ReconciliationRun>();
+    public DbSet<ReconciliationMatch> ReconciliationMatches => Set<ReconciliationMatch>();
+    public DbSet<ReconciliationMatchItem> ReconciliationMatchItems => Set<ReconciliationMatchItem>();
+    public DbSet<ReconciliationFinding> ReconciliationFindings => Set<ReconciliationFinding>();
+    public DbSet<ReconciliationMatchDecision> ReconciliationMatchDecisions => Set<ReconciliationMatchDecision>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -61,6 +67,10 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
         modelBuilder.Entity<ApiKey>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<CounterpartyAlias>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<ToolAuditLog>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<ReconciliationRun>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<ReconciliationMatch>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<ReconciliationMatchItem>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<ReconciliationFinding>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)

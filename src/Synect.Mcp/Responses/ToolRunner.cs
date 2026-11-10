@@ -16,6 +16,7 @@ public enum ToolGroup
     Bank = 1,
     Counterparties = 2,
     Documents = 4,
+    Reconciliation = 8,
 }
 
 /// <summary>What a tool body returns; the runner wraps it into the common answer envelope.</summary>
@@ -151,6 +152,7 @@ public sealed class ToolRunner(
             foreach (var n in notes.Documents) yield return n;
             yield return CountedStatusesNote;
         }
+        if (group.HasFlag(ToolGroup.Reconciliation)) foreach (var n in notes.Reconciliation) yield return n;
     }
 
     public string CountedStatusesNote =>

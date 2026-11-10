@@ -175,8 +175,13 @@ public class KapitalBankMapperTests
     [InlineData("000", "UZS")]
     [InlineData("UZS", "UZS")]
     [InlineData("uzs", "UZS")]
-    [InlineData("840", "840")]
+    [InlineData("860", "UZS")]
+    [InlineData("840", "USD")]
+    [InlineData("978", "EUR")]
+    [InlineData("643", "RUB")]
     [InlineData("USD", "USD")]
+    [InlineData("eur", "EUR")]
+    [InlineData("999", "999")] // unknown numeric code: kept as is
     public void Account_currency_comes_from_val(string val, string expected)
     {
         Assert.Equal(expected, Assert.Single(Mapper().MapAccounts(Accounts(val))).Currency);
@@ -184,12 +189,24 @@ public class KapitalBankMapperTests
 
     [Theory]
     [InlineData("20208000900123456001", "UZS")]
-    [InlineData("20208840900123456001", "840")]
-    [InlineData("20208978900123456001", "978")]
+    [InlineData("20208840900123456001", "USD")]
+    [InlineData("20208978900123456001", "EUR")]
+    [InlineData("20208643900123456001", "RUB")]
+    [InlineData("20208156900123456001", "156")] // unknown numeric code: kept as is
     public void Empty_val_falls_back_to_account_number_digits(string account, string expected)
     {
         Assert.Equal(expected, CurrencyCodes.Resolve("", account));
         Assert.Equal(expected, CurrencyCodes.Resolve(null, account));
+    }
+
+    [Fact]
+    public void Operations_take_the_normalized_account_currency_and_keep_the_raw_value()
+    {
+        var json = """{ "error": null, "id": 1, "result": { "content": [ { "b2_id": 7, "dir": 1, "amount": 100, "ddate": "2026-10-01", "err": 0 } ] } }""";
+        var tx = Assert.Single(Mapper().MapTransactions(json, "20208840900123456001", new DateOnly(2026, 10, 1)).Transactions);
+        Assert.Equal("USD", tx.Currency);
+        var account = Assert.Single(Mapper().MapAccounts(Accounts("840")));
+        Assert.Contains("\"val\":\"840\"", account.Raw.Json.Replace(" ", ""));
     }
 
     [Fact]

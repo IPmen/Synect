@@ -24,7 +24,17 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         "get_documents_awaiting_our_signature", "get_documents_awaiting_partner_signature", "get_document_counts",
         "get_rejected_documents", "search_documents", "get_largest_documents", "get_vat_summary",
         "request_data_refresh",
+        "get_paid_documents", "get_unpaid_documents", "get_partially_paid_documents", "get_unmatched_payments", "get_signed_unpaid_acts",
+        "get_multi_document_payments", "get_amount_differences", "get_payments_without_reference", "get_payment_delay_stats",
+        "get_account_mismatches", "get_possible_duplicate_payments", "get_counterparty_balance_estimate", "get_match_details",
+        "confirm_match", "reject_match",
     ];
+
+    /// <summary>Tools that change data (only Synect's own: the sync queue or the reconciliation decisions).</summary>
+    public static readonly string[] WritingTools = ["request_data_refresh", "confirm_match", "reject_match"];
+
+    /// <summary>Tools that need the review scope.</summary>
+    public static readonly string[] ReviewTools = ["confirm_match", "reject_match"];
 
     private static readonly object October = new { from = "2026-10-01", to = "2026-10-31" };
 
@@ -56,6 +66,21 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         ["get_largest_documents"] = October,
         ["get_vat_summary"] = October,
         ["request_data_refresh"] = new { source = "all" },
+        ["get_paid_documents"] = October,
+        ["get_unpaid_documents"] = October,
+        ["get_partially_paid_documents"] = October,
+        ["get_unmatched_payments"] = October,
+        ["get_signed_unpaid_acts"] = October,
+        ["get_multi_document_payments"] = October,
+        ["get_amount_differences"] = October,
+        ["get_payments_without_reference"] = October,
+        ["get_payment_delay_stats"] = October,
+        ["get_account_mismatches"] = October,
+        ["get_possible_duplicate_payments"] = October,
+        ["get_counterparty_balance_estimate"] = new { inn = Alpha },
+        ["get_match_details"] = new { match_id = "00000000-0000-0000-0000-000000000001" },
+        ["confirm_match"] = new { match_id = "00000000-0000-0000-0000-000000000001" },
+        ["reject_match"] = new { match_id = "00000000-0000-0000-0000-000000000001" },
     };
 
     private void RequirePostgres() => Assert.SkipUnless(f.Available, PostgresFixture.SkipReason);
@@ -73,9 +98,13 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
             Assert.False(string.IsNullOrWhiteSpace(tool.Description), tool.Name);
             Assert.Contains("untrusted_text", tool.Description);
             Assert.Contains("«", tool.Description); // Russian example questions
+            Assert.Contains("RULES FOR THE MODEL", tool.Description);
+            Assert.Contains("do not recommend actions", tool.Description);
+            Assert.Contains("data_freshness", tool.Description);
+            Assert.Contains("call find_counterparties first", tool.Description);
             var schema = tool.ProtocolTool.InputSchema;
             Assert.Equal("object", schema.GetProperty("type").GetString());
-            Assert.Equal(tool.Name != "request_data_refresh", tool.ProtocolTool.Annotations?.ReadOnlyHint);
+            Assert.Equal(!WritingTools.Contains(tool.Name), tool.ProtocolTool.Annotations?.ReadOnlyHint);
         }
 
         var cashFlow = tools.Single(t => t.Name == "get_cash_flow").ProtocolTool.InputSchema;
@@ -91,7 +120,7 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
     {
         RequirePostgres();
         await using var client = await f.ClientAsync(f.KeyASync);
-        foreach (var tool in AllTools)
+        foreach (var tool in AllTools.Except(ReviewTools)) // review tools: McpReconciliationTests
         {
             var (body, raw) = await McpFixture.CallAsync(client, tool, ValidArgs[tool]);
             Assert.True(raw.IsError != true, $"{tool}: {body}");

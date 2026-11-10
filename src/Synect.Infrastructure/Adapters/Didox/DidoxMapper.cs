@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Synect.Application.Adapters;
+using Synect.Domain.Common;
 using Synect.Domain.Edo;
 
 namespace Synect.Infrastructure.Adapters.Didox;
@@ -74,7 +75,13 @@ public sealed class DidoxMapper(IOptions<DidoxMapperOptions> options)
             StatusComment: SourceJson.Str(item, "status_comment"),
             CreatedAt: SourceJson.Timestamp(item, "created", _options.SourceUtcOffset),
             UpdatedAt: SourceJson.Timestamp(item, "updated", _options.SourceUtcOffset),
-            Raw: new RawRecord(DocumentObjectType, id, item.GetRawText()));
+            Raw: new RawRecord(DocumentObjectType, id, item.GetRawText()),
+            // Currency: not confirmed by documentation, verify on a real response. The Didox document list description
+            // has no currency field, so "currency" and "currency_code" are read only if present (both optional, ISO
+            // letter or numeric code); when neither is present the document is taken as UZS.
+            Currency: IsoCurrency.Normalize(SourceJson.Str(item, "currency") ?? SourceJson.Str(item, "currency_code")) is { Length: > 0 } c ? c : "UZS",
+            // sellerAccount is confirmed by the Didox documentation of the document list (no other spelling is guessed).
+            SellerAccount: SourceJson.Str(item, "sellerAccount"));
     }
 
     private long Minor(JsonElement item, string field) =>
