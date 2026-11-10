@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Synect.Domain.Access;
 using Synect.Domain.Analytics;
+using Synect.Domain.Attention;
 using Synect.Domain.Banking;
 using Synect.Domain.Counterparties;
 using Synect.Domain.Edo;
@@ -40,6 +41,8 @@ public interface ISynectDbContext
     DbSet<ReconciliationMatchItem> ReconciliationMatchItems { get; }
     DbSet<ReconciliationFinding> ReconciliationFindings { get; }
     DbSet<ReconciliationMatchDecision> ReconciliationMatchDecisions { get; }
+    DbSet<AttentionItem> AttentionItems { get; }
+    DbSet<AttentionItemEvent> AttentionItemEvents { get; }
 
     DatabaseFacade Database { get; }
     ChangeTracker ChangeTracker { get; }

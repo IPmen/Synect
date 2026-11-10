@@ -5,6 +5,7 @@ using Synect.Application.Access;
 using Synect.Application.Adapters;
 using Synect.Application.Analytics;
 using Synect.Application.Analytics.Totals;
+using Synect.Application.Attention;
 using Synect.Application.Freshness;
 using Synect.Application.Queue;
 using Synect.Application.Reconciliation;
@@ -72,6 +73,13 @@ public static class DependencyInjection
         services.AddScoped<ReconciliationService>();
         services.AddScoped<ReconciliationReviewService>();
         services.AddScoped<ReconciliationQueries>();
+
+        // Attention inbox: rules evaluated after loads, decisions and periodically; read by MCP.
+        services.AddOptions<AttentionOptions>();
+        services.AddSingleton<AttentionSchedule>();
+        services.AddScoped<AttentionEvaluator>();
+        services.AddScoped<AttentionTrigger>();
+        services.AddScoped<AttentionService>();
         services.AddSynectAnalytics();
         return services;
     }

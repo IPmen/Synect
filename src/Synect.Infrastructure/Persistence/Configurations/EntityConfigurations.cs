@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Synect.Domain.Access;
 using Synect.Domain.Analytics;
+using Synect.Domain.Attention;
 using Synect.Domain.Banking;
 using Synect.Domain.Common;
 using Synect.Domain.Counterparties;
@@ -375,5 +376,47 @@ internal sealed class ReconciliationFindingConfiguration : IEntityTypeConfigurat
         b.HasOne<ReconciliationRun>().WithMany().HasForeignKey(e => new { e.TenantId, e.RunId }).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(e => new { e.TenantId, e.CounterpartyInn });
         b.HasIndex(e => new { e.TenantId, e.Kind, e.SubjectId });
+    }
+}
+
+internal sealed class AttentionItemConfiguration : IEntityTypeConfiguration<AttentionItem>
+{
+    public void Configure(EntityTypeBuilder<AttentionItem> b)
+    {
+        b.ToTable("attention_items");
+        b.ConfigureTenantEntity();
+        b.Property(e => e.RuleCode).HasMaxLength(TenantEntityConfiguration.CodeLength);
+        b.Property(e => e.Category).HasConversion<string>().HasMaxLength(32);
+        b.Property(e => e.Severity).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.Status).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.Title).HasMaxLength(AttentionItem.MaxTitleLength);
+        b.Property(e => e.Body).HasMaxLength(AttentionItem.MaxBodyLength);
+        b.Property(e => e.Details).HasColumnType(TenantEntityConfiguration.Jsonb);
+        b.Property(e => e.EntityKind).HasMaxLength(32);
+        b.Property(e => e.EntityRef).HasMaxLength(64);
+        b.Property(e => e.DedupKey).HasMaxLength(256);
+        b.Property(e => e.Comment).HasMaxLength(AttentionItem.MaxCommentLength);
+        // One open (non-resolved) item per case; resolved rows are reused when the case comes back.
+        b.HasIndex(e => new { e.TenantId, e.DedupKey })
+            .IsUnique()
+            .HasFilter("status <> 'Resolved'")
+            .HasDatabaseName("ux_attention_items_dedup_open");
+        // Lookup of resolved rows to reopen, and the rule-by-rule evaluation.
+        b.HasIndex(e => new { e.TenantId, e.RuleCode, e.Status });
+        // Lists and counters: by status, then importance and time.
+        b.HasIndex(e => new { e.TenantId, e.Status, e.Severity, e.LastSeenAt });
+    }
+}
+
+internal sealed class AttentionItemEventConfiguration : IEntityTypeConfiguration<AttentionItemEvent>
+{
+    public void Configure(EntityTypeBuilder<AttentionItemEvent> b)
+    {
+        b.ToTable("attention_item_events");
+        b.ConfigureTenantEntity();
+        b.Property(e => e.Kind).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.Comment).HasMaxLength(AttentionItem.MaxCommentLength);
+        b.HasOne<AttentionItem>().WithMany().HasForeignKey(e => new { e.TenantId, e.ItemId }).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(e => new { e.TenantId, e.ItemId, e.At });
     }
 }

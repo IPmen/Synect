@@ -123,6 +123,9 @@ public sealed class FakeBankScenario
 
     /// <summary>Days with one extra operation rejected by the bank (err != 0, not in the day totals).</summary>
     public HashSet<DateOnly> ErroneousDays { get; } = [];
+
+    /// <summary>Days whose closing balance (saldo_out) of the first account is off by 1 000.00, so that the day balance does not add up.</summary>
+    public HashSet<DateOnly> BrokenBalanceDays { get; } = [];
 }
 
 /// <summary>
@@ -263,7 +266,7 @@ public sealed class FakeBankDataSource
             ["total_debit"] = debit,
             ["total_credit"] = credit,
             ["saldo_in"] = saldoIn,
-            ["saldo_out"] = saldoIn + credit - debit,
+            ["saldo_out"] = saldoIn + credit - debit + (accountIndex == 0 && s.BrokenBalanceDays.Contains(day) ? 1_000_00L : 0L),
             ["fin"] = s.OpenDays.Contains(day) ? 0 : 1,
             ["oper_day"] = day.ToString("yyyy-MM-dd"),
         };

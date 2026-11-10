@@ -86,6 +86,11 @@ public sealed class McpNotesOptions
         "Payments without a counterparty INN are never matched automatically.",
     ];
 
+    public string[] Attention { get; set; } =
+    [
+        "Attention items come from Synect's rules over loaded data; their thresholds (Attention:*) are assumptions still to be checked on real data. Present each item as a possible discrepancy with its basis (body, details), not as a confirmed violation.",
+    ];
+
     /// <summary>Added to tools that compare documents and payments by INN without the reconciliation.</summary>
     public string NotReconciliation { get; set; } =
         "This is a check whether Didox documents exist for the INN, not a matching of payments with documents (Это проверка наличия документов по ИНН, а не сопоставление платежей с документами). For matches use the reconciliation tools (get_paid_documents, get_unpaid_documents, get_unmatched_payments, get_counterparty_balance_estimate).";

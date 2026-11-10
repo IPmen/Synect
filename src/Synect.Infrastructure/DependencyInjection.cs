@@ -66,6 +66,7 @@ public static class DependencyInjection
         services.Configure<Synect.Application.Analytics.AnalyticsOptions>(configuration.GetSection("Analytics"));
         services.Configure<Synect.Application.Analytics.Counterparties.SearchOptions>(configuration.GetSection("Search"));
         services.Configure<Synect.Application.Reconciliation.ReconciliationOptions>(configuration.GetSection("Reconciliation"));
+        services.Configure<Synect.Application.Attention.AttentionOptions>(configuration.GetSection("Attention"));
         return services;
     }
 

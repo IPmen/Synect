@@ -28,13 +28,14 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         "get_multi_document_payments", "get_amount_differences", "get_payments_without_reference", "get_payment_delay_stats",
         "get_account_mismatches", "get_possible_duplicate_payments", "get_counterparty_balance_estimate", "get_match_details",
         "confirm_match", "reject_match",
+        "get_attention_items", "get_attention_summary", "update_attention_item",
     ];
 
     /// <summary>Tools that change data (only Synect's own: the sync queue or the reconciliation decisions).</summary>
-    public static readonly string[] WritingTools = ["request_data_refresh", "confirm_match", "reject_match"];
+    public static readonly string[] WritingTools = ["request_data_refresh", "confirm_match", "reject_match", "update_attention_item"];
 
     /// <summary>Tools that need the review scope.</summary>
-    public static readonly string[] ReviewTools = ["confirm_match", "reject_match"];
+    public static readonly string[] ReviewTools = ["confirm_match", "reject_match", "update_attention_item"];
 
     private static readonly object October = new { from = "2026-10-01", to = "2026-10-31" };
 
@@ -81,6 +82,9 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         ["get_match_details"] = new { match_id = "00000000-0000-0000-0000-000000000001" },
         ["confirm_match"] = new { match_id = "00000000-0000-0000-0000-000000000001" },
         ["reject_match"] = new { match_id = "00000000-0000-0000-0000-000000000001" },
+        ["get_attention_items"] = null,
+        ["get_attention_summary"] = null,
+        ["update_attention_item"] = new { item_id = "00000000-0000-0000-0000-000000000001", action = "seen" },
     };
 
     private void RequirePostgres() => Assert.SkipUnless(f.Available, PostgresFixture.SkipReason);
@@ -120,7 +124,7 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
     {
         RequirePostgres();
         await using var client = await f.ClientAsync(f.KeyASync);
-        foreach (var tool in AllTools.Except(ReviewTools)) // review tools: McpReconciliationTests
+        foreach (var tool in AllTools.Except(ReviewTools)) // review tools: McpReconciliationTests, McpAttentionTests
         {
             var (body, raw) = await McpFixture.CallAsync(client, tool, ValidArgs[tool]);
             Assert.True(raw.IsError != true, $"{tool}: {body}");

@@ -25,6 +25,7 @@ public static class ToolCallFilter
         [SourceTools.RequestDataRefresh] = ApiKey.ScopeSyncRequest,
         [ReviewTools.ConfirmMatch] = ApiKey.ScopeReview,
         [ReviewTools.RejectMatch] = ApiKey.ScopeReview,
+        [AttentionTools.UpdateItem] = ApiKey.ScopeReview,
     };
 
     public static string RequiredScope(string tool) => RequiredScopes.GetValueOrDefault(tool, ApiKey.ScopeRead);

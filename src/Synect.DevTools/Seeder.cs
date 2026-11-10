@@ -113,6 +113,18 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
         return (tenant, bankId, edoId);
     }
 
+    /// <summary>The attention golden set tenant: bank, Didox, a broken bank connection and a stale Didox connection.</summary>
+    public async Task<(Guid Tenant, AttentionGoldenSet.Connections Connections)> EnsureAttentionTenantAsync()
+    {
+        var tenant = await EnsureTenantAsync(AttentionGoldenSet.TenantName, "319000002");
+        var connections = new AttentionGoldenSet.Connections(
+            await EnsureConnectionAsync(tenant, AdapterKind.Bank, "Kapital Bank (attention set)"),
+            await EnsureConnectionAsync(tenant, AdapterKind.Edo, "Didox (attention set)"),
+            await EnsureConnectionAsync(tenant, AdapterKind.Bank, "Kapital Bank (attention set, broken)"),
+            await EnsureConnectionAsync(tenant, AdapterKind.Edo, "Didox (attention set, stale)"));
+        return (tenant, connections);
+    }
+
     public Task<int> RebuildTotalsAsync(Guid tenant) => tenants.InTenantAsync(tenant, (sp, ct) =>
     {
         var db = sp.GetRequiredService<ISynectDbContext>();

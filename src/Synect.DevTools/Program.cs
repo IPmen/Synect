@@ -28,6 +28,9 @@ using Synect.Infrastructure.Persistence;
 //   reconcile-eval                                golden set: precision, recall and errors of automatic matches
 //   reconcile-bench --tenant <name|id> [--runs 5] time of a full and of single-INN recalculations
 //   normalize-currency --tenant <name|id>|--all   numeric ISO 4217 codes (860, 840, 978, 643) in loaded data -> letters
+//   attention --tenant <name|id>                  evaluates every attention rule now and prints the open items
+//   attention-eval                                attention golden set (fixed clock): created items, severities, what is not created
+//   attention-bench --tenant <name|id> [--runs 5] time of a full evaluation and of the evaluations after a load
 
 var command = args.FirstOrDefault() ?? "help";
 var options = CliArgs.Parse(args.Skip(1).ToArray());
@@ -37,6 +40,9 @@ builder.Configuration.AddUserSecrets<CliArgs>(optional: true);
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(o => o.SingleLine = true);
 builder.Logging.SetMinimumLevel(LogLevel.Warning);
+
+// attention-eval runs on a fixed, movable clock so that its output never depends on the day it is run.
+if (command == "attention-eval") builder.Services.AddSingleton<TimeProvider>(new DevClock(Synect.Infrastructure.Adapters.Fake.AttentionGoldenSet.EvaluateAt));
 
 var capture = new CommandCapture();
 builder.Services.AddSynectInfrastructure(builder.Configuration);
@@ -51,6 +57,7 @@ builder.Services.ConfigureAll<RateLimitOptions>(o =>
 builder.Services.AddSingleton<Seeder>();
 builder.Services.AddSingleton<QueryCatalog>();
 builder.Services.AddSingleton<ReconciliationCommands>();
+builder.Services.AddSingleton<AttentionCommands>();
 
 using var host = builder.Build();
 var services = host.Services;
@@ -113,12 +120,20 @@ try
         case "normalize-currency":
             await services.GetRequiredService<ReconciliationCommands>().NormalizeCurrencyAsync(options.Get("all") == "true" ? await AllTenants() : [await Tenant()]);
             break;
+        case "attention":
+            await services.GetRequiredService<AttentionCommands>().EvaluateAsync(await Tenant());
+            break;
+        case "attention-eval":
+            return await services.GetRequiredService<AttentionCommands>().EvalAsync();
+        case "attention-bench":
+            await services.GetRequiredService<AttentionCommands>().BenchAsync(await Tenant(), options.Int("runs", 5));
+            break;
         case "test-db-leftovers":
             return await TestDbLeftovers.RunAsync(builder.Configuration, options.Get("drop") == "true");
         default:
             Console.WriteLine("Commands: seed-demo, seed-load, rebuild-totals, rebuild-counterparty-aliases, list-queries, query <name>, bench, explain, " +
                               "create-api-key, revoke-api-key, list-api-keys, test-db-leftovers, reconcile, rebuild-reconciliation, reconcile-eval, " +
-                              "reconcile-bench, normalize-currency. See Program.cs.");
+                              "reconcile-bench, normalize-currency, attention, attention-eval, attention-bench. See Program.cs.");
             break;
     }
 }

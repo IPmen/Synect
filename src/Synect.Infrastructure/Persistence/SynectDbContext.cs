@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Synect.Application.Abstractions;
 using Synect.Domain.Access;
 using Synect.Domain.Analytics;
+using Synect.Domain.Attention;
 using Synect.Domain.Banking;
 using Synect.Domain.Common;
 using Synect.Domain.Counterparties;
@@ -46,6 +47,8 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
     public DbSet<ReconciliationMatchItem> ReconciliationMatchItems => Set<ReconciliationMatchItem>();
     public DbSet<ReconciliationFinding> ReconciliationFindings => Set<ReconciliationFinding>();
     public DbSet<ReconciliationMatchDecision> ReconciliationMatchDecisions => Set<ReconciliationMatchDecision>();
+    public DbSet<AttentionItem> AttentionItems => Set<AttentionItem>();
+    public DbSet<AttentionItemEvent> AttentionItemEvents => Set<AttentionItemEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -71,6 +74,8 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
         modelBuilder.Entity<ReconciliationMatch>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<ReconciliationMatchItem>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<ReconciliationFinding>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<AttentionItem>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<AttentionItemEvent>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -94,6 +99,8 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
 
             if (entry.Entity is EdoDocumentStatusLog && entry.State is EntityState.Modified or EntityState.Deleted)
                 throw new InvalidOperationException("edo_document_status_logs is append-only.");
+            if (entry.Entity is AttentionItemEvent && entry.State is EntityState.Modified or EntityState.Deleted)
+                throw new InvalidOperationException("attention_item_events is append-only.");
 
             if (current is null)
                 throw new InvalidOperationException("Tenant context is not set; tenant-scoped data cannot be written.");

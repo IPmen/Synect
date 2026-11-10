@@ -102,6 +102,18 @@ public sealed partial class ToolArgs(McpOptions options)
         return result;
     }
 
+    /// <summary>Comma separated values of the given snake_case set (case-insensitive); null when empty.</summary>
+    public IReadOnlyList<T>? EnumList<T>(string name, string? value, IReadOnlyDictionary<string, T> allowed)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var keys = value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Select(k => k.ToLowerInvariant()).Distinct().ToList();
+        if (keys.Count == 0 || keys.Any(k => !allowed.ContainsKey(k)))
+            throw new ToolArgumentException($"Parameter '{name}' must be one or more of (comma separated): {string.Join(", ", allowed.Keys)}.");
+        _request[name] = string.Join(",", keys);
+        return keys.Select(k => allowed[k]).ToList();
+    }
+
     public T? OptionalEnum<T>(string name, string? value, IReadOnlyDictionary<string, T> allowed) where T : struct =>
         string.IsNullOrWhiteSpace(value) ? null : Enum(name, value, allowed);
 
@@ -260,6 +272,18 @@ public static class ToolEnums
         ["only"] = true,
         ["exclude"] = false,
     };
+
+    public static readonly IReadOnlyDictionary<string, Domain.Attention.AttentionSeverity> Severity =
+        System.Enum.GetValues<Domain.Attention.AttentionSeverity>().ToDictionary(v => v.ToString().ToLowerInvariant(), v => v);
+
+    public static readonly IReadOnlyDictionary<string, Domain.Attention.AttentionCategory> Category =
+        System.Enum.GetValues<Domain.Attention.AttentionCategory>().ToDictionary(v => v.ToString().ToLowerInvariant(), v => v);
+
+    public static readonly IReadOnlyDictionary<string, Domain.Attention.AttentionStatus> AttentionStatus =
+        System.Enum.GetValues<Domain.Attention.AttentionStatus>().ToDictionary(v => v.ToString().ToLowerInvariant(), v => v);
+
+    public static readonly IReadOnlyDictionary<string, Application.Attention.AttentionAction> AttentionAction =
+        System.Enum.GetValues<Application.Attention.AttentionAction>().ToDictionary(v => v.ToString().ToLowerInvariant(), v => v);
 
     public static readonly IReadOnlyDictionary<string, string> Source = new Dictionary<string, string>
     {

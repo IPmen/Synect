@@ -318,7 +318,7 @@ public sealed record ReviewResult(
 /// of other Proposed matches).
 /// </summary>
 public sealed class ReconciliationReviewService(
-    ISynectDbContext db, ITenantContext tenant, TimeProvider time, ReconciliationService reconciliation)
+    ISynectDbContext db, ITenantContext tenant, TimeProvider time, ReconciliationService reconciliation, Attention.AttentionTrigger attention)
 {
     public Task<ReviewResult> ConfirmAsync(Guid matchId, Guid? apiKeyId, string? comment, CancellationToken ct) =>
         DecideAsync(matchId, MatchStatus.Confirmed, apiKeyId, comment, ct);
@@ -326,7 +326,16 @@ public sealed class ReconciliationReviewService(
     public Task<ReviewResult> RejectAsync(Guid matchId, Guid? apiKeyId, string? comment, CancellationToken ct) =>
         DecideAsync(matchId, MatchStatus.Rejected, apiKeyId, comment, ct);
 
-    private Task<ReviewResult> DecideAsync(Guid matchId, MatchStatus decision, Guid? apiKeyId, string? comment, CancellationToken ct) =>
+    private async Task<ReviewResult> DecideAsync(Guid matchId, MatchStatus decision, Guid? apiKeyId, string? comment, CancellationToken ct)
+    {
+        var result = await DecideInTransactionAsync(matchId, decision, apiKeyId, comment, ct);
+        // Reconciliation attention rules (double payments, other accounts, unmatched payments, unpaid acts) after the change.
+        if (result.Outcome is ReviewOutcome.Confirmed or ReviewOutcome.Rejected && db.Database.CurrentTransaction is null)
+            await attention.AfterReconciliationAsync(CancellationToken.None);
+        return result;
+    }
+
+    private Task<ReviewResult> DecideInTransactionAsync(Guid matchId, MatchStatus decision, Guid? apiKeyId, string? comment, CancellationToken ct) =>
         db.InTransactionAsync(async token =>
         {
             var tenantId = tenant.TenantId ?? throw new InvalidOperationException("Reconciliation review requires a tenant context.");

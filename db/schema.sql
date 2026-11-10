@@ -1566,3 +1566,167 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    CREATE TABLE attention_items (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        rule_code character varying(64) NOT NULL,
+        category character varying(32) NOT NULL,
+        severity character varying(16) NOT NULL,
+        title character varying(200) NOT NULL,
+        body character varying(1000) NOT NULL,
+        details jsonb NOT NULL,
+        entity_kind character varying(32) NOT NULL,
+        entity_ref character varying(64) NOT NULL,
+        dedup_key character varying(256) NOT NULL,
+        member_keys text[] NOT NULL,
+        status character varying(16) NOT NULL,
+        snoozed_until timestamp with time zone,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        resolved_at timestamp with time zone,
+        decided_by_key uuid,
+        comment character varying(1000),
+        updated_at timestamp with time zone NOT NULL,
+        CONSTRAINT pk_attention_items PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_attention_items_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    CREATE TABLE attention_item_events (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        item_id uuid NOT NULL,
+        kind character varying(16) NOT NULL,
+        at timestamp with time zone NOT NULL,
+        api_key_id uuid,
+        comment character varying(1000),
+        CONSTRAINT pk_attention_item_events PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_attention_item_events_attention_items_tenant_id_item_id FOREIGN KEY (tenant_id, item_id) REFERENCES attention_items (tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_attention_item_events_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    CREATE INDEX ix_attention_item_events_tenant_id_item_id_at ON attention_item_events (tenant_id, item_id, at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    CREATE INDEX ix_attention_items_tenant_id_rule_code_status ON attention_items (tenant_id, rule_code, status);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    CREATE INDEX ix_attention_items_tenant_id_status_severity_last_seen_at ON attention_items (tenant_id, status, severity, last_seen_at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    CREATE UNIQUE INDEX ux_attention_items_dedup_open ON attention_items (tenant_id, dedup_key) WHERE status <> 'Resolved';
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    ALTER TABLE attention_items ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    ALTER TABLE attention_items FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    CREATE POLICY tenant_isolation ON attention_items USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    ALTER TABLE attention_item_events ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    ALTER TABLE attention_item_events FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    CREATE POLICY tenant_isolation ON attention_item_events USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    ALTER TABLE attention_items ADD CONSTRAINT ck_attention_items_severity CHECK (severity IN ('Critical', 'High', 'Medium', 'Low'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    ALTER TABLE attention_items ADD CONSTRAINT ck_attention_items_status CHECK (status IN ('New', 'Seen', 'Snoozed', 'Dismissed', 'Resolved'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    ALTER TABLE attention_items ADD CONSTRAINT ck_attention_items_category CHECK (category IN ('Connection', 'Bank', 'Reconciliation', 'Documents'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    ALTER TABLE attention_items ADD CONSTRAINT ck_attention_items_snooze CHECK (status <> 'Snoozed' OR snoozed_until IS NOT NULL);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    ALTER TABLE attention_item_events ADD CONSTRAINT ck_attention_item_events_kind CHECK (kind IN ('Created', 'Reopened', 'Seen', 'Snoozed', 'Dismissed', 'AutoResolved'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110101425_AttentionInbox') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261110101425_AttentionInbox', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+

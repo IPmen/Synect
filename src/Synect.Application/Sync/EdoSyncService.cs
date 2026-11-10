@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Synect.Application.Abstractions;
 using Synect.Application.Adapters;
 using Synect.Application.Analytics.Totals;
+using Synect.Application.Attention;
 using Synect.Application.Reconciliation;
 using Synect.Application.Resilience;
 using Synect.Application.Secrets;
@@ -40,6 +41,7 @@ public sealed class EdoSyncService(
     CounterpartyMonthlyRefresher monthly,
     ReconciliationService reconciliation,
     AliasVolumeMonitor aliasMonitor,
+    AttentionTrigger attention,
     IOptions<ReconciliationOptions> reconciliationOptions,
     TimeProvider time,
     IOptions<EdoSyncOptions> options,
@@ -118,6 +120,8 @@ public sealed class EdoSyncService(
                 await db.SaveChangesAsync(token);
             }, ct);
 
+            // Attention rules over the new data (own scope and transaction; never fails the load, hence no cancellation token).
+            await attention.AfterLoadAsync(AdapterKind.Edo, succeeded: true, CancellationToken.None);
             logger.LogInformation("EDO sync succeeded: connection {ConnectionId}, records {Records}", connection.Id, records);
             return new SyncOutcome(run.Id, run.Result, run.IsComplete, records, null);
         }
@@ -128,6 +132,7 @@ public sealed class EdoSyncService(
             var outcome = await SyncRunFinalizer.FailAsync(db, run.Id, connection.Id, ex, records, time.GetUtcNow(),
                 breakerOptions.Value.FailureThreshold);
             if (ex is OperationCanceledException) throw;
+            await attention.AfterLoadAsync(AdapterKind.Edo, succeeded: false, CancellationToken.None);
             return outcome;
         }
     }

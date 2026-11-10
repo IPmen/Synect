@@ -45,6 +45,8 @@ public sealed class SyncDispatcher(
                 {
                     await sp.GetRequiredService<SyncRecovery>().RecoverStaleAsync(ct);
                     await sp.GetRequiredService<SyncPlanner>().PlanAsync(ct);
+                    // Time-based attention rules (stale data, waiting documents, snooze end); due once per Attention:PeriodicInterval.
+                    await sp.GetRequiredService<Attention.AttentionTrigger>().PeriodicAsync(ct);
                     var db = sp.GetRequiredService<ISynectDbContext>();
                     var now = time.GetUtcNow();
                     return await db.InTransactionAsync(token =>

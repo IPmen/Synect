@@ -23,12 +23,19 @@ public sealed class ReconciliationCommands(IServiceProvider services, TenantScop
             : ReconciliationScope.ForInns(inns.Split(',', StringSplitOptions.TrimEntries).Select(i => i == "-" ? "" : i));
         var r = await tenants.InTenantAsync(tenant, (sp, ct) => sp.GetRequiredService<ReconciliationService>().ReconcileAsync(scope, ct), CancellationToken.None);
         Print(r);
+        await AttentionAsync(tenant);
     }
+
+    /// <summary>The reconciliation attention rules after a recalculation outside a load.</summary>
+    private Task AttentionAsync(Guid tenant) =>
+        tenants.InTenantAsync(tenant, (sp, ct) => sp.GetRequiredService<Synect.Application.Attention.AttentionTrigger>().AfterReconciliationAsync(ct),
+            CancellationToken.None);
 
     public async Task RebuildAsync(Guid tenant)
     {
         var r = await tenants.InTenantAsync(tenant, (sp, ct) => sp.GetRequiredService<ReconciliationService>().RebuildAsync(ct), CancellationToken.None);
         Print(r);
+        await AttentionAsync(tenant);
     }
 
     /// <summary>Loads the golden set through the fake adapters, recalculates and prints precision, recall and the errors.</summary>
