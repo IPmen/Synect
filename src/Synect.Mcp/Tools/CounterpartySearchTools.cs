@@ -22,7 +22,7 @@ public sealed class CounterpartySearchTools(ToolRunner runner, Presenter p, Coun
                  "then pass the chosen INN to the other tools. best_match is set only when one candidate is clearly ahead; when it is " +
                  "null, or the user may mean someone else, show the candidates and ask the user which one they mean; never guess an INN. " +
                  "Payments without an INN are never found here (see notes). " +
-                 "Examples: «Рассвет», «Rassvet», «ООО Ромашка», «Romashka MChJ», «Сколько мы заплатили Ромашке?», «Qurilish servis YaTT»." + Common)]
+                 "Examples: «Рассвет», «Rassvet», «ООО Ромашка», «Romashka MChJ», «Сколько мы заплатили Ромашке?», «Qurilish servis YaTT», «Қурилиш сервис ЯТТ», «Romashka MChJ bilan hisob-kitob qancha?»." + Common)]
     public Task<CallToolResult> Find(
         [Description("Name fragment (any language, script or legal form) or an INN of 9 or 14 digits.")] string query,
         [Description("Optional activity period start, yyyy-MM-dd (default: 12 months ago). " + Dates)] string? from = null,

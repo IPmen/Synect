@@ -459,7 +459,9 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         var tools = await b.ListToolsAsync();
         foreach (var name in new[] { "get_counterparty_payments", "get_counterparty_summary", "compare_counterparty_periods", "search_documents" })
             Assert.Contains("call find_counterparties first; never guess an INN", tools.Single(t => t.Name == name).Description);
-        Assert.Contains("Romashka MChJ", tools.Single(t => t.Name == "find_counterparties").Description);
+        var findDescription = tools.Single(t => t.Name == "find_counterparties").Description;
+        foreach (var example in new[] { "Рассвет", "Rassvet", "ООО Ромашка", "Romashka MChJ", "Қурилиш сервис ЯТТ", "Romashka MChJ bilan hisob-kitob qancha?" })
+            Assert.Contains(example, findDescription);
     }
 
     private Task<List<string>> AuditStatusesAsync(Guid keyId) =>
