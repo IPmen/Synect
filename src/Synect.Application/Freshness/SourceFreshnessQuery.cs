@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Synect.Application.Abstractions;
+using Synect.Application.Ingest;
 using Synect.Domain.Sync;
 
 namespace Synect.Application.Freshness;
@@ -18,7 +20,17 @@ public sealed record SourceFreshness(
     DateTimeOffset? LastSuccessfulSyncAt,
     bool? LastSuccessfulRunIsComplete,
     SyncRunResult? LastRunResult,
-    DateTimeOffset? LastRunFinishedAt);
+    DateTimeOffset? LastRunFinishedAt)
+{
+    /// <summary>
+    /// The source's own staleness threshold, when it has one: for 1C (pushed packages) Ingest:StaleAfter; null for the other
+    /// sources (readers apply their usual threshold, e.g. Mcp:StaleAfter).
+    /// </summary>
+    public TimeSpan? StaleAfter { get; init; }
+
+    /// <summary>For sources with their own threshold: never received, or the last accepted package is older than it.</summary>
+    public bool? IsStale { get; init; }
+}
 
 public interface ISourceFreshnessQuery
 {
@@ -26,7 +38,11 @@ public interface ISourceFreshnessQuery
     Task<IReadOnlyList<SourceFreshness>> GetAsync(Guid tenantId, CancellationToken ct);
 }
 
-public sealed class SourceFreshnessQuery(ISynectDbContext db, ITenantContext tenant) : ISourceFreshnessQuery
+/// <remarks>
+/// A 1C connection (<see cref="AdapterKind.Accounting1C"/>) has no sync runs: its last successful load is the time of the
+/// last accepted package, and it is stale after Ingest:StaleAfter (48 h by default).
+/// </remarks>
+public sealed class SourceFreshnessQuery(ISynectDbContext db, ITenantContext tenant, IOptions<IngestOptions> ingest, TimeProvider time) : ISourceFreshnessQuery
 {
     public Task<IReadOnlyList<SourceFreshness>> GetAsync(Guid tenantId, CancellationToken ct)
     {
@@ -50,8 +66,18 @@ public sealed class SourceFreshnessQuery(ISynectDbContext db, ITenantContext ten
                     .Select(r => new { r.Result, r.FinishedAt })
                     .FirstOrDefaultAsync(token);
 
-                result.Add(new SourceFreshness(c.Id, c.Name, c.SourceCode, c.AdapterKind, c.Status, c.StatusReason,
-                    c.LastSuccessfulSyncAt, lastSuccess?.IsComplete, lastRun?.Result, lastRun?.FinishedAt));
+                var freshness = new SourceFreshness(c.Id, c.Name, c.SourceCode, c.AdapterKind, c.Status, c.StatusReason,
+                    c.LastSuccessfulSyncAt, lastSuccess?.IsComplete, lastRun?.Result, lastRun?.FinishedAt);
+                if (c.AdapterKind == AdapterKind.Accounting1C)
+                {
+                    var staleAfter = ingest.Value.StaleAfter;
+                    freshness = freshness with
+                    {
+                        StaleAfter = staleAfter,
+                        IsStale = c.LastSuccessfulSyncAt is not { } last || time.GetUtcNow() - last > staleAfter,
+                    };
+                }
+                result.Add(freshness);
             }
             return result;
         }, ct);

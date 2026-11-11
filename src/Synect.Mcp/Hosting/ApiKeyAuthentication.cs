@@ -73,6 +73,8 @@ public sealed class ApiKeyAuthenticationHandler(
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        // MCP keys authenticate only on the MCP endpoint (the 1C ingest route checks its own keys).
+        if (!Request.Path.StartsWithSegments(McpServiceCollection.Route)) return AuthenticateResult.NoResult();
         string? header = Request.Headers.Authorization;
         if (string.IsNullOrEmpty(header)) return AuthenticateResult.NoResult();
         if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return AuthenticateResult.Fail("Unsupported authorization scheme.");

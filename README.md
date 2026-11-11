@@ -7,10 +7,10 @@ on import; REST and MCP tools read only this database and never call external sy
 
 | Project | Purpose |
 |---|---|
-| `Synect.Domain` | Entities: accounts and their organizations, tenants, connections (states; kinds Bank, Edo, File), sync runs, sync jobs, connection secrets, raw objects, bank, EDO, counterparties, monthly counterparty totals, counterparty name spellings (aliases), API keys, tool audit log, reconciliation runs / matches / match items / findings, attention items and their events, statement imports; shared transliteration (`Text/`) and currency codes (`Common/IsoCurrency`) |
-| `Synect.Application` | Adapter contracts and registry, sync services and the shared bank writer (`Sync/BankLoadWriter`), queue (planner, dispatcher, requests), rate limiting and retries, secrets and credentials contracts, freshness query, read-only analytics (`Analytics/`), reconciliation of payments with documents (`Reconciliation/`), attention rules and inbox (`Attention/`), API keys and tool audit (`Access/`), accounts: organization resolution, multi-organization fan-out, portfolio figures (`Accounts/`), bank statement files: parsers, profiles, import, anonymizer (`Statements/`) |
+| `Synect.Domain` | Entities: accounts and their organizations, tenants, connections (states; kinds Bank, Edo, File, Accounting1C), sync runs, sync jobs, connection secrets, raw objects, bank, EDO, counterparties, monthly counterparty totals, counterparty name spellings (aliases), API keys, tool audit log, reconciliation runs / matches / match items / findings, attention items and their events, statement imports, 1C data and the ingest journal (`Accounting/`); shared transliteration (`Text/`) and currency codes (`Common/IsoCurrency`) |
+| `Synect.Application` | Adapter contracts and registry, sync services and the shared bank writer (`Sync/BankLoadWriter`), queue (planner, dispatcher, requests), rate limiting and retries, secrets and credentials contracts, freshness query, read-only analytics (`Analytics/`), reconciliation of payments with documents (`Reconciliation/`), attention rules and inbox (`Attention/`), API keys and tool audit (`Access/`), accounts: organization resolution, multi-organization fan-out, portfolio figures (`Accounts/`), bank statement files: parsers, profiles, import, anonymizer (`Statements/`), receiver of 1C packages: contract schema, validation, set-based writer, ingest keys (`Ingest/`) |
 | `Synect.Infrastructure` | EF Core + Npgsql, migrations, RLS interceptor, Data Protection secret store, Kapital Bank / Didox mappers, session and token caches, fake adapters, synthetic statement generator |
-| `Synect.Api` | HTTP host: `/health` and the MCP endpoint `/mcp` (Streamable HTTP, API key) |
+| `Synect.Api` | HTTP host: `/health`, the MCP endpoint `/mcp` (Streamable HTTP, API key) and the 1C receiver `POST /ingest/1c/v1/batches` (ingest key; `Ingest/`) |
 | `Synect.Mcp` | MCP tools (including the portfolio tools over all organizations of an account key) over `Analytics`, `Reconciliation`, `Attention`, `ISourceFreshnessQuery` and `SyncRequestService`; API key authentication, HTTP and tool limits, tool call journal. No reference to Infrastructure, adapters, queue internals or secrets (enforced by a test) |
 | `Synect.Worker` | Hosts the sync queue (`SyncWorker`) |
 | `Synect.DevTools` | Development only: demo/load data, `query`, `bench`, `explain`, API keys, reconciliation (`reconcile`, `rebuild-reconciliation`, `reconcile-eval`, `reconcile-bench`), attention (`attention`, `attention-eval`, `attention-bench`), statement files (`create-file-connection`, `import-statement`, `list-imports`, `anonymize-statement`, `statement-bench`), `normalize-currency`, test database cleanup (not referenced by Api or Worker) |
@@ -581,6 +581,124 @@ not abort the startup handshake on cancellation (it would wait for the connectio
 `AnalyticsContext` opens the connection itself and bounds the wait; the connection strings and the timeouts of every other
 part are unchanged.
 
+## 1C data: storage and receiver (stage 8a)
+
+Our side for 1C data: tables and a receiver of packages pushed by a 1C extension. The extension itself, reconciliation
+with 1C, MCP tools and attention rules for 1C data are not part of this stage. The real 1C object and field names are not
+known yet: the receiver works with the logical fields of the export contract ("Контракт выгрузки данных 1С в Synect").
+
+**Design rules.**
+- Required contract fields (level M) are NOT NULL columns, optional known ones (R) nullable columns; everything else an
+  item carries is kept as received in the jsonb column `extra` and the whole item in the raw layer (`raw_objects`, type
+  `1c.<entity>`). Unknown fields are never an error. The contract lives in one table of field descriptions,
+  `Synect.Application/Ingest/IngestSchema.cs` (name, column, type, level, aliases); names are matched ignoring case, `_`
+  and `-`. The writer generates its SQL from that table.
+- `schema_version` is stored in `ingest_batches` and in every record; accepted versions are `Ingest:SupportedSchemaVersions`
+  (default 1), others get `400 unsupported_schema_version` with the supported list.
+- A record is (organization, entity, ref). An update is applied only if its `modified_at` is not older than the stored one;
+  equal content (SHA-256 of the item with sorted keys) is not rewritten. Without `modified_at` the package's `exported_at`
+  is used.
+- Deletions and unposting are marks (`is_deleted`, `posted`); rows are never removed.
+
+**Tables** (migration `Accounting1CIngest`; row-level security forced, `tenant_id` first in every index; no foreign keys
+between accounting records: a document may arrive before its counterparty and links are resolved by ref; composite
+`(tenant_id, ...)` foreign keys from lines / settlements to their document, from records to the package that last changed
+them, from packages and keys to the 1C connection). Amounts are `bigint` minor units; currency is a letter code; refs are
+strings of at most 64 characters. Every record table also has `is_deleted`, `modified_at`, `content_hash`, `extra`,
+`schema_version`, `last_batch_id`, `first_seen_at`, `last_seen_at`, `updated_at`.
+
+| Table | Key | Fields (M = required) |
+|---|---|---|
+| `accounting_counterparties` | ref | name (M), tin, full_name, kind |
+| `accounting_contracts` | ref | counterparty_ref (M), number, date, kind, currency, valid_until, payment_term_days |
+| `accounting_bank_accounts` | ref | number (M), bank_code, bank_name, currency, gl_account_code, is_active |
+| `accounting_documents` | ref | doc_kind Sales / Purchase (M), number (M), date (M), posted (M), amount_total (M), doc_type, counterparty_ref / tin, contract_ref / number / date, currency, vat_amount, esf_number / date / id / status, due_date, comment |
+| `accounting_document_lines` | document_ref, line_no | amount (M), name, product_code, quantity, price, vat_rate; replaced as a whole with the document |
+| `accounting_bank_documents` | ref | direction Receipt / Payment (M), number (M), date (M), posted (M), amount (M), bank_account_ref / number, counterparty_ref / tin, currency, purpose, contract_ref, bank_document_number / date, cash_flow_item |
+| `accounting_bank_document_settlements` | document_ref, line_no | amount (M), settled_document_ref; replaced as a whole with the document |
+| `accounting_payment_orders` | ref | number (M), date (M), amount (M), posted, bank_account_ref, counterparty_tin, currency, purpose, bank_status |
+| `accounting_settlement_balances` | as_of_date, counterparty_ref, contract_ref, gl_account_code, currency (NULLs equal) | as_of_date (M), gl_account_code (M), counterparty_tin, balance and turnover debit / credit |
+| `accounting_bank_account_balances` | as_of_date, bank_account_ref | balance (M), turnover debit / credit |
+| `ingest_batches` | (organization, batch_id, sequence) | journal: connection, key, entity, mode, full_sync_id, is_last_batch, schema / extension version, exported / received / finished, items_total, accepted, unchanged, rejected, marked_deleted, status (`Processed`, `ProcessedWithErrors`, `Rejected`, `Failed`), error, payload SHA-256 and size, rejected items (index, key, code, message), unknown envelope fields, attempts |
+| `ingest_keys` | id | connection, name, key_hash, key_prefix, created / last used / revoked |
+| `ingest_full_sync_items` | (organization, full_sync_id, entity, item_key) | keys seen in a full export in progress |
+
+**Connection.** `AdapterKind.Accounting1C` (source code `1c`), created with the first ingest key. It is never planned or
+queued (`request_data_refresh` answers `NotLoadable`). `last_successful_sync_at` is the time of the last package with at
+least one accepted or unchanged item; a `Disabled` connection refuses packages (`403 connection_disabled`).
+`ISourceFreshnessQuery` returns it with `StaleAfter` = `Ingest:StaleAfter` (48 h) and `IsStale`; `get_data_freshness` and
+`get_connections_overview` show it (`stale`, `stale_after_hours`). No attention rule covers 1C at this stage (the existing
+`connection.stale_data` skips it).
+
+**Ingest keys.** `ik_synect_` + 32 random bytes (base64url); only the SHA-256 is stored, with a 16-character prefix. The
+key is printed once by `create-ingest-key`. `ingest_keys` has row-level security enabled but not forced (like `api_keys`):
+the application role sees only the keys of the organization in `app.tenant_id`; before the organization is known a key is
+found only through the owner's `SECURITY DEFINER` function `synect_resolve_ingest_key(bytea)` (`search_path` pinned,
+`EXECUTE` only for `synect_app`), which takes the hash, matches one non-revoked key of an enabled organization and returns
+only `(ingest_key_id, tenant_id, connection_id, tenant_tin)`. Ingest keys never work on `/mcp` and MCP keys never on the
+ingest route: different prefixes, different tables, different lookup functions, and the MCP scheme authenticates only
+requests to `/mcp`.
+
+**Receiver.** `POST /ingest/1c/v1/batches`, `Authorization: Bearer <ingest key>`, `Content-Type: application/json`,
+optional `Content-Encoding: gzip`.
+
+```json
+{ "schema_version": 1, "extension_version": "1.0.3", "organization_tin": "301234567", "batch_id": "b-2026-11-11-01",
+  "sequence": 1, "exported_at": "2026-11-11T09:00:00+05:00", "mode": "delta", "entity": "counterparties",
+  "items": [ { "ref": "...", "name": "...", "tin": "...", "modified_at": "2026-11-10T18:30:00" } ] }
+```
+
+Entities: `counterparties`, `contracts`, `bank_accounts`, `documents` (with `lines`), `bank_documents` (with
+`settlements`), `payment_orders`, `settlement_balances`, `bank_account_balances`. `mode` is `full` or `delta`; a full
+export also carries `full_sync_id` and, on its last package, `is_last_batch: true`.
+
+| Case | Answer |
+|---|---|
+| Missing, malformed, unknown or revoked key; key of a disabled organization | `401`, `WWW-Authenticate: Bearer`, empty body |
+| More than `Ingest:RateLimit:FailedAuthPerMinutePerIp` (20) failed authentications from an IP | `429` with `Retry-After` until the window ends |
+| More than `Ingest:RateLimit:PackagesPerMinute` (60) packages of a key | `429` with `Retry-After` |
+| `organization_tin` differs from the TIN of the key's organization (or it has none) | `403 organization_mismatch`, nothing about other organizations |
+| Other Content-Type / Content-Encoding | `415` |
+| More than `Ingest:MaxItems` (500) items or `Ingest:MaxBytes` (2 MB, counted after decompression) | `413 too_many_items` / `payload_too_large` |
+| Invalid JSON, envelope or gzip; unknown entity; unsupported schema version | `400` with `error` and `message` |
+| Same `batch_id` and `sequence` with other content after it was processed | `409 batch_conflict` |
+| Processed | `200`: `status` (`accepted`, `partially_accepted`, `rejected`), counters, `full_sync`, and per item `index`, `ref`, `status` (`accepted`, `unchanged`, `rejected`), `code`, `message` |
+| Same package again | `200`, `status: duplicate`, counters and rejected items of the first processing; nothing is changed |
+| System error | `500 internal_error`; the package is rolled back, journaled as `Failed` and may be sent again |
+
+One transaction per package, serialized per organization with an advisory lock; a refused item never cancels the others.
+Item checks: TIN of 9 or 14 digits, ISO 8601 dates (a date-time is accepted for a date; the empty 1C date `0001-01-01` and
+the empty reference `00000000-...` count as missing), amounts as decimal sum in a number or a string (`"1 234,50"` too),
+stored x100 with fractions of a tiyin refused, currency as a letter code, ISO numeric code or a known name, non-empty ref of
+at most 64 characters, required fields. Item codes: `empty_ref`, `ref_too_long`, `missing_field`, `invalid_tin`,
+`invalid_date`, `invalid_timestamp`, `invalid_amount`, `fractional_minor_units`, `amount_out_of_range`,
+`invalid_currency`, `invalid_number`, `invalid_boolean`, `invalid_value`, `text_too_long`, `invalid_text`,
+`invalid_lines`, `duplicate_line_no`; unchanged items carry `same_content`, `older_than_stored` or `unknown_ref_deleted`.
+An item with `is_deleted: true` and only its ref marks a known record deleted and keeps its other fields. Lines and
+settlements are replaced when the item carries the field (an empty array removes them; no field keeps them). The last
+refused version of an item with a readable key is kept in the raw layer as `1c.<entity>.rejected`, so that it can be
+processed again after a contract fix. Third-party text (purpose, comment, names) is stored as received; future tools must
+pass it through the usual cleaning (`TextSafety`). Logs carry counters and package ids only. A package refused after its
+envelope could be read (schema version, organization, too many items) is journaled as `Rejected` and may be sent again
+under the same `batch_id` and `sequence`.
+
+**Full exports.** Every package of a full export records the keys of its items (refused ones too: they exist in 1C). On
+the package with `is_last_batch`, if every sequence 1..N of that `full_sync_id` and entity was processed, records of the
+entity that were not in the export and were not received since it started are marked `is_deleted` (balances: only on the
+dates the export covered). Without `is_last_batch`, or with a missing sequence, nothing is marked and the answer says so
+(`full_sync.reason`: `waiting_for_last_batch`, `missing_sequences`).
+
+**Sample sender and timings.** `send-1c-sample --tenant X --scenario basic|messy|large [--url http://localhost:5299]`
+is a fake 1C extension that sends synthetic packages over HTTP to a running Api (without `--key` it creates a temporary
+ingest key and revokes it). `basic`: normal data of every entity. `messy`: unknown fields, items with errors, a repeated
+package, a late package, a document before its counterparty, deletion and unposting, a truncated and a complete full
+export, an unsupported schema version. `large`: 20 000 records in 40 packages of 500 (4 000 counterparties, 10 000
+documents with 2 lines each, 6 000 bank documents with a settlement). Measured on the development machine (local
+PostgreSQL 18, Debug build, three runs): first receipt 10.4 s (goal 10 s, about 260 ms a package; the time is spent in
+PostgreSQL writes: 20 000 records, 26 000 child rows and 20 000 raw objects), the same packages again 0.15-0.19 s
+(duplicates), the same records under new batch ids 1.4-1.6 s (all unchanged). `Ingest:RateLimit:PackagesPerMinute` must
+be raised for this run (the sender waits for `Retry-After` otherwise).
+
 ## Developer tools
 
 ```
@@ -596,6 +714,11 @@ dotnet run --project src/Synect.DevTools -- create-api-key "Demo client 1" --sco
 dotnet run --project src/Synect.DevTools -- list-api-keys "Demo client 1"
 dotnet run --project src/Synect.DevTools -- revoke-api-key "Demo client 1" <key id or prefix>
 dotnet run --project src/Synect.DevTools -- test-db-leftovers [--drop]
+dotnet run --project src/Synect.DevTools -- create-ingest-key --tenant "Demo client 1" [--name "1C extension"]
+dotnet run --project src/Synect.DevTools -- list-ingest-keys --tenant "Demo client 1"
+dotnet run --project src/Synect.DevTools -- revoke-ingest-key --tenant "Demo client 1" --key <key id or prefix>
+dotnet run --project src/Synect.DevTools -- list-ingest-batches --tenant "Demo client 1" [--limit 50]
+dotnet run --project src/Synect.DevTools -- send-1c-sample --tenant "Demo client 1" --scenario basic|messy|large
 dotnet run --project src/Synect.DevTools -- normalize-currency --all
 dotnet run --project src/Synect.DevTools -- reconcile --tenant "Demo client 1" [--inn 300000005]
 dotnet run --project src/Synect.DevTools -- rebuild-reconciliation --tenant "Demo client 1"
@@ -627,7 +750,7 @@ cached in memory per connection.
 dotnet test --solution Synect.slnx
 ```
 
-PostgreSQL tests (migrations, RLS, queue, secrets, analytics, reconciliation, attention, statement imports, MCP) create and drop a temporary database and role
+PostgreSQL tests (migrations, RLS, queue, secrets, analytics, reconciliation, attention, statement imports, MCP, 1C ingest) create and drop a temporary database and role
 (`synect_test_*`, `synect_rls_*`; the API key lookup test also a `synect_own_*` owner role). `test-db-leftovers`
 lists anything left after an interrupted run (`--drop` removes it). MCP tests run the real `Synect.Api` in memory
 (`WebApplicationFactory`) and call it with the MCP SDK client over Streamable HTTP. They need a
@@ -711,6 +834,15 @@ timeout, so a genuinely slow query still fails.
 | `Attention:*` | see "Attention inbox" | Rule thresholds (assumptions), `GroupAbove` 5, `MaxListedEntries` 20, `PeriodicInterval` 1 h, `ReminderInterval` 30 min, `MaxSnoozeDays` 90, `Enabled`. |
 | `Attention:DismissedRetentionDays` | 90 | A dismissed item whose condition has been gone this long becomes `Archived`. |
 | `Attention:FileStaleAfter` | 7 days | `connection.stale_data` threshold of file import connections. **Assumption.** |
+| `Ingest:MaxItems` / `MaxBytes` | 500 / 2 MB | Largest 1C package (bytes after decompression), else 413. |
+| `Ingest:SupportedSchemaVersions` | 1 | Accepted contract versions (an array); others get 400. |
+| `Ingest:RateLimit:PackagesPerMinute` | 60 | Packages per ingest key per window (1 min), then 429. |
+| `Ingest:RateLimit:FailedAuthPerMinutePerIp` | 20 | Failed ingest authentications per IP per window, then 429. |
+| `Ingest:StaleAfter` | 48 h | The 1C source is stale when its last accepted package is older. |
+| `Ingest:DefaultCurrency` | UZS | Currency of an item without one. **Assumption.** |
+| `Ingest:SourceUtcOffset` | 05:00 | Offset of 1C date-times sent without one. **Assumption.** |
+| `Ingest:MaxTextLength` | 4000 | Longest free text of an item (names, purpose, comment). |
+| `Ingest:FullSyncRetention` | 7 days | Key lists of full exports that never finished are removed after this. |
 | `Statements:MaxFileBytes` | 50 MB | Largest statement file. |
 | `Statements:PreviewRows` | 5 | Operations shown by a dry run. |
 | `Statements:MaxPeriodDays` | 3700 | Longest period of one statement. |

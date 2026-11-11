@@ -17,7 +17,7 @@ public sealed class SourceTools(ToolRunner runner, ISourceFreshnessQuery freshne
     public const string RequestDataRefresh = "request_data_refresh";
 
     [McpServerTool(Name = "get_data_freshness", Title = "Data freshness", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("For every connected source (bank, Didox): time of the last successful load, connection state and whether that load was complete. " +
+    [Description("For every connected source (bank, Didox, 1C — for 1C the time of the last accepted package): time of the last successful load, connection state and whether that load was complete. " +
                  "Use it before answering about recent days, or when the user asks how up to date the data is. " +
                  "Examples: «Насколько свежие данные?», «Когда последний раз загружалась выписка?», «Работает ли подключение к Didox?»." + Common)]
     public Task<CallToolResult> GetDataFreshness(CancellationToken cancellationToken = default) =>

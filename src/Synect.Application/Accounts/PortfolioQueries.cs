@@ -16,6 +16,9 @@ public sealed record OrganizationConnection(
     /// <summary>Not Active, never loaded, or flagged by the onboarding mark.</summary>
     public bool NeedsAttention => Status != ConnectionStatus.Active || LastSuccessfulSyncAt is null
                                   || OnboardingStatus == OnboardingStatus.NeedsAttention;
+
+    /// <summary>The source's own staleness threshold (1C: Ingest:StaleAfter); null for sources that use the reader's threshold.</summary>
+    public TimeSpan? StaleAfter { get; init; }
 }
 
 /// <param name="NewBySeverity">New attention items (including snoozed ones whose time is over) per severity.</param>
@@ -37,7 +40,8 @@ public sealed record OrganizationSummary(
 /// reconciliation and attention rules already maintain (connections, attention_items, reconciliation_match_items,
 /// edo_documents); nothing is recalculated on the fly. One transaction with the analytics timeout per organization.
 /// </summary>
-public sealed class PortfolioQueries(AnalyticsContext ctx, IOptions<AccountsOptions> options, IOptions<ReconciliationOptions> reconciliation, TimeProvider time)
+public sealed class PortfolioQueries(AnalyticsContext ctx, IOptions<AccountsOptions> options, IOptions<ReconciliationOptions> reconciliation, TimeProvider time,
+    IOptions<Ingest.IngestOptions> ingest)
 {
     public Task<AnalyticsResult<OrganizationSummary>> SummaryAsync(bool withWorkload, CancellationToken ct) =>
         ctx.RunAsync(async token =>
@@ -77,7 +81,10 @@ public sealed class PortfolioQueries(AnalyticsContext ctx, IOptions<AccountsOpti
 
             var list = connections.Select(c => new OrganizationConnection(c.Id, c.Name, c.SourceCode, c.AdapterKind, c.Status, c.StatusReason,
                 c.StatusChangedAt, c.LastSuccessfulSyncAt, completeBy.TryGetValue(c.Id, out var done) ? done : null,
-                c.OnboardingStatus, c.OnboardingNote)).ToList();
+                c.OnboardingStatus, c.OnboardingNote)
+            {
+                StaleAfter = c.AdapterKind == AdapterKind.Accounting1C ? ingest.Value.StaleAfter : null,
+            }).ToList();
             return new OrganizationSummary(list, newBy, openCritical, unmatched, awaiting, days);
         }, ct);
 

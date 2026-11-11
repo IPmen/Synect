@@ -269,8 +269,8 @@ public sealed class ToolRunner(
                 yield return $"The {name} connection is {s.Status}: its data is not being refreshed.";
             if (s.LastSuccessfulSyncAt is null)
                 yield return $"The {name} has never been loaded successfully; answers have no data from it.";
-            else if (freshness.GeneratedAt - s.LastSuccessfulSyncAt.Value > Options.StaleAfter)
-                yield return $"The {name} was last loaded at {s.LastSuccessfulSyncAt:yyyy-MM-dd HH:mm} UTC, more than {Options.StaleAfter.TotalHours:0} hours ago.";
+            else if (freshness.GeneratedAt - s.LastSuccessfulSyncAt.Value > (s.StaleAfter ?? Options.StaleAfter))
+                yield return $"The {name} was last loaded at {s.LastSuccessfulSyncAt:yyyy-MM-dd HH:mm} UTC, more than {(s.StaleAfter ?? Options.StaleAfter).TotalHours:0} hours ago.";
             if (s.LastSuccessfulRunIsComplete == false)
                 yield return $"The last load of the {name} was incomplete (e.g. the bank day is not closed); recent figures may still change.";
         }

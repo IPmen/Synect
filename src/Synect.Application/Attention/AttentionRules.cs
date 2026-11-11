@@ -168,7 +168,8 @@ internal static class AttentionRuleSet
         // File import connections get data only when someone imports a statement: their own, longer threshold.
         TimeSpan Threshold(Connection x) => x.AdapterKind == AdapterKind.File ? c.Options.FileStaleAfter : c.Options.StaleAfter;
         var rows = await c.Db.Connections.AsNoTracking().Where(x => x.Status == ConnectionStatus.Active).OrderBy(x => x.Id).ToListAsync(ct);
-        return rows.Where(x => (x.LastSuccessfulSyncAt ?? x.CreatedAt) < c.Now - Threshold(x))
+        // Stage 8a adds no attention rules for 1C: its staleness is reported by the freshness query only.
+        return rows.Where(x => x.AdapterKind != AdapterKind.Accounting1C && (x.LastSuccessfulSyncAt ?? x.CreatedAt) < c.Now - Threshold(x))
             .Select(x =>
             {
                 var entry = ConnectionEntry(x);
@@ -206,7 +207,7 @@ internal static class AttentionRuleSet
                 result.Add(new Finding(g.Key.ToString(), "connection", g.Key.ToString(), entry, days.Select(d => d.ToString("O")).ToList()));
             }
         }
-        foreach (var x in connections.Where(x => x.AdapterKind is not (AdapterKind.Bank or AdapterKind.File)))
+        foreach (var x in connections.Where(x => x.AdapterKind is not (AdapterKind.Bank or AdapterKind.File or AdapterKind.Accounting1C)))
         {
             var last = await c.Db.SyncRuns.AsNoTracking()
                 .Where(r => r.ConnectionId == x.Id && r.Result == SyncRunResult.Succeeded)

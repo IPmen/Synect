@@ -73,7 +73,8 @@ public sealed class PostgresFixture : IAsyncLifetime
         // Like synect_app: EXECUTE on the SECURITY DEFINER functions. The account tables keep the table grants above on
         // purpose (stricter than production, where they are revoked): row-level security without a policy must still
         // hide every row from the application role.
-        foreach (var function in Synect.Infrastructure.Persistence.Migrations.AccountsStage65.AppFunctions)
+        foreach (var function in Synect.Infrastructure.Persistence.Migrations.AccountsStage65.AppFunctions
+                     .Concat(Synect.Infrastructure.Persistence.Migrations.Accounting1CIngest.AppFunctions))
             await ExecAsync(AdminDbConnectionString, $"GRANT EXECUTE ON FUNCTION {function} TO {AppRole}");
 
         // The application session switches to the restricted role right at connection start.

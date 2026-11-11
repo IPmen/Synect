@@ -2423,3 +2423,955 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE accounting_bank_account_balances (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        as_of_date date NOT NULL,
+        bank_account_ref character varying(64) NOT NULL,
+        balance_minor bigint NOT NULL,
+        turnover_debit_minor bigint,
+        turnover_credit_minor bigint,
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        CONSTRAINT pk_accounting_bank_account_balances PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_accounting_bank_account_balances_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE accounting_bank_accounts (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        number character varying(64) NOT NULL,
+        bank_code character varying(64),
+        bank_name text,
+        currency character varying(3) NOT NULL,
+        gl_account_code character varying(64),
+        is_active boolean,
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        ref character varying(64) NOT NULL,
+        CONSTRAINT pk_accounting_bank_accounts PRIMARY KEY (tenant_id, id),
+        CONSTRAINT ak_accounting_bank_accounts_tenant_id_ref UNIQUE (tenant_id, ref),
+        CONSTRAINT fk_accounting_bank_accounts_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE accounting_bank_documents (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        direction character varying(16) NOT NULL,
+        number character varying(64) NOT NULL,
+        date date NOT NULL,
+        posted boolean NOT NULL,
+        bank_account_ref character varying(64),
+        bank_account_number character varying(64),
+        counterparty_ref character varying(64),
+        counterparty_tin character varying(16),
+        amount_minor bigint NOT NULL,
+        currency character varying(3) NOT NULL,
+        purpose text,
+        contract_ref character varying(64),
+        bank_document_number character varying(64),
+        bank_document_date date,
+        cash_flow_item character varying(256),
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        ref character varying(64) NOT NULL,
+        CONSTRAINT pk_accounting_bank_documents PRIMARY KEY (tenant_id, id),
+        CONSTRAINT ak_accounting_bank_documents_tenant_id_ref UNIQUE (tenant_id, ref),
+        CONSTRAINT fk_accounting_bank_documents_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE accounting_contracts (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        counterparty_ref character varying(64) NOT NULL,
+        number character varying(64),
+        date date,
+        kind character varying(256),
+        currency character varying(3) NOT NULL,
+        valid_until date,
+        payment_term_days integer,
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        ref character varying(64) NOT NULL,
+        CONSTRAINT pk_accounting_contracts PRIMARY KEY (tenant_id, id),
+        CONSTRAINT ak_accounting_contracts_tenant_id_ref UNIQUE (tenant_id, ref),
+        CONSTRAINT fk_accounting_contracts_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE accounting_counterparties (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        tin character varying(16),
+        name text NOT NULL,
+        full_name text,
+        kind character varying(256),
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        ref character varying(64) NOT NULL,
+        CONSTRAINT pk_accounting_counterparties PRIMARY KEY (tenant_id, id),
+        CONSTRAINT ak_accounting_counterparties_tenant_id_ref UNIQUE (tenant_id, ref),
+        CONSTRAINT fk_accounting_counterparties_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE accounting_documents (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        doc_kind character varying(16) NOT NULL,
+        doc_type character varying(256),
+        number character varying(64) NOT NULL,
+        date date NOT NULL,
+        posted boolean NOT NULL,
+        counterparty_ref character varying(64),
+        counterparty_tin character varying(16),
+        contract_ref character varying(64),
+        contract_number character varying(64),
+        contract_date date,
+        currency character varying(3) NOT NULL,
+        amount_total_minor bigint NOT NULL,
+        vat_amount_minor bigint,
+        esf_number character varying(64),
+        esf_date date,
+        esf_id character varying(64),
+        esf_status character varying(64),
+        due_date date,
+        comment text,
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        ref character varying(64) NOT NULL,
+        CONSTRAINT pk_accounting_documents PRIMARY KEY (tenant_id, id),
+        CONSTRAINT ak_accounting_documents_tenant_id_ref UNIQUE (tenant_id, ref),
+        CONSTRAINT fk_accounting_documents_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE accounting_payment_orders (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        number character varying(64) NOT NULL,
+        date date NOT NULL,
+        posted boolean NOT NULL,
+        bank_account_ref character varying(64),
+        counterparty_tin character varying(16),
+        amount_minor bigint NOT NULL,
+        currency character varying(3) NOT NULL,
+        purpose text,
+        bank_status character varying(256),
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        ref character varying(64) NOT NULL,
+        CONSTRAINT pk_accounting_payment_orders PRIMARY KEY (tenant_id, id),
+        CONSTRAINT ak_accounting_payment_orders_tenant_id_ref UNIQUE (tenant_id, ref),
+        CONSTRAINT fk_accounting_payment_orders_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE accounting_settlement_balances (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        as_of_date date NOT NULL,
+        counterparty_ref character varying(64),
+        counterparty_tin character varying(16),
+        contract_ref character varying(64),
+        gl_account_code character varying(64) NOT NULL,
+        currency character varying(3) NOT NULL,
+        balance_debit_minor bigint,
+        balance_credit_minor bigint,
+        turnover_debit_minor bigint,
+        turnover_credit_minor bigint,
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        CONSTRAINT pk_accounting_settlement_balances PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_accounting_settlement_balances_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE ingest_full_sync_items (
+        tenant_id uuid NOT NULL,
+        full_sync_id character varying(64) NOT NULL,
+        entity character varying(32) NOT NULL,
+        item_key character varying(400) NOT NULL,
+        created_at timestamp with time zone NOT NULL,
+        CONSTRAINT pk_ingest_full_sync_items PRIMARY KEY (tenant_id, full_sync_id, entity, item_key),
+        CONSTRAINT fk_ingest_full_sync_items_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE ingest_keys (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        connection_id uuid NOT NULL,
+        name character varying(256) NOT NULL,
+        key_hash bytea NOT NULL,
+        key_prefix character varying(32) NOT NULL,
+        created_at timestamp with time zone NOT NULL,
+        last_used_at timestamp with time zone,
+        revoked_at timestamp with time zone,
+        CONSTRAINT pk_ingest_keys PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_ingest_keys_connections_tenant_id_connection_id FOREIGN KEY (tenant_id, connection_id) REFERENCES connections (tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_ingest_keys_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE accounting_bank_document_settlements (
+        tenant_id uuid NOT NULL,
+        document_ref character varying(64) NOT NULL,
+        line_no integer NOT NULL,
+        settled_document_ref character varying(64),
+        amount_minor bigint NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        CONSTRAINT pk_accounting_bank_document_settlements PRIMARY KEY (tenant_id, document_ref, line_no),
+        CONSTRAINT fk_accounting_bank_document_settlements_accounting_bank_docume FOREIGN KEY (tenant_id, document_ref) REFERENCES accounting_bank_documents (tenant_id, ref) ON DELETE CASCADE
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE accounting_document_lines (
+        tenant_id uuid NOT NULL,
+        document_ref character varying(64) NOT NULL,
+        line_no integer NOT NULL,
+        name text,
+        product_code character varying(256),
+        quantity numeric(28,6),
+        price_minor bigint,
+        vat_rate numeric(9,4),
+        amount_minor bigint NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        CONSTRAINT pk_accounting_document_lines PRIMARY KEY (tenant_id, document_ref, line_no),
+        CONSTRAINT fk_accounting_document_lines_accounting_documents_tenant_id_do FOREIGN KEY (tenant_id, document_ref) REFERENCES accounting_documents (tenant_id, ref) ON DELETE CASCADE
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE TABLE ingest_batches (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        connection_id uuid NOT NULL,
+        ingest_key_id uuid NOT NULL,
+        batch_id character varying(64) NOT NULL,
+        sequence integer NOT NULL,
+        entity character varying(32) NOT NULL,
+        mode character varying(16) NOT NULL,
+        full_sync_id character varying(64),
+        is_last_batch boolean NOT NULL,
+        schema_version integer NOT NULL,
+        extension_version character varying(64),
+        exported_at timestamp with time zone,
+        received_at timestamp with time zone NOT NULL,
+        finished_at timestamp with time zone,
+        items_total integer NOT NULL,
+        accepted integer NOT NULL,
+        unchanged integer NOT NULL,
+        rejected integer NOT NULL,
+        marked_deleted integer NOT NULL,
+        status character varying(32) NOT NULL,
+        error character varying(2000),
+        payload_sha256 character(64) NOT NULL,
+        payload_bytes integer NOT NULL,
+        item_errors jsonb,
+        envelope_extra jsonb,
+        attempts integer NOT NULL DEFAULT 1,
+        CONSTRAINT pk_ingest_batches PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_ingest_batches_connections_tenant_id_connection_id FOREIGN KEY (tenant_id, connection_id) REFERENCES connections (tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_ingest_batches_ingest_keys_tenant_id_ingest_key_id FOREIGN KEY (tenant_id, ingest_key_id) REFERENCES ingest_keys (tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_ingest_batches_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE UNIQUE INDEX ix_accounting_bank_account_balances_tenant_id_as_of_date_bank_ ON accounting_bank_account_balances (tenant_id, as_of_date, bank_account_ref);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_accounting_bank_accounts_tenant_id_number ON accounting_bank_accounts (tenant_id, number);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_accounting_bank_documents_tenant_id_counterparty_tin_date ON accounting_bank_documents (tenant_id, counterparty_tin, date);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_accounting_contracts_tenant_id_counterparty_ref ON accounting_contracts (tenant_id, counterparty_ref);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_accounting_counterparties_tenant_id_tin ON accounting_counterparties (tenant_id, tin);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_accounting_documents_tenant_id_counterparty_tin_date ON accounting_documents (tenant_id, counterparty_tin, date);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_accounting_payment_orders_tenant_id_date ON accounting_payment_orders (tenant_id, date);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE UNIQUE INDEX ix_accounting_settlement_balances_tenant_id_as_of_date_counter ON accounting_settlement_balances (tenant_id, as_of_date, counterparty_ref, contract_ref, gl_account_code, currency) NULLS NOT DISTINCT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_accounting_settlement_balances_tenant_id_counterparty_tin_a ON accounting_settlement_balances (tenant_id, counterparty_tin, as_of_date);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE UNIQUE INDEX ix_ingest_batches_tenant_id_batch_id_sequence ON ingest_batches (tenant_id, batch_id, sequence);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_ingest_batches_tenant_id_connection_id ON ingest_batches (tenant_id, connection_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_ingest_batches_tenant_id_full_sync_id_entity_sequence ON ingest_batches (tenant_id, full_sync_id, entity, sequence) WHERE full_sync_id IS NOT NULL;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_ingest_batches_tenant_id_ingest_key_id ON ingest_batches (tenant_id, ingest_key_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_ingest_batches_tenant_id_received_at ON ingest_batches (tenant_id, received_at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_ingest_full_sync_items_tenant_id_created_at ON ingest_full_sync_items (tenant_id, created_at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE UNIQUE INDEX ix_ingest_keys_key_hash ON ingest_keys (key_hash);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE INDEX ix_ingest_keys_tenant_id_connection_id ON ingest_keys (tenant_id, connection_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    UPDATE connections SET adapter_kind = 'Accounting1C' WHERE adapter_kind = 'Accounting';
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_counterparties ADD CONSTRAINT fk_accounting_counterparties_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_contracts ADD CONSTRAINT fk_accounting_contracts_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_accounts ADD CONSTRAINT fk_accounting_bank_accounts_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_documents ADD CONSTRAINT fk_accounting_documents_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_documents ADD CONSTRAINT fk_accounting_bank_documents_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_payment_orders ADD CONSTRAINT fk_accounting_payment_orders_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_settlement_balances ADD CONSTRAINT fk_accounting_settlement_balances_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_account_balances ADD CONSTRAINT fk_accounting_bank_account_balances_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_counterparties ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_counterparties FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON accounting_counterparties USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_contracts ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_contracts FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON accounting_contracts USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_accounts ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_accounts FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON accounting_bank_accounts USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_documents ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_documents FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON accounting_documents USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_document_lines ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_document_lines FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON accounting_document_lines USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_documents ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_documents FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON accounting_bank_documents USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_document_settlements ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_document_settlements FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON accounting_bank_document_settlements USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_payment_orders ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_payment_orders FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON accounting_payment_orders USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_settlement_balances ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_settlement_balances FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON accounting_settlement_balances USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_account_balances ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_account_balances FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON accounting_bank_account_balances USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE ingest_batches ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE ingest_batches FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON ingest_batches USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE ingest_full_sync_items ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE ingest_full_sync_items FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON ingest_full_sync_items USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE ingest_keys ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE POLICY tenant_isolation ON ingest_keys USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE ingest_keys ADD CONSTRAINT ck_ingest_keys_key_hash_length CHECK (octet_length(key_hash) = 32);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE ingest_batches ADD CONSTRAINT ck_ingest_batches_status CHECK (status IN ('Processed', 'ProcessedWithErrors', 'Rejected', 'Failed'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE ingest_batches ADD CONSTRAINT ck_ingest_batches_counts CHECK (sequence >= 1 AND items_total >= 0 AND accepted >= 0 AND unchanged >= 0 AND rejected >= 0 AND marked_deleted >= 0);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_documents ADD CONSTRAINT ck_accounting_documents_doc_kind CHECK (doc_kind IN ('Sales', 'Purchase'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_documents ADD CONSTRAINT ck_accounting_bank_documents_direction CHECK (direction IN ('Receipt', 'Payment'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_counterparties ADD CONSTRAINT ck_accounting_counterparties_ref CHECK (length(ref) BETWEEN 1 AND 64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_contracts ADD CONSTRAINT ck_accounting_contracts_ref CHECK (length(ref) BETWEEN 1 AND 64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_accounts ADD CONSTRAINT ck_accounting_bank_accounts_ref CHECK (length(ref) BETWEEN 1 AND 64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_documents ADD CONSTRAINT ck_accounting_documents_ref CHECK (length(ref) BETWEEN 1 AND 64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_bank_documents ADD CONSTRAINT ck_accounting_bank_documents_ref CHECK (length(ref) BETWEEN 1 AND 64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    ALTER TABLE accounting_payment_orders ADD CONSTRAINT ck_accounting_payment_orders_ref CHECK (length(ref) BETWEEN 1 AND 64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    CREATE FUNCTION synect_resolve_ingest_key(p_key_hash bytea)
+    RETURNS TABLE (ingest_key_id uuid, tenant_id uuid, connection_id uuid, tenant_tin text)
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+    AS $fn$
+    #variable_conflict use_column
+    BEGIN
+        IF p_key_hash IS NULL OR octet_length(p_key_hash) <> 32 THEN
+            RETURN;
+        END IF;
+        RETURN QUERY
+            SELECT k.id, k.tenant_id, k.connection_id, t.tin::text
+            FROM public.ingest_keys k JOIN public.tenants t ON t.id = k.tenant_id
+            WHERE k.key_hash = p_key_hash AND k.revoked_at IS NULL
+              AND NOT EXISTS (
+                    SELECT 1 FROM public.account_tenants at JOIN public.accounts a ON a.id = at.account_id
+                    WHERE at.tenant_id = k.tenant_id AND (at.disabled_at IS NOT NULL OR a.status <> 'Active'));
+        IF FOUND THEN
+            -- At most one write per key and minute.
+            UPDATE public.ingest_keys SET last_used_at = now()
+            WHERE key_hash = p_key_hash AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute');
+        END IF;
+    END
+    $fn$;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    REVOKE ALL ON FUNCTION synect_resolve_ingest_key(bytea) FROM PUBLIC;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    DO $do$
+    BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'synect_app') THEN
+            GRANT EXECUTE ON FUNCTION synect_resolve_ingest_key(bytea) TO synect_app;
+        END IF;
+    END
+    $do$;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111182942_Accounting1CIngest') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261111182942_Accounting1CIngest', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+

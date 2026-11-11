@@ -111,7 +111,7 @@ public sealed class PortfolioTools(ToolRunner runner, McpCaller caller, Organiza
         }, cancellationToken);
 
     [McpServerTool(Name = GetConnectionsOverview, Title = "Connections of all organizations", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("State of every source (bank, Didox, statement file import) of every organization of the API key: status (active, needs_attention, disabled), " +
+    [Description("State of every source (bank, Didox, statement file import, 1C — for 1C the last load is its last accepted package) of every organization of the API key: status (active, needs_attention, disabled), " +
                  "reason, time of the last successful load, whether that load was complete, and the manual onboarding mark (onboarding_status: not_started, " +
                  "waiting_for_access, connected, needs_attention, with a note such as «заявление в банк подано»). only_needing_attention = true keeps only sources " +
                  "that are not active, were never loaded or are marked as needing attention. Examples: «Какие подключения не работают?», «У кого не загружается " +
@@ -253,7 +253,8 @@ public sealed class PortfolioTools(ToolRunner runner, McpCaller caller, Organiza
         c.StatusChangedAt,
         LastSuccessfulLoadAt = c.LastSuccessfulSyncAt,
         HoursSinceLastLoad = c.LastSuccessfulSyncAt is { } at ? Math.Round((now - at).TotalHours, 1) : (double?)null,
-        Stale = c.LastSuccessfulSyncAt is not { } last || now - last > runner.Options.StaleAfter,
+        Stale = c.LastSuccessfulSyncAt is not { } last || now - last > (c.StaleAfter ?? runner.Options.StaleAfter),
+        StaleAfterHours = (c.StaleAfter ?? runner.Options.StaleAfter).TotalHours,
         LastLoadComplete = c.LastLoadComplete,
         c.OnboardingStatus,
         OnboardingNote = TextSafety.Untrusted(c.OnboardingNote, runner.Options.UntrustedTextMaxLength),
@@ -265,6 +266,6 @@ public sealed class PortfolioTools(ToolRunner runner, McpCaller caller, Organiza
         yield return $"{rows.Count} organizations; each was read separately (its own isolated context), figures of different organizations are never added together.";
         var failed = rows.Count(r => r.Summary is null);
         if (failed > 0) yield return $"{failed} organizations could not be read now (read_error); their state is unknown, not good.";
-        yield return $"Freshness is per source in each row (last_successful_load_at, stale = older than {runner.Options.StaleAfter.TotalHours:0} hours or never loaded).";
+        yield return $"Freshness is per source in each row (last_successful_load_at, stale = older than stale_after_hours: {runner.Options.StaleAfter.TotalHours:0} hours for bank and Didox; for 1C the time of the last accepted package, stale after Ingest:StaleAfter; or never loaded).";
     }
 }

@@ -50,6 +50,13 @@ using Synect.Infrastructure.Persistence;
 //   import-organizations --account <name|id> --file <csv with columns name,tin>   idempotent, errors per row
 //   seed-account --name <name> [--organizations 50]   account with N organizations loaded through the real services
 //   account-bench --account <name|id> [--runs 20] [--url http://localhost:5299/mcp]   p50/p95 of the portfolio tools (running Api)
+// 1C ingest (stage 8a):
+//   create-ingest-key --tenant <name|id> [--name ...]   creates the 1C connection if needed, prints the ingest key ONCE
+//   revoke-ingest-key --tenant <name|id> --key <key id|key prefix>
+//   list-ingest-keys --tenant <name|id>             id, prefix, connection, created/last used/revoked (never the key)
+//   list-ingest-batches --tenant <name|id> [--limit 50]   received 1C packages (journal, counters only)
+//   send-1c-sample --tenant <name|id> --scenario basic|messy|large [--url http://localhost:5299] [--key ik_...]
+//                  fake 1C extension over HTTP against a running Api (without --key a temporary key is created and revoked)
 
 var command = args.FirstOrDefault() ?? "help";
 var options = CliArgs.Parse(args.Skip(1).ToArray());
@@ -79,6 +86,7 @@ builder.Services.AddSingleton<ReconciliationCommands>();
 builder.Services.AddSingleton<AttentionCommands>();
 builder.Services.AddSingleton<StatementCommands>();
 builder.Services.AddSingleton<AccountCommands>();
+builder.Services.AddSingleton<IngestCommands>();
 
 using var host = builder.Build();
 var services = host.Services;
@@ -186,6 +194,16 @@ try
                 (options.Get("sizes") ?? options.Get("operations") ?? "20000").Split(',').Select(x => int.Parse(x.Trim(), System.Globalization.CultureInfo.InvariantCulture)).ToList(),
                 options.Int("days", 250), TimeSpan.FromSeconds(options.Int("timeout", 120)));
             break;
+        case "create-ingest-key":
+            return await services.GetRequiredService<IngestCommands>().CreateKeyAsync(await Tenant(), options);
+        case "revoke-ingest-key":
+            return await services.GetRequiredService<IngestCommands>().RevokeKeyAsync(await Tenant(), options.Get("key"));
+        case "list-ingest-keys":
+            return await services.GetRequiredService<IngestCommands>().ListKeysAsync(await Tenant());
+        case "list-ingest-batches":
+            return await services.GetRequiredService<IngestCommands>().ListBatchesAsync(await Tenant(), options);
+        case "send-1c-sample":
+            return await services.GetRequiredService<IngestCommands>().SendSampleAsync(await Tenant(), options);
         case "test-db-leftovers":
             return await TestDbLeftovers.RunAsync(builder.Configuration, options.Get("drop") == "true");
         default:
@@ -193,7 +211,7 @@ try
                               "create-api-key, revoke-api-key, list-api-keys, test-db-leftovers, reconcile, rebuild-reconciliation, reconcile-eval, " +
                               "reconcile-bench, normalize-currency, attention, attention-eval, attention-bench, create-file-connection, " +
                               "import-statement, list-imports, anonymize-statement, statement-bench, delete-tenant, create-account, add-organization, " +
-                              "list-accounts, disable-organization, create-account-key, set-onboarding, import-organizations, seed-account, account-bench. See Program.cs.");
+                              "list-accounts, disable-organization, create-account-key, set-onboarding, import-organizations, seed-account, account-bench, create-ingest-key, revoke-ingest-key, list-ingest-keys, list-ingest-batches, send-1c-sample. See Program.cs.");
             break;
     }
 }

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Synect.Domain.Access;
+using Synect.Domain.Accounting;
 using Synect.Domain.Analytics;
 using Synect.Domain.Attention;
 using Synect.Domain.Banking;
@@ -44,6 +45,21 @@ public interface ISynectDbContext
     DbSet<AttentionItem> AttentionItems { get; }
     DbSet<AttentionItemEvent> AttentionItemEvents { get; }
     DbSet<StatementImport> StatementImports { get; }
+
+    // 1C data and the ingest journal (stage 8a).
+    DbSet<AccountingCounterparty> AccountingCounterparties { get; }
+    DbSet<AccountingContract> AccountingContracts { get; }
+    DbSet<AccountingBankAccount> AccountingBankAccounts { get; }
+    DbSet<AccountingDocument> AccountingDocuments { get; }
+    DbSet<AccountingDocumentLine> AccountingDocumentLines { get; }
+    DbSet<AccountingBankDocument> AccountingBankDocuments { get; }
+    DbSet<AccountingBankDocumentSettlement> AccountingBankDocumentSettlements { get; }
+    DbSet<AccountingPaymentOrder> AccountingPaymentOrders { get; }
+    DbSet<AccountingSettlementBalance> AccountingSettlementBalances { get; }
+    DbSet<AccountingBankAccountBalance> AccountingBankAccountBalances { get; }
+    DbSet<IngestBatch> IngestBatches { get; }
+    DbSet<IngestKey> IngestKeys { get; }
+    DbSet<IngestFullSyncItem> IngestFullSyncItems { get; }
 
     DatabaseFacade Database { get; }
     ChangeTracker ChangeTracker { get; }

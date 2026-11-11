@@ -48,6 +48,7 @@ public static class DependencyInjection
         services.AddScoped<ISynectDbContext>(sp => sp.GetRequiredService<SynectDbContext>());
         services.AddScoped<IApiKeyResolver, PostgresApiKeyResolver>();
         services.AddSingleton<IAccountToolAuditWriter, PostgresAccountToolAuditWriter>();
+        services.AddScoped<Synect.Application.Ingest.IIngestKeyResolver, PostgresIngestKeyResolver>();
 
         services.AddSynectDataProtection(configuration);
         services.AddSynectSecretStore();
@@ -69,6 +70,7 @@ public static class DependencyInjection
         services.Configure<Synect.Application.Reconciliation.ReconciliationOptions>(configuration.GetSection("Reconciliation"));
         services.Configure<Synect.Application.Attention.AttentionOptions>(configuration.GetSection("Attention"));
         services.Configure<Synect.Application.Accounts.AccountsOptions>(configuration.GetSection("Accounts"));
+        services.Configure<Synect.Application.Ingest.IngestOptions>(configuration.GetSection("Ingest"));
         return services;
     }
 

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Synect.Application.Abstractions;
 using Synect.Domain.Access;
+using Synect.Domain.Accounting;
 using Synect.Domain.Accounts;
 using Synect.Domain.Analytics;
 using Synect.Domain.Attention;
@@ -51,6 +52,19 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
     public DbSet<AttentionItem> AttentionItems => Set<AttentionItem>();
     public DbSet<AttentionItemEvent> AttentionItemEvents => Set<AttentionItemEvent>();
     public DbSet<StatementImport> StatementImports => Set<StatementImport>();
+    public DbSet<AccountingCounterparty> AccountingCounterparties => Set<AccountingCounterparty>();
+    public DbSet<AccountingContract> AccountingContracts => Set<AccountingContract>();
+    public DbSet<AccountingBankAccount> AccountingBankAccounts => Set<AccountingBankAccount>();
+    public DbSet<AccountingDocument> AccountingDocuments => Set<AccountingDocument>();
+    public DbSet<AccountingDocumentLine> AccountingDocumentLines => Set<AccountingDocumentLine>();
+    public DbSet<AccountingBankDocument> AccountingBankDocuments => Set<AccountingBankDocument>();
+    public DbSet<AccountingBankDocumentSettlement> AccountingBankDocumentSettlements => Set<AccountingBankDocumentSettlement>();
+    public DbSet<AccountingPaymentOrder> AccountingPaymentOrders => Set<AccountingPaymentOrder>();
+    public DbSet<AccountingSettlementBalance> AccountingSettlementBalances => Set<AccountingSettlementBalance>();
+    public DbSet<AccountingBankAccountBalance> AccountingBankAccountBalances => Set<AccountingBankAccountBalance>();
+    public DbSet<IngestBatch> IngestBatches => Set<IngestBatch>();
+    public DbSet<IngestKey> IngestKeys => Set<IngestKey>();
+    public DbSet<IngestFullSyncItem> IngestFullSyncItems => Set<IngestFullSyncItem>();
 
     // Account tables (stage 6.5). The application role has no access to them (no grants, row-level security without a
     // policy); only the owner (DevTools administration) and the SECURITY DEFINER functions read them.
@@ -85,6 +99,19 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
         modelBuilder.Entity<AttentionItem>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<AttentionItemEvent>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<StatementImport>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<AccountingCounterparty>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<AccountingContract>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<AccountingBankAccount>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<AccountingDocument>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<AccountingDocumentLine>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<AccountingBankDocument>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<AccountingBankDocumentSettlement>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<AccountingPaymentOrder>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<AccountingSettlementBalance>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<AccountingBankAccountBalance>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<IngestBatch>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<IngestKey>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<IngestFullSyncItem>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)

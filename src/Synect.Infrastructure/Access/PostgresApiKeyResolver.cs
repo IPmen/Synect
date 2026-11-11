@@ -78,3 +78,30 @@ public sealed class PostgresAccountToolAuditWriter(
         }
     }
 }
+
+/// <summary>
+/// Calls the SECURITY DEFINER function synect_resolve_ingest_key (owned by the schema owner, search_path pinned, EXECUTE only
+/// for the application role). It matches one usable hash and returns only (ingest_key_id, tenant_id, connection_id,
+/// tenant_tin). ingest_keys stays under row-level security for the application role.
+/// </summary>
+public sealed class PostgresIngestKeyResolver(SynectDbContext db) : Synect.Application.Ingest.IIngestKeyResolver
+{
+    public async Task<Synect.Application.Ingest.IngestKeyIdentity?> ResolveAsync(byte[] keyHash, CancellationToken ct)
+    {
+        if (keyHash.Length != 32) return null;
+        var rows = await db.Database
+            .SqlQuery<IngestKeyRow>($"SELECT ingest_key_id, tenant_id, connection_id, tenant_tin FROM synect_resolve_ingest_key({keyHash})")
+            .ToListAsync(ct);
+        return rows.Count == 1
+            ? new Synect.Application.Ingest.IngestKeyIdentity(rows[0].IngestKeyId, rows[0].TenantId, rows[0].ConnectionId, rows[0].TenantTin)
+            : null;
+    }
+
+    private sealed class IngestKeyRow
+    {
+        public Guid IngestKeyId { get; set; }
+        public Guid TenantId { get; set; }
+        public Guid ConnectionId { get; set; }
+        public string? TenantTin { get; set; }
+    }
+}

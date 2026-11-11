@@ -95,6 +95,11 @@ public static class DependencyInjection
         services.AddScoped<AttentionEvaluator>();
         services.AddScoped<AttentionTrigger>();
         services.AddScoped<AttentionService>();
+        // 1C ingest (stage 8a): packages pushed by the 1C extension; the HTTP endpoint lives in Synect.Api.
+        services.AddOptions<Ingest.IngestOptions>();
+        services.AddScoped<Ingest.IngestKeyService>();
+        services.AddScoped<Ingest.IngestWriter>();
+        services.AddScoped<Ingest.IngestService>();
         services.AddSynectAnalytics();
         return services;
     }

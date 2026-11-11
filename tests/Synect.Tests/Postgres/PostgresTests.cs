@@ -21,6 +21,11 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
         "counterparty_aliases", "reconciliation_runs", "reconciliation_matches", "reconciliation_match_items",
         "reconciliation_findings", "reconciliation_match_decisions", "attention_items", "attention_item_events",
         "statement_imports",
+        // Stage 8a: 1C data and the ingest journal.
+        "accounting_counterparties", "accounting_contracts", "accounting_bank_accounts", "accounting_documents",
+        "accounting_document_lines", "accounting_bank_documents", "accounting_bank_document_settlements",
+        "accounting_payment_orders", "accounting_settlement_balances", "accounting_bank_account_balances",
+        "ingest_batches", "ingest_full_sync_items",
     ];
 
     private void RequirePostgres() => Assert.SkipUnless(fixture.Available, PostgresFixture.SkipReason);
@@ -49,13 +54,17 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
         // No table with a tenant_id column is left out of the list above (api_keys is checked separately).
         var unlisted = await fixture.ScalarAsync<string>(
             "SELECT coalesce(string_agg(table_name, ',' ORDER BY table_name), '') FROM information_schema.columns " +
-            "WHERE table_schema = 'public' AND column_name = 'tenant_id' AND table_name <> 'api_keys' " +
+            "WHERE table_schema = 'public' AND column_name = 'tenant_id' AND table_name NOT IN ('api_keys', 'ingest_keys') " +
             "AND table_name NOT IN ('account_tenants', 'api_key_tenants') AND table_name <> ALL (ARRAY['" +
             string.Join("','", TenantTables) + "'])");
         Assert.Equal("", unlisted);
-        // api_keys: RLS enabled but not forced, so that only the owner-defined lookup function bypasses it.
-        Assert.Equal("true,false", await fixture.ScalarAsync<string>(
-            "SELECT relrowsecurity::text || ',' || relforcerowsecurity::text FROM pg_class WHERE relname = 'api_keys'"));
+        // api_keys and ingest_keys: RLS enabled but not forced, so that only the owner-defined lookup functions bypass it.
+        foreach (var table in new[] { "api_keys", "ingest_keys" })
+        {
+            Assert.Equal("true,false", await fixture.ScalarAsync<string>(
+                $"SELECT relrowsecurity::text || ',' || relforcerowsecurity::text FROM pg_class WHERE relname = '{table}'"));
+            Assert.Equal(1L, await fixture.ScalarAsync<long>($"SELECT count(*) FROM pg_policies WHERE tablename = '{table}'"));
+        }
         // Account tables (stage 6.5): no organization data; RLS enabled WITHOUT any policy and not forced, so that no role
         // but the owner (administration, SECURITY DEFINER functions) sees a row.
         foreach (var table in new[] { "accounts", "account_tenants", "api_key_tenants", "account_tool_audit_log" })
@@ -73,6 +82,8 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
               AND a.attname <> 'tenant_id'
               -- Deliberate exception: API keys are looked up by hash before the tenant is known.
               AND NOT (c.relname = 'api_keys' AND a.attname = 'key_hash')
+              -- Stage 8a: ingest keys likewise (synect_resolve_ingest_key).
+              AND NOT (c.relname = 'ingest_keys' AND a.attname = 'key_hash')
               -- Stage 6.5: account tables hold no tenant data; account keys have no tenant (primary key id, account_id);
               -- tool_audit_log keeps the foreign key indexes of api_key_id and account_id.
               AND c.relname NOT IN ('accounts', 'account_tenants', 'api_key_tenants', 'account_tool_audit_log')

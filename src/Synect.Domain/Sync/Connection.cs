@@ -6,7 +6,12 @@ public enum AdapterKind
 {
     Bank = 1,
     Edo = 2,
-    Accounting = 3,
+
+    /// <summary>
+    /// 1C accounting (stage 8a): the 1C extension pushes packages to /ingest/1c/v1/batches with an ingest key. Never planned or
+    /// queued; <see cref="Connection.LastSuccessfulSyncAt"/> is the time of the last accepted package.
+    /// </summary>
+    Accounting1C = 3,
 
     /// <summary>
     /// Bank statements imported from files (MT940, CSV) for banks without an API. Never planned or queued: data arrives
@@ -43,7 +48,10 @@ public class Connection : TenantEntity
     /// <summary>Source code of file import connections (<see cref="AdapterKind.File"/>); no adapter is registered for it.</summary>
     public const string FileImportSourceCode = "file_import";
 
-    /// <summary>True for connections whose data is loaded by the sync queue (not file imports or accounting).</summary>
+    /// <summary>Source code of the 1C connection (<see cref="AdapterKind.Accounting1C"/>); no adapter is registered for it.</summary>
+    public const string Accounting1CSourceCode = "1c";
+
+    /// <summary>True for connections whose data is loaded by the sync queue (not file imports or 1C, whose data is pushed).</summary>
     public bool IsSyncable => AdapterKind is AdapterKind.Bank or AdapterKind.Edo;
 
     public string Name { get; set; } = string.Empty;
