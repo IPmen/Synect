@@ -95,7 +95,7 @@ public sealed class StatementCommands(IServiceProvider services, TenantScopeRunn
             await using (var scope = services.CreateAsyncScope())
             {
                 var db = scope.ServiceProvider.GetRequiredService<ISynectDbContext>();
-                var t = new Tenant { Name = name, Inn = "319999998", CreatedAt = time.GetUtcNow() };
+                var t = new Tenant { Name = name, Tin = "319999998", CreatedAt = time.GetUtcNow() };
                 db.Tenants.Add(t);
                 await db.SaveChangesAsync();
                 tenant = t.Id;

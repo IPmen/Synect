@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.Protocol;
+using Synect.Application.Access;
 using Synect.Application.Analytics;
 using Synect.Application.Attention;
 using Synect.Application.Freshness;
@@ -85,7 +86,10 @@ public sealed class ToolRunner(
         try
         {
             var output = await body(args, cts.Token);
-            var block = Tools.AttentionTools.Names.Contains(tool) ? null : await AttentionBlockAsync(cts.Token);
+            // Multi-organization answers carry the counts per organization themselves; there is no tenant to count here.
+            var block = Tools.AttentionTools.Names.Contains(tool) || Tools.PortfolioTools.Names.Contains(tool) || caller.IsMultiOrganization
+                ? null
+                : await AttentionBlockAsync(cts.Token);
             return Success(tool, group, args, output, block);
         }
         catch (ToolArgumentException ex)
@@ -149,6 +153,7 @@ public sealed class ToolRunner(
         {
             Tool = tool,
             Status = "ok",
+            Organization = OrganizationBlock(),
             Period = args.Period,
             Request = args.Request,
             Data = output.Data,
@@ -171,13 +176,22 @@ public sealed class ToolRunner(
         return Build(envelope, isError: false, omitNullAttention: true);
     }
 
-    public CallToolResult Error(string tool, ToolGroup group, ToolArgs? args, string code, string message, double? retryAfterSeconds = null)
+    public CallToolResult Error(string tool, ToolGroup group, ToolArgs? args, string code, string message, double? retryAfterSeconds = null,
+        IReadOnlyList<OrganizationInfo>? organizations = null)
     {
         var envelope = new
         {
             Tool = tool,
             Status = "error",
+            Organization = OrganizationBlock(),
             Error = new { Code = code, Message = message, RetryAfterSeconds = retryAfterSeconds },
+            Organizations = organizations is { Count: > 0 } list
+                ? new
+                {
+                    Total = list.Count,
+                    Listed = list.Take(Hosting.OrganizationScopeResolver.MaxListed).Select(Organization).ToList(),
+                }
+                : null,
             Period = args?.Period,
             Request = args?.Request,
             ReturnedRows = 0,
@@ -185,6 +199,23 @@ public sealed class ToolRunner(
         };
         return Build(envelope, isError: true);
     }
+
+    /// <summary>
+    /// Whose data the answer holds: {organization_id, name (untrusted text), tin} of the one organization of the call, or
+    /// {scope: "several", count} for a multi-organization answer (each row then has its own organization block).
+    /// </summary>
+    public object? OrganizationBlock() =>
+        caller.Organization is { } o ? Organization(o)
+        : caller.Organizations is { } many ? new { Scope = "several", Count = many.Count, Note = "Each row carries its own organization." }
+        : null;
+
+    /// <summary>One organization as every answer shows it; the name is third-party text.</summary>
+    public object Organization(OrganizationInfo o) => new
+    {
+        OrganizationId = o.TenantId,
+        Name = TextSafety.Untrusted(o.Name, Options.UntrustedTextMaxLength),
+        Tin = o.Tin,
+    };
 
     /// <summary>The data_freshness block: one entry per connection of the tenant.</summary>
     public object Freshness(DataFreshness freshness) => new
@@ -247,13 +278,10 @@ public sealed class ToolRunner(
 
     private static CallToolResult Build(object envelope, bool isError, bool omitNullAttention = false)
     {
-        var element = JsonSerializer.SerializeToElement(envelope, ToolJson.Options);
-        if (omitNullAttention && element.TryGetProperty("attention", out var a) && a.ValueKind == JsonValueKind.Null)
-        {
-            var node = JsonSerializer.SerializeToNode(envelope, ToolJson.Options)!.AsObject();
-            node.Remove("attention");
-            element = JsonSerializer.SerializeToElement(node, ToolJson.Options);
-        }
+        var node = JsonSerializer.SerializeToNode(envelope, ToolJson.Options)!.AsObject();
+        if (omitNullAttention && node["attention"] is null) node.Remove("attention");
+        if (node.ContainsKey("organizations") && node["organizations"] is null) node.Remove("organizations");
+        var element = JsonSerializer.SerializeToElement(node, ToolJson.Options);
         return new CallToolResult
         {
             StructuredContent = element,
@@ -271,4 +299,13 @@ public static class ToolErrorCodes
     public const string RateLimited = "rate_limited";
     public const string InternalError = "internal_error";
     public const string Unauthenticated = "unauthenticated";
+
+    /// <summary>The key serves several organizations and the tool needs one; the answer lists them.</summary>
+    public const string OrganizationRequired = "organization_required";
+
+    /// <summary>Several available organizations match the given name; the answer lists the candidates.</summary>
+    public const string OrganizationAmbiguous = "organization_ambiguous";
+
+    /// <summary>No organization available to the key matches (the same answer for one that does not exist).</summary>
+    public const string OrganizationNotFound = "organization_not_found";
 }

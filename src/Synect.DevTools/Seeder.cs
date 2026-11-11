@@ -54,6 +54,34 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
         }
     }
 
+    /// <summary>
+    /// A small data set for one organization of seed-account: a fake bank (2 accounts, 60 days) and a fake Didox
+    /// connection (120 documents), loaded through the real sync services (which also run the reconciliation and the
+    /// attention rules after each load). Returns the connection ids.
+    /// </summary>
+    public async Task<(Guid Bank, Guid Edo)> SeedSmallOrganizationAsync(Guid tenant, int index)
+    {
+        var bankId = await EnsureConnectionAsync(tenant, AdapterKind.Bank, $"Kapital Bank (seed {index})");
+        var edoId = await EnsureConnectionAsync(tenant, AdapterKind.Edo, $"Didox (seed {index})");
+        var b = bank.For(bankId);
+        b.Seed = 5000 + index;
+        b.AccountCount = 2;
+        b.AccountCurrencies = ["000", "840"];
+        b.CounterpartyPoolSize = 15;
+        b.NoInnShare = 0.05;
+        b.MaxOperationsPerDay = 4;
+        var e = edo.For(edoId);
+        e.Seed = 6000 + index;
+        e.DocumentCount = 120;
+        e.SpreadDays = 120;
+        e.CounterpartyPoolSize = 15;
+        e.PageSize = 100;
+        e.BaseTime = time.GetUtcNow().AddDays(-120);
+        await SyncBankAsync(tenant, bankId, Today.AddDays(-59), Today);
+        await SyncEdoAsync(tenant, edoId);
+        return (bankId, edoId);
+    }
+
     public async Task SeedLoadAsync(int operations, int documents)
     {
         const int days = 1096; // three years
@@ -146,7 +174,7 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
         var db = scope.ServiceProvider.GetRequiredService<ISynectDbContext>();
         var existing = await db.Tenants.Where(t => t.Name == name).Select(t => (Guid?)t.Id).SingleOrDefaultAsync();
         if (existing is { } id) return id;
-        var tenant = new Tenant { Name = name, Inn = inn, CreatedAt = time.GetUtcNow() };
+        var tenant = new Tenant { Name = name, Tin = inn, CreatedAt = time.GetUtcNow() };
         db.Tenants.Add(tenant);
         await db.SaveChangesAsync();
         return tenant.Id;

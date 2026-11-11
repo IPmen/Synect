@@ -37,6 +37,19 @@ using Synect.Infrastructure.Persistence;
 //   list-imports --tenant <name|id> [--connection <name|id>]   imported statement files
 //   anonymize-statement --file <path> --format mt940|csv [--profile <name|path.json>] --out <path>   pseudonymizes names, INNs, accounts
 //   statement-bench [--sizes 500,2000,20000] [--days 250] [--timeout 120]   import time of synthetic MT940 files (new tenant per size)
+//   list-tenants                                  name, id, TIN and account of every tenant
+//   delete-tenant --name <name> --confirm <name again> [--id <id> when names repeat] [--force]   deletes a tenant and all its data (owner, one transaction)
+// Accounts (stage 6.5; administration runs as the owner, ConnectionStrings:SynectOwner):
+//   create-account --name <name>
+//   add-organization --account <name|id> --name <name> --tin <9|14 digits> [--create-tenant] [--display-name ...]
+//   list-accounts [--account <name|id>]             accounts, or one account's organizations and keys
+//   disable-organization --account <name|id> --organization <tin|name|id>   (data is kept)
+//   create-account-key --account <name|id> [--organizations <tin or name list>] [--scopes read,review] [--name ...]   prints the key ONCE
+//   revoke-api-key --account <name|id> --key <key id|key prefix>   (revoke-api-key <tenant> <key> for single-organization keys)
+//   set-onboarding --tenant <name|id> --source <connection name|id|source code> --status NotStarted|WaitingForAccess|Connected|NeedsAttention [--note ...]
+//   import-organizations --account <name|id> --file <csv with columns name,tin>   idempotent, errors per row
+//   seed-account --name <name> [--organizations 50]   account with N organizations loaded through the real services
+//   account-bench --account <name|id> [--runs 20] [--url http://localhost:5299/mcp]   p50/p95 of the portfolio tools (running Api)
 
 var command = args.FirstOrDefault() ?? "help";
 var options = CliArgs.Parse(args.Skip(1).ToArray());
@@ -65,6 +78,7 @@ builder.Services.AddSingleton<QueryCatalog>();
 builder.Services.AddSingleton<ReconciliationCommands>();
 builder.Services.AddSingleton<AttentionCommands>();
 builder.Services.AddSingleton<StatementCommands>();
+builder.Services.AddSingleton<AccountCommands>();
 
 using var host = builder.Build();
 var services = host.Services;
@@ -107,6 +121,30 @@ try
             foreach (var tenantId in options.Get("all") == "true" ? await AllTenants() : [await Tenant()])
                 Console.WriteLine($"{tenantId}: {await services.GetRequiredService<Seeder>().RebuildAliasesAsync(tenantId)} name spellings");
             break;
+        case "list-tenants":
+            return await services.GetRequiredService<AccountCommands>().ListTenantsAsync();
+        case "delete-tenant":
+            return await services.GetRequiredService<AccountCommands>().DeleteTenantAsync(options);
+        case "create-account":
+            return await services.GetRequiredService<AccountCommands>().CreateAccountAsync(options);
+        case "add-organization":
+            return await services.GetRequiredService<AccountCommands>().AddOrganizationAsync(options);
+        case "list-accounts":
+            return await services.GetRequiredService<AccountCommands>().ListAccountsAsync(options);
+        case "disable-organization":
+            return await services.GetRequiredService<AccountCommands>().DisableOrganizationAsync(options);
+        case "create-account-key":
+            return await services.GetRequiredService<AccountCommands>().CreateAccountKeyAsync(options);
+        case "set-onboarding":
+            return await services.GetRequiredService<AccountCommands>().SetOnboardingAsync(await Tenant(), options);
+        case "import-organizations":
+            return await services.GetRequiredService<AccountCommands>().ImportOrganizationsAsync(options);
+        case "seed-account":
+            return await services.GetRequiredService<AccountCommands>().SeedAccountAsync(options);
+        case "account-bench":
+            return await AccountBench.RunAsync(builder.Configuration, options);
+        case "revoke-api-key" when options.Get("account") is not null:
+            return await services.GetRequiredService<AccountCommands>().RevokeAccountKeyAsync(options, Positional(1));
         case "create-api-key":
             return await ApiKeyCommands.CreateAsync(services, await Tenant(), options);
         case "revoke-api-key":
@@ -154,7 +192,8 @@ try
             Console.WriteLine("Commands: seed-demo, seed-load, rebuild-totals, rebuild-counterparty-aliases, list-queries, query <name>, bench, explain, " +
                               "create-api-key, revoke-api-key, list-api-keys, test-db-leftovers, reconcile, rebuild-reconciliation, reconcile-eval, " +
                               "reconcile-bench, normalize-currency, attention, attention-eval, attention-bench, create-file-connection, " +
-                              "import-statement, list-imports, anonymize-statement, statement-bench. See Program.cs.");
+                              "import-statement, list-imports, anonymize-statement, statement-bench, delete-tenant, create-account, add-organization, " +
+                              "list-accounts, disable-organization, create-account-key, set-onboarding, import-organizations, seed-account, account-bench. See Program.cs.");
             break;
     }
 }

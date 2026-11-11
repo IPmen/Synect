@@ -161,6 +161,7 @@ public sealed class AnalyticsContext(
         cts.CancelAfter(timeout);
         try
         {
+            await ProbeConnectionWithinBudgetAsync(cts.Token);
             return await db.InTransactionAsync(async token =>
             {
                 if (db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
@@ -188,6 +189,41 @@ public sealed class AnalyticsContext(
         {
             throw new AnalyticsTimeoutException(timeout, ex);
         }
+    }
+
+    /// <summary>
+    /// Makes opening the connection count against the same budget as the query. Npgsql does not abort the PostgreSQL
+    /// startup handshake on the cancellation token (it waits up to the driver's connection Timeout, 15 s by default). So,
+    /// when the context's connection is still closed, a separate probe connection with the SAME connection string (hence
+    /// the same pool) is opened first and its wait is bounded with WaitAsync: on success it goes straight back to the pool
+    /// and the context's own open takes it from there; on timeout the probe is abandoned and disposed in the background
+    /// once the driver gives up, while the context's connection was never touched (disposing a connection that is still
+    /// connecting throws). Only analytics calls do this: connection strings and every other timeout stay unchanged.
+    /// </summary>
+    private async Task ProbeConnectionWithinBudgetAsync(CancellationToken token)
+    {
+        if (db.Database.ProviderName != "Npgsql.EntityFrameworkCore.PostgreSQL" || db.Database.CurrentTransaction is not null) return;
+        var current = db.Database.GetDbConnection();
+        if (current.State != System.Data.ConnectionState.Closed) return;
+        var connectionString = db.Database.GetConnectionString();
+        var factory = DbProviderFactories.GetFactory(current);
+        if (string.IsNullOrEmpty(connectionString) || factory?.CreateConnection() is not { } probe) return;
+        probe.ConnectionString = connectionString;
+        var open = probe.OpenAsync(token);
+        try
+        {
+            await open.WaitAsync(token);
+        }
+        catch
+        {
+            _ = open.ContinueWith(static (t, state) =>
+            {
+                _ = t.Exception;
+                try { ((DbConnection)state!).Dispose(); } catch (Exception) { /* abandoned probe; nothing to report */ }
+            }, probe, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            throw;
+        }
+        await probe.DisposeAsync();
     }
 
     internal Task<List<TRow>> QueryAsync<TRow>(Sql sql, CancellationToken ct) =>

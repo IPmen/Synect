@@ -6,7 +6,9 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Synect.Application.Abstractions;
+using Microsoft.Extensions.Options;
 using Synect.Application.Access;
+using Synect.Application.Accounts;
 using Synect.Domain.Access;
 using Synect.Mcp.Responses;
 using Synect.Mcp.Tools;
@@ -14,8 +16,11 @@ using Synect.Mcp.Tools;
 namespace Synect.Mcp.Hosting;
 
 /// <summary>
-/// Wraps every tools/call: sets the tenant context from the authenticated key, checks the scope, applies the
-/// rate and concurrency limits and writes tool_audit_log for every call (ok, error, rate_limited, timeout).
+/// Wraps every tools/call: resolves the organization the call works with (from the key and the optional 'organization'
+/// argument, see <see cref="OrganizationScopeResolver"/>), sets the tenant context, checks the scope, applies the rate and
+/// concurrency limits and writes the journal for every call (ok, error, rate_limited, timeout): tool_audit_log per
+/// organization read (tenant_id = that organization, account_id of an account key), and account_tool_audit_log for calls
+/// of an account key that did not resolve to exactly one organization.
 /// </summary>
 public static class ToolCallFilter
 {
@@ -39,9 +44,9 @@ public static class ToolCallFilter
         if (identity is not { } id)
             return runner.Error(tool, ToolGroup.None, null, ToolErrorCodes.Unauthenticated, "The request is not authenticated.");
 
-        // The tenant comes from the key only. Every service of this call (analytics, freshness, queue) reads it.
-        services.GetRequiredService<TenantContext>().Set(id.TenantId);
-        services.GetRequiredService<McpCaller>().ApiKeyId = id.ApiKeyId;
+        var caller = services.GetRequiredService<McpCaller>();
+        caller.ApiKeyId = id.ApiKeyId;
+        caller.AccountId = id.AccountId;
 
         var time = services.GetRequiredService<TimeProvider>();
         var started = time.GetUtcNow();
@@ -56,8 +61,30 @@ public static class ToolCallFilter
             {
                 result = runner.Error(tool, ToolGroup.None, null, ToolErrorCodes.Forbidden,
                     $"The API key does not have the '{scope}' scope required by this tool.");
+                return result;
             }
-            else if (services.GetRequiredService<ToolCallGate>().TryEnter(id.ApiKeyId, id.TenantId, out var rejection) is { } lease)
+
+            var resolution = await services.GetRequiredService<OrganizationScopeResolver>()
+                .ResolveAsync(tool, id, context.Params?.Arguments, cancellationToken);
+            caller.Available = resolution.Available;
+            if (resolution.Error is { } refusal)
+            {
+                result = runner.Error(tool, ToolGroup.None, null, refusal.Code, refusal.Message, organizations: refusal.Candidates);
+                return result;
+            }
+            if (resolution.Single is { } organization)
+            {
+                // The tenant comes from the key's organization list only. Every service of this call reads it.
+                caller.Organization = organization;
+                services.GetRequiredService<TenantContext>().Set(organization.TenantId);
+            }
+            else
+            {
+                // Several organizations: the tool reads each in its own scope (OrganizationFanOut); this scope has no tenant.
+                caller.Organizations = resolution.Many;
+            }
+
+            if (services.GetRequiredService<ToolCallGate>().TryEnter(id.ApiKeyId, caller.Organization?.TenantId, id.AccountId, out var rejection) is { } lease)
             {
                 using (lease) result = await next(context, cancellationToken);
             }
@@ -76,12 +103,38 @@ public static class ToolCallFilter
         finally
         {
             var (status, rows, error) = Outcome(result, failure, cancellationToken);
-            await services.GetRequiredService<ToolAuditWriter>().WriteAsync(
-                new ToolAuditEntry(id.TenantId, id.ApiKeyId, tool, parameters, started, stopwatch.Elapsed, rows, status, error,
-                    services.GetRequiredService<McpCaller>().AuditDetails),
-                CancellationToken.None);
+            await WriteAuditAsync(services, id, caller, tool, parameters, started, stopwatch.Elapsed, rows, status, error);
         }
     };
+
+    /// <summary>
+    /// One tool_audit_log row per organization the call worked with; for a single-organization key whose call was refused
+    /// before that, the key's own organization. An account key call that did not resolve to one organization also gets
+    /// one account_tool_audit_log row (with the organizations it read, if any).
+    /// </summary>
+    private static async Task WriteAuditAsync(IServiceProvider services, CallerIdentity id, McpCaller caller, string tool, string parameters,
+        DateTimeOffset started, TimeSpan elapsed, int? rows, ToolCallStatus status, string? error)
+    {
+        var writer = services.GetRequiredService<ToolAuditWriter>();
+        IReadOnlyList<Guid> tenants = caller.Organization is { } single ? [single.TenantId]
+            : caller.Organizations is { } many ? many.Select(o => o.TenantId).ToList()
+            : id.TenantId is { } own ? [own]
+            : [];
+        var details = caller.AuditDetails;
+        if (caller.Organizations is { } multi)
+            details = JsonSerializer.Serialize(new { multi_organization = true, organizations = multi.Count, tool_details = caller.AuditDetails });
+        var perOrganizationRows = tenants.Count == 1 ? rows : null;
+        var parallel = Math.Max(1, services.GetRequiredService<IOptions<AccountsOptions>>().Value.MaxParallelOrganizations);
+        await Parallel.ForEachAsync(tenants, new ParallelOptions { MaxDegreeOfParallelism = parallel },
+            async (tenant, _) => await writer.WriteAsync(
+                new ToolAuditEntry(tenant, id.ApiKeyId, tool, parameters, started, elapsed, perOrganizationRows, status, error, details, id.AccountId),
+                CancellationToken.None));
+
+        if (id.AccountId is not null && caller.Organization is null)
+            await services.GetRequiredService<IAccountToolAuditWriter>().WriteAsync(id.KeyHash,
+                new AccountToolAuditEntry(tool, parameters, started, elapsed, rows, status, error, caller.AuditDetails, tenants),
+                CancellationToken.None);
+    }
 
     private static (ToolCallStatus Status, int? Rows, string? Error) Outcome(CallToolResult? result, Exception? failure, CancellationToken ct)
     {
@@ -107,10 +160,27 @@ public static class ToolCallFilter
     }
 }
 
-/// <summary>The API key of the current tool call (set by <see cref="ToolCallFilter"/>), e.g. to record who decided a match.</summary>
+/// <summary>
+/// The caller of the current tool call (set by <see cref="ToolCallFilter"/>): the API key (e.g. to record who decided a
+/// match), its account, and the organization(s) the call works with.
+/// </summary>
 public sealed class McpCaller
 {
     public Guid? ApiKeyId { get; set; }
+
+    /// <summary>The account of an account key; null for a single-organization key.</summary>
+    public Guid? AccountId { get; set; }
+
+    /// <summary>Every organization the key may work with (ordered by name).</summary>
+    public IReadOnlyList<OrganizationInfo> Available { get; set; } = [];
+
+    /// <summary>The one organization of the call; its tenant is the tenant context of this scope.</summary>
+    public OrganizationInfo? Organization { get; set; }
+
+    /// <summary>The organizations of a multi-organization call (portfolio tools, organization = "all"); no tenant context.</summary>
+    public IReadOnlyList<OrganizationInfo>? Organizations { get; set; }
+
+    public bool IsMultiOrganization => Organizations is not null;
 
     /// <summary>Set by a changing tool: what it did, as JSON, written to tool_audit_log.details.</summary>
     public string? AuditDetails { get; set; }

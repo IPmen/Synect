@@ -76,6 +76,10 @@ public class ApiKeyLookupSecurityTests : IAsyncLifetime
             GRANT USAGE ON SCHEMA public TO {OwnerRole};
             ALTER TABLE api_keys OWNER TO {OwnerRole};
             ALTER FUNCTION synect_resolve_api_key(bytea) OWNER TO {OwnerRole};
+            ALTER TABLE accounts OWNER TO {OwnerRole};
+            ALTER TABLE account_tenants OWNER TO {OwnerRole};
+            ALTER TABLE api_key_tenants OWNER TO {OwnerRole};
+            GRANT SELECT ON tenants TO {OwnerRole};
             """);
         _tenantA = await _pg.Host.CreateTenantAsync("Keys A");
         _tenantB = await _pg.Host.CreateTenantAsync("Keys B");

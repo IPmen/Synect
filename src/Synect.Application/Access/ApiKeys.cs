@@ -7,16 +7,37 @@ using Synect.Domain.Access;
 namespace Synect.Application.Access;
 
 /// <summary>The identity behind a presented API key, as found by <see cref="IApiKeyResolver"/>.</summary>
-public sealed record ApiKeyIdentity(Guid ApiKeyId, Guid TenantId, IReadOnlyList<string> Scopes);
+/// <param name="AccountId">The account of an account key; null for a single-organization key.</param>
+/// <param name="TenantId">The organization of a single-organization key; null for an account key.</param>
+public sealed record ApiKeyIdentity(Guid ApiKeyId, Guid? AccountId, Guid? TenantId, IReadOnlyList<string> Scopes);
+
+/// <summary>An organization (tenant) a key may work with: id, name (the account's display name if set) and TIN.</summary>
+public sealed record OrganizationInfo(Guid TenantId, string Name, string? Tin);
 
 /// <summary>
-/// Finds a non-revoked key by the SHA-256 of the presented key, before any tenant context exists.
-/// The PostgreSQL implementation calls the SECURITY DEFINER function synect_resolve_api_key, so the
-/// application role never reads api_keys outside a tenant context.
+/// Finds a non-revoked key by the SHA-256 of the presented key, before any tenant context exists, and lists the
+/// organizations the key may work with. The PostgreSQL implementation calls the SECURITY DEFINER functions
+/// synect_resolve_api_key and synect_api_key_organizations, so the application role never reads api_keys, accounts or
+/// account_tenants outside a tenant context. Both take the hash of the key itself (not its id): only a caller that holds
+/// the key learns anything.
 /// </summary>
 public interface IApiKeyResolver
 {
     Task<ApiKeyIdentity?> ResolveAsync(byte[] keyHash, CancellationToken ct);
+
+    /// <summary>Organizations of the key (its own organization, or the enabled organizations of its account it may see).</summary>
+    Task<IReadOnlyList<OrganizationInfo>> OrganizationsAsync(byte[] keyHash, CancellationToken ct);
+}
+
+/// <summary>A tool call of an account key that did not resolve to exactly one organization.</summary>
+public sealed record AccountToolAuditEntry(
+    string Tool, string ParametersJson, DateTimeOffset StartedAt, TimeSpan Duration, int? RowCount, ToolCallStatus Status,
+    string? ErrorMessage, string? DetailsJson, IReadOnlyList<Guid> TenantIds);
+
+/// <summary>Writes account_tool_audit_log through synect_write_account_tool_audit (the key and account come from the hash).</summary>
+public interface IAccountToolAuditWriter
+{
+    Task WriteAsync(byte[] keyHash, AccountToolAuditEntry entry, CancellationToken ct);
 }
 
 /// <summary>Key format and hashing. Keys carry 256 bits of randomness.</summary>
@@ -68,6 +89,7 @@ public sealed class ApiKeyService(ISynectDbContext db, ITenantContext tenant, Ti
         var key = ApiKeyFormat.Generate();
         var entity = new ApiKey
         {
+            TenantId = tenant.TenantId,
             Name = name.Trim(),
             KeyHash = ApiKeyFormat.Hash(key),
             KeyPrefix = key[..ApiKeyFormat.StoredPrefixLength],

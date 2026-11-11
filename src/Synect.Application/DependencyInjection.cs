@@ -70,6 +70,11 @@ public static class DependencyInjection
 
         // Client API keys and the tool call journal (MCP).
         services.AddScoped<ApiKeyService>();
+
+        // Accounts (stage 6.5): several organizations per accounting company, always one tenant scope at a time.
+        services.AddOptions<Accounts.AccountsOptions>();
+        services.AddSingleton<Accounts.OrganizationFanOut>();
+        services.AddScoped<Accounts.PortfolioQueries>();
         services.AddSingleton<ToolAuditWriter>();
 
         // Analytics (read-only over the database) and precomputed totals.

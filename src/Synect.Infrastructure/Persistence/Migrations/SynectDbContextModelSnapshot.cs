@@ -24,13 +24,13 @@ namespace Synect.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Synect.Domain.Access.ApiKey", b =>
                 {
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("tenant_id");
-
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<Guid?>("AccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("account_id");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -67,12 +67,22 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasColumnType("text[]")
                         .HasColumnName("scopes");
 
-                    b.HasKey("TenantId", "Id")
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id")
                         .HasName("pk_api_keys");
+
+                    b.HasIndex("AccountId")
+                        .HasDatabaseName("ix_api_keys_account_id");
 
                     b.HasIndex("KeyHash")
                         .IsUnique()
                         .HasDatabaseName("ix_api_keys_key_hash");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("ix_api_keys_tenant_id");
 
                     b.ToTable("api_keys", (string)null);
                 });
@@ -86,6 +96,10 @@ namespace Synect.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<Guid?>("AccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("account_id");
 
                     b.Property<Guid>("ApiKeyId")
                         .HasColumnType("uuid")
@@ -132,6 +146,12 @@ namespace Synect.Infrastructure.Persistence.Migrations
                     b.HasKey("TenantId", "Id")
                         .HasName("pk_tool_audit_log");
 
+                    b.HasIndex("AccountId")
+                        .HasDatabaseName("ix_tool_audit_log_account_id");
+
+                    b.HasIndex("ApiKeyId")
+                        .HasDatabaseName("ix_tool_audit_log_api_key_id");
+
                     b.HasIndex("TenantId", "ApiKeyId")
                         .HasDatabaseName("ix_tool_audit_log_tenant_id_api_key_id");
 
@@ -139,6 +159,90 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_tool_audit_log_tenant_id_started_at");
 
                     b.ToTable("tool_audit_log", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Accounts.Account", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id")
+                        .HasName("pk_accounts");
+
+                    b.HasIndex("Name")
+                        .IsUnique()
+                        .HasDatabaseName("ix_accounts_name");
+
+                    b.ToTable("accounts", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Accounts.AccountTenant", b =>
+                {
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("account_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("AddedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("added_at");
+
+                    b.Property<DateTimeOffset?>("DisabledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("disabled_at");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("display_name");
+
+                    b.HasKey("AccountId", "TenantId")
+                        .HasName("pk_account_tenants");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_account_tenants_tenant_id");
+
+                    b.ToTable("account_tenants", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Accounts.ApiKeyTenant", b =>
+                {
+                    b.Property<Guid>("KeyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("key_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("KeyId", "TenantId")
+                        .HasName("pk_api_key_tenants");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("ix_api_key_tenants_tenant_id");
+
+                    b.ToTable("api_key_tenants", (string)null);
                 });
 
             modelBuilder.Entity("Synect.Domain.Analytics.CounterpartyMonthly", b =>
@@ -1476,6 +1580,19 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(256)")
                         .HasColumnName("name");
 
+                    b.Property<string>("OnboardingNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("onboarding_note");
+
+                    b.Property<string>("OnboardingStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("NotStarted")
+                        .HasColumnName("onboarding_status");
+
                     b.Property<string>("Settings")
                         .IsRequired()
                         .HasColumnType("jsonb")
@@ -1706,16 +1823,16 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
-                    b.Property<string>("Inn")
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)")
-                        .HasColumnName("inn");
-
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)")
                         .HasColumnName("name");
+
+                    b.Property<string>("Tin")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("tin");
 
                     b.HasKey("Id")
                         .HasName("pk_tenants");
@@ -1725,29 +1842,74 @@ namespace Synect.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Synect.Domain.Access.ApiKey", b =>
                 {
+                    b.HasOne("Synect.Domain.Accounts.Account", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_api_keys_accounts_account_id");
+
                     b.HasOne("Synect.Domain.Tenants.Tenant", null)
                         .WithMany()
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
                         .HasConstraintName("fk_api_keys_tenants_tenant_id");
                 });
 
             modelBuilder.Entity("Synect.Domain.Access.ToolAuditLog", b =>
                 {
+                    b.HasOne("Synect.Domain.Accounts.Account", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_tool_audit_log_accounts_account_id");
+
+                    b.HasOne("Synect.Domain.Access.ApiKey", null)
+                        .WithMany()
+                        .HasForeignKey("ApiKeyId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_tool_audit_log_api_keys_api_key_id");
+
                     b.HasOne("Synect.Domain.Tenants.Tenant", null)
                         .WithMany()
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_tool_audit_log_tenants_tenant_id");
+                });
 
-                    b.HasOne("Synect.Domain.Access.ApiKey", null)
+            modelBuilder.Entity("Synect.Domain.Accounts.AccountTenant", b =>
+                {
+                    b.HasOne("Synect.Domain.Accounts.Account", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "ApiKeyId")
+                        .HasForeignKey("AccountId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
-                        .HasConstraintName("fk_tool_audit_log_api_keys_tenant_id_api_key_id");
+                        .HasConstraintName("fk_account_tenants_accounts_account_id");
+
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_account_tenants_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Accounts.ApiKeyTenant", b =>
+                {
+                    b.HasOne("Synect.Domain.Access.ApiKey", null)
+                        .WithMany()
+                        .HasForeignKey("KeyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_api_key_tenants_api_keys_key_id");
+
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_api_key_tenants_tenants_tenant_id");
                 });
 
             modelBuilder.Entity("Synect.Domain.Analytics.CounterpartyMonthly", b =>

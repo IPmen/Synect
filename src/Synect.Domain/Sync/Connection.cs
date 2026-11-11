@@ -23,6 +23,18 @@ public enum ConnectionStatus
 }
 
 /// <summary>
+/// Manual onboarding step of a connection (stage 6.5), e.g. "the application to the bank is submitted". It is only a mark
+/// for people and never changes how the connection is loaded (<see cref="Connection.Status"/>).
+/// </summary>
+public enum OnboardingStatus
+{
+    NotStarted = 0,
+    WaitingForAccess = 1,
+    Connected = 2,
+    NeedsAttention = 3,
+}
+
+/// <summary>
 /// A configured link between a tenant and one external source (a bank, Didox, 1C).
 /// Credentials are never stored here; <see cref="CredentialsRef"/> points to a row in connection_secrets.
 /// </summary>
@@ -60,6 +72,23 @@ public class Connection : TenantEntity
     public string? CredentialsRef { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
+
+    public const int MaxOnboardingNoteLength = 500;
+
+    /// <summary>Manual onboarding mark; does not affect loading.</summary>
+    public OnboardingStatus OnboardingStatus { get; private set; } = OnboardingStatus.NotStarted;
+
+    /// <summary>Optional note to the onboarding mark (at most 500 characters).</summary>
+    public string? OnboardingNote { get; private set; }
+
+    public void SetOnboarding(OnboardingStatus status, string? note)
+    {
+        note = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+        if (note is { Length: > MaxOnboardingNoteLength })
+            throw new ArgumentException($"The onboarding note is longer than {MaxOnboardingNoteLength} characters.", nameof(note));
+        OnboardingStatus = status;
+        OnboardingNote = note;
+    }
 
     public void MarkSyncSucceeded(DateTimeOffset at)
     {

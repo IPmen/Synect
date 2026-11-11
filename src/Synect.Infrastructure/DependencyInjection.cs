@@ -47,6 +47,7 @@ public static class DependencyInjection
         });
         services.AddScoped<ISynectDbContext>(sp => sp.GetRequiredService<SynectDbContext>());
         services.AddScoped<IApiKeyResolver, PostgresApiKeyResolver>();
+        services.AddSingleton<IAccountToolAuditWriter, PostgresAccountToolAuditWriter>();
 
         services.AddSynectDataProtection(configuration);
         services.AddSynectSecretStore();
@@ -67,6 +68,7 @@ public static class DependencyInjection
         services.Configure<Synect.Application.Analytics.Counterparties.SearchOptions>(configuration.GetSection("Search"));
         services.Configure<Synect.Application.Reconciliation.ReconciliationOptions>(configuration.GetSection("Reconciliation"));
         services.Configure<Synect.Application.Attention.AttentionOptions>(configuration.GetSection("Attention"));
+        services.Configure<Synect.Application.Accounts.AccountsOptions>(configuration.GetSection("Accounts"));
         return services;
     }
 

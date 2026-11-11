@@ -49,12 +49,21 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
         // No table with a tenant_id column is left out of the list above (api_keys is checked separately).
         var unlisted = await fixture.ScalarAsync<string>(
             "SELECT coalesce(string_agg(table_name, ',' ORDER BY table_name), '') FROM information_schema.columns " +
-            "WHERE table_schema = 'public' AND column_name = 'tenant_id' AND table_name <> 'api_keys' AND table_name <> ALL (ARRAY['" +
+            "WHERE table_schema = 'public' AND column_name = 'tenant_id' AND table_name <> 'api_keys' " +
+            "AND table_name NOT IN ('account_tenants', 'api_key_tenants') AND table_name <> ALL (ARRAY['" +
             string.Join("','", TenantTables) + "'])");
         Assert.Equal("", unlisted);
         // api_keys: RLS enabled but not forced, so that only the owner-defined lookup function bypasses it.
         Assert.Equal("true,false", await fixture.ScalarAsync<string>(
             "SELECT relrowsecurity::text || ',' || relforcerowsecurity::text FROM pg_class WHERE relname = 'api_keys'"));
+        // Account tables (stage 6.5): no organization data; RLS enabled WITHOUT any policy and not forced, so that no role
+        // but the owner (administration, SECURITY DEFINER functions) sees a row.
+        foreach (var table in new[] { "accounts", "account_tenants", "api_key_tenants", "account_tool_audit_log" })
+        {
+            Assert.Equal("true,false", await fixture.ScalarAsync<string>(
+                $"SELECT relrowsecurity::text || ',' || relforcerowsecurity::text FROM pg_class WHERE relname = '{table}'"));
+            Assert.Equal(0L, await fixture.ScalarAsync<long>($"SELECT count(*) FROM pg_policies WHERE tablename = '{table}'"));
+        }
         Assert.Equal(1L, await fixture.ScalarAsync<long>("SELECT count(*) FROM pg_class WHERE relname = 'tenants'"));
         var nonTenantFirst = await fixture.ScalarAsync<long>("""
             SELECT count(*) FROM pg_index i
@@ -64,6 +73,11 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
               AND a.attname <> 'tenant_id'
               -- Deliberate exception: API keys are looked up by hash before the tenant is known.
               AND NOT (c.relname = 'api_keys' AND a.attname = 'key_hash')
+              -- Stage 6.5: account tables hold no tenant data; account keys have no tenant (primary key id, account_id);
+              -- tool_audit_log keeps the foreign key indexes of api_key_id and account_id.
+              AND c.relname NOT IN ('accounts', 'account_tenants', 'api_key_tenants', 'account_tool_audit_log')
+              AND NOT (c.relname = 'api_keys' AND a.attname IN ('id', 'account_id'))
+              AND NOT (c.relname = 'tool_audit_log' AND a.attname IN ('api_key_id', 'account_id'))
             """);
         Assert.Equal(0L, nonTenantFirst);
     }

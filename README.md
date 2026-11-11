@@ -7,11 +7,11 @@ on import; REST and MCP tools read only this database and never call external sy
 
 | Project | Purpose |
 |---|---|
-| `Synect.Domain` | Entities: tenants, connections (states; kinds Bank, Edo, File), sync runs, sync jobs, connection secrets, raw objects, bank, EDO, counterparties, monthly counterparty totals, counterparty name spellings (aliases), API keys, tool audit log, reconciliation runs / matches / match items / findings, attention items and their events, statement imports; shared transliteration (`Text/`) and currency codes (`Common/IsoCurrency`) |
-| `Synect.Application` | Adapter contracts and registry, sync services and the shared bank writer (`Sync/BankLoadWriter`), queue (planner, dispatcher, requests), rate limiting and retries, secrets and credentials contracts, freshness query, read-only analytics (`Analytics/`), reconciliation of payments with documents (`Reconciliation/`), attention rules and inbox (`Attention/`), API keys and tool audit (`Access/`), bank statement files: parsers, profiles, import, anonymizer (`Statements/`) |
+| `Synect.Domain` | Entities: accounts and their organizations, tenants, connections (states; kinds Bank, Edo, File), sync runs, sync jobs, connection secrets, raw objects, bank, EDO, counterparties, monthly counterparty totals, counterparty name spellings (aliases), API keys, tool audit log, reconciliation runs / matches / match items / findings, attention items and their events, statement imports; shared transliteration (`Text/`) and currency codes (`Common/IsoCurrency`) |
+| `Synect.Application` | Adapter contracts and registry, sync services and the shared bank writer (`Sync/BankLoadWriter`), queue (planner, dispatcher, requests), rate limiting and retries, secrets and credentials contracts, freshness query, read-only analytics (`Analytics/`), reconciliation of payments with documents (`Reconciliation/`), attention rules and inbox (`Attention/`), API keys and tool audit (`Access/`), accounts: organization resolution, multi-organization fan-out, portfolio figures (`Accounts/`), bank statement files: parsers, profiles, import, anonymizer (`Statements/`) |
 | `Synect.Infrastructure` | EF Core + Npgsql, migrations, RLS interceptor, Data Protection secret store, Kapital Bank / Didox mappers, session and token caches, fake adapters, synthetic statement generator |
 | `Synect.Api` | HTTP host: `/health` and the MCP endpoint `/mcp` (Streamable HTTP, API key) |
-| `Synect.Mcp` | MCP tools over `Analytics`, `Reconciliation`, `Attention`, `ISourceFreshnessQuery` and `SyncRequestService`; API key authentication, HTTP and tool limits, tool call journal. No reference to Infrastructure, adapters, queue internals or secrets (enforced by a test) |
+| `Synect.Mcp` | MCP tools (including the portfolio tools over all organizations of an account key) over `Analytics`, `Reconciliation`, `Attention`, `ISourceFreshnessQuery` and `SyncRequestService`; API key authentication, HTTP and tool limits, tool call journal. No reference to Infrastructure, adapters, queue internals or secrets (enforced by a test) |
 | `Synect.Worker` | Hosts the sync queue (`SyncWorker`) |
 | `Synect.DevTools` | Development only: demo/load data, `query`, `bench`, `explain`, API keys, reconciliation (`reconcile`, `rebuild-reconciliation`, `reconcile-eval`, `reconcile-bench`), attention (`attention`, `attention-eval`, `attention-bench`), statement files (`create-file-connection`, `import-statement`, `list-imports`, `anonymize-statement`, `statement-bench`), `normalize-currency`, test database cleanup (not referenced by Api or Worker) |
 | `Synect.Tests` | xUnit v3 tests (SQLite temporary file + local PostgreSQL); synthetic statement files in `Fixtures/Statements` |
@@ -124,8 +124,8 @@ them calls Didox, a bank or 1C. The only non-read-only tool, `request_data_refre
 **Authentication.** `Authorization: Bearer <key>`. Keys are `sk_synect_` + 32 random bytes (base64url); `api_keys`
 stores only the SHA-256 hash, a 16-character prefix for recognition, scopes (`read`, `sync_request`, `review`), created / last
 used / revoked times. The key is printed once by `create-api-key` and never stored or logged. A missing, malformed,
-unknown or revoked key gives `401` with `WWW-Authenticate: Bearer` and an empty body. The tenant comes from the key,
-never from tool arguments. The scheme is an ordinary ASP.NET Core authentication scheme (`SynectApiKey`), so OAuth can
+unknown or revoked key gives `401` with `WWW-Authenticate: Bearer` and an empty body. The organizations come from the key (see Accounts and organizations),
+(the `organization` argument only chooses among them). The scheme is an ordinary ASP.NET Core authentication scheme (`SynectApiKey`), so OAuth can
 be added later as another scheme on the same endpoint.
 
 **Finding a key before the tenant is known.** `api_keys` has row-level security enabled but not forced: the
@@ -456,6 +456,131 @@ entity tracked so far (quadratic). 20 000 operations after the fix, by phase: bu
 about 1 s on the server; the rest of the variance (up to 2 s between equal runs) is I/O of a PostgreSQL with default
 `shared_buffers` (128 MB) and about 200 MB of indexes on the two tables.
 
+## Accounts and organizations (stage 6.5)
+
+An accounting company (**account**) serves many client **organizations** (each a tenant with its own row-level security).
+One API key and one MCP connector per account; the accountant names the organization in the question. Isolation of
+organizations in the database is unchanged: every read and write still runs in one tenant's transaction.
+
+**Tables** (migration `AccountsStage65`):
+
+| Table | Content |
+|---|---|
+| `accounts` | `id`, `name` (unique), `status` (`Active`, `Suspended`), `created_at` |
+| `account_tenants` | `account_id`, `tenant_id` (a tenant belongs to at most one account), optional `display_name`, `added_at`, `disabled_at` |
+| `api_key_tenants` | `key_id`, `tenant_id`: an account key with rows here sees only those organizations, otherwise every enabled one of its account |
+| `account_tool_audit_log` | calls of an account key that did not resolve to one organization (missing or ambiguous `organization`, several organizations): key, account, tool, arguments, status, the organizations read |
+| `api_keys` | + `account_id`; `tenant_id` now nullable (exactly one of them is set, `ck_api_keys_owner`); primary key `id` |
+| `tool_audit_log` | + `account_id`; `tenant_id` stays the organization whose data was read; the foreign key to the key is now `api_key_id` |
+| `tenants` | `inn` renamed to `tin` (9 or 14 digits, optional), unique within an account (trigger `synect_check_account_tin` under a per-account advisory lock) |
+| `connections` | + `onboarding_status` (`NotStarted`, `WaitingForAccess`, `Connected`, `NeedsAttention`) and `onboarding_note` (up to 500 characters): manual marks only, they never change loading |
+
+**Why the application role cannot read other accounts.** `accounts`, `account_tenants`, `api_key_tenants` and
+`account_tool_audit_log` have row-level security enabled **without any policy** (no row is visible or writable to any role
+but the owner) and the grants of `synect_app` are revoked. Account keys have `tenant_id = NULL`, so the existing
+`api_keys` policy (`tenant_id = app.tenant_id`) never shows them. The application reaches account data only through
+owner-defined `SECURITY DEFINER` functions with `search_path` pinned and `EXECUTE` only for `synect_app`:
+
+- `synect_resolve_api_key(hash)` → `(api_key_id, account_id | null, tenant_id | null, scopes)`. Nothing for a revoked key,
+  a key of a suspended account, or a single-organization key of a disabled organization.
+- `synect_api_key_organizations(hash)` → `(tenant_id, name, tin)` of the organizations the key may see (its own
+  organization; or the enabled organizations of its active account, narrowed to `api_key_tenants`). It takes the SHA-256 of
+  the **key itself**, not the key id, so only a caller that holds the key learns anything; the hash is kept in memory on
+  the authenticated identity (`ApiKeyClaimsIdentity`, not a claim) and never logged.
+- `synect_write_account_tool_audit(hash, ...)` writes `account_tool_audit_log`; the key and account come from the hash and
+  every listed organization must belong to that account.
+
+Tested: without a context and in an organization's context the application role sees 0 rows of the account tables and of
+account keys, and every insert is refused (`42501`).
+
+**Choosing the organization** (`OrganizationScopeResolver`, one mechanism in `ToolCallFilter` for every tool; tools/list
+adds the optional `organization` parameter to every tool schema). The organizations come from the key only; the argument
+chooses among them by TIN (9 or 14 digits), id or name (`CounterpartyNameNormalizer`: Russian, Uzbek Cyrillic and Latin
+spellings, legal forms and apostrophes; one exact normalized match wins, otherwise containment or trigram similarity
+≥ `Accounts:MinNameSimilarity` gives candidates):
+
+- a key with one organization needs no argument;
+- several organizations and no argument → `organization_required` with the list (name, TIN), never a guess;
+- several similar names → `organization_ambiguous` with the candidates;
+- anything else → `organization_not_found`, the same answer for an organization of another account and one that does
+  not exist (organizations outside the key's list are never looked at);
+- `organization = "all"` (also «все», «barchasi», «барчаси») is accepted by `get_attention_items` and
+  `get_attention_summary`; the portfolio tools read every organization by default; `update_attention_item` without
+  `organization` finds the organization that holds `item_id`.
+
+Every answer has an `organization` block (`organization_id`, `name` as untrusted text, `tin`), or `{scope: "several",
+count}` with an organization block per row.
+
+**Several organizations never share a context.** `OrganizationFanOut` runs each organization in its own DI scope, hence its
+own `DbContext`, transaction and `SET LOCAL app.tenant_id`, at most `Accounts:MaxParallelOrganizations` (4) at a time; an
+error of one organization is reported for it alone (`read_error`, `unreadable_organizations`), the others still answer.
+Tested with a failure in the middle of the run: each scope sees only its tenant, and pooled connections carry no tenant
+afterwards.
+
+**Tools** (common answer rules: freshness, notes, masked accounts, untrusted text, timeout, journal):
+
+| Tool | What |
+|---|---|
+| `list_organizations` | name, TIN, connections and their states, new attention items by severity |
+| `get_portfolio_overview` | per organization (all, or `organizations` = list of TINs / names): sources with freshness, new attention items by severity, unmatched payments of the last `Accounts:UnmatchedLookbackDays` (90) days, documents waiting for our signature; most important first (new critical items or a broken connection, then high ...); 25 organizations per page, at most 100 |
+| `get_connections_overview` | every source of every organization: status, reason, last successful load, completeness, onboarding mark; `only_needing_attention` |
+| `get_attention_items` / `get_attention_summary` | `organization = "all"`: merged list (same keyset order, ids unique) / counts per organization and totals |
+
+They read only ready data (connection states, `attention_items`, reconciliation match items, document statuses), one
+query set per organization.
+
+**Limits and journal.** In addition to the per-key limits: `Mcp:RateLimit:MaxConcurrentPerAccount` (8) calls at the same
+time per account (all its keys). Every call writes `tool_audit_log` per organization read (`tenant_id` = organization,
+`account_id`), and an account key call that did not resolve to exactly one organization also writes one
+`account_tool_audit_log` row.
+
+**Administration** (DevTools, as the schema owner: `ConnectionStrings:SynectOwner`):
+
+```
+dotnet run --project src/Synect.DevTools -- create-account --name "Buxgalteriya A"
+dotnet run --project src/Synect.DevTools -- add-organization --account "Buxgalteriya A" --name "Ромашка" --tin 301234567 --create-tenant
+dotnet run --project src/Synect.DevTools -- import-organizations --account "Buxgalteriya A" --file organizations.csv
+dotnet run --project src/Synect.DevTools -- list-accounts [--account "Buxgalteriya A"]
+dotnet run --project src/Synect.DevTools -- create-account-key --account "Buxgalteriya A" [--organizations 301234567,Ромашка] --scopes read,review --name "Claude"
+dotnet run --project src/Synect.DevTools -- revoke-api-key --account "Buxgalteriya A" --key <key id or prefix>
+dotnet run --project src/Synect.DevTools -- disable-organization --account "Buxgalteriya A" --organization 301234567
+dotnet run --project src/Synect.DevTools -- set-onboarding --tenant "Ромашка" --source "Kapital Bank" --status WaitingForAccess --note "заявление в банк подано"
+dotnet run --project src/Synect.DevTools -- seed-account --name "Demo accounting" --organizations 50
+dotnet run --project src/Synect.DevTools -- account-bench --account "Demo accounting" --runs 20
+dotnet run --project src/Synect.DevTools -- list-tenants
+dotnet run --project src/Synect.DevTools -- delete-tenant --name "<name>" --confirm "<name>" [--id <id>] [--force]
+```
+
+`import-organizations` reads a CSV with the columns `name` and `tin` (comma or semicolon), is idempotent and reports errors
+per row. `create-account-key` prints the key once. `delete-tenant` deletes a tenant and every row of it (all tables with a
+`tenant_id`, children first by the foreign keys, then `tenants`) in one transaction as the owner, logs what it deleted,
+and refuses while the tenant has active keys unless `--force`. `account-bench` needs a running Api with tool limits raised
+(`Mcp__RateLimit__RequestsPerMinutePerKey`, `Mcp__HttpRateLimit__RequestsPerMinutePerKey`); it creates two temporary keys
+and revokes them at the end.
+
+**Timings** (`account-bench`, 50 organizations of `seed-account`, real HTTP, 20 runs after 2 warm-up calls, local
+PostgreSQL 18; second of two runs, the first was up to 1.5 times slower):
+
+| Tool | p50 ms | p95 ms | Target p95 |
+|---|---|---|---|
+| `list_organizations` | 72 | 79 | 500 |
+| `get_portfolio_overview`, 25 organizations | 57 | 61 | |
+| `get_portfolio_overview`, 50 organizations | 82 | 93 | 1000 |
+| `get_connections_overview` | 67 | 77 | |
+| `get_attention_items`, `organization = "all"` | 63 | 66 | |
+| `get_account_balances`, `organization` = TIN | 8 | 9 | without + 100 |
+| `get_account_balances` without `organization` (one-organization key) | 8 | 9 | |
+
+Language: [docs/glossary.md](docs/glossary.md) (about 40 accounting terms in Russian, Uzbek Latin and Cyrillic; a draft to
+be checked by native speakers), [docs/tool-selection-eval.md](docs/tool-selection-eval.md) (40 hypothetical questions with
+the expected tool; a test checks only that each tool exists and has Russian and Uzbek examples, the model's choice is
+checked by hand at the demonstration). Uzbek example questions of every tool are in `Synect.Mcp/Tools/ToolExamples.cs`.
+
+**Analytics connection budget.** Opening the database connection now counts against `Analytics:QueryTimeout`: Npgsql does
+not abort the startup handshake on cancellation (it would wait for the connection `Timeout`, 15 s by default), so
+`AnalyticsContext` opens the connection itself and bounds the wait; the connection strings and the timeouts of every other
+part are unchanged.
+
 ## Developer tools
 
 ```
@@ -524,6 +649,10 @@ timeout, so a genuinely slow query still fails.
 
 | Key | Default | Notes |
 |---|---|---|
+| `Accounts:MaxParallelOrganizations` | `4` | Organizations processed at the same time by one multi-organization call (each in its own scope). |
+| `Accounts:UnmatchedLookbackDays` | `90` | Days of unmatched payments counted by `get_portfolio_overview`. |
+| `Accounts:MinNameSimilarity` | `0.45` | Trigram similarity from which an organization name is a candidate. |
+| `Mcp:RateLimit:MaxConcurrentPerAccount` | `8` | Tool calls at the same time per account. |
 | `Adapters:KapitalBank:AmountUnit` | `Minor` | **Unconfirmed** whether Kapital Bank sends sum or tiyin. `Major` multiplies by 100. |
 | `Adapters:Didox:SumUnit` | `Major` | Didox totals in sum with fraction, stored in tiyin. |
 | `Adapters:Didox:SourceUtcOffset` | `05:00:00` | Zone for Didox timestamps without offset. |

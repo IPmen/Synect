@@ -1905,3 +1905,521 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE tool_audit_log DROP CONSTRAINT fk_tool_audit_log_api_keys_tenant_id_api_key_id;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE api_keys DROP CONSTRAINT pk_api_keys;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE tenants RENAME COLUMN inn TO tin;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE tool_audit_log ADD account_id uuid;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE connections ADD onboarding_note character varying(500);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE connections ADD onboarding_status character varying(32) NOT NULL DEFAULT 'NotStarted';
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE api_keys ALTER COLUMN tenant_id DROP NOT NULL;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE api_keys ADD account_id uuid;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE api_keys ADD CONSTRAINT pk_api_keys PRIMARY KEY (id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE TABLE accounts (
+        id uuid NOT NULL,
+        name character varying(256) NOT NULL,
+        status character varying(32) NOT NULL,
+        created_at timestamp with time zone NOT NULL,
+        CONSTRAINT pk_accounts PRIMARY KEY (id)
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE TABLE api_key_tenants (
+        key_id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        CONSTRAINT pk_api_key_tenants PRIMARY KEY (key_id, tenant_id),
+        CONSTRAINT fk_api_key_tenants_api_keys_key_id FOREIGN KEY (key_id) REFERENCES api_keys (id) ON DELETE CASCADE,
+        CONSTRAINT fk_api_key_tenants_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE TABLE account_tenants (
+        account_id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        display_name character varying(256),
+        added_at timestamp with time zone NOT NULL,
+        disabled_at timestamp with time zone,
+        CONSTRAINT pk_account_tenants PRIMARY KEY (account_id, tenant_id),
+        CONSTRAINT fk_account_tenants_accounts_account_id FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE RESTRICT,
+        CONSTRAINT fk_account_tenants_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE INDEX ix_tool_audit_log_account_id ON tool_audit_log (account_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE INDEX ix_tool_audit_log_api_key_id ON tool_audit_log (api_key_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE INDEX ix_api_keys_account_id ON api_keys (account_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE INDEX ix_api_keys_tenant_id ON api_keys (tenant_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE UNIQUE INDEX ix_account_tenants_tenant_id ON account_tenants (tenant_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE UNIQUE INDEX ix_accounts_name ON accounts (name);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE INDEX ix_api_key_tenants_tenant_id ON api_key_tenants (tenant_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE api_keys ADD CONSTRAINT fk_api_keys_accounts_account_id FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE tool_audit_log ADD CONSTRAINT fk_tool_audit_log_accounts_account_id FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE tool_audit_log ADD CONSTRAINT fk_tool_audit_log_api_keys_api_key_id FOREIGN KEY (api_key_id) REFERENCES api_keys (id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE tenants ADD CONSTRAINT ck_tenants_tin CHECK (tin IS NULL OR tin ~ '^([0-9]{9}|[0-9]{14})$');
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_owner CHECK ((tenant_id IS NULL) <> (account_id IS NULL));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE accounts ADD CONSTRAINT ck_accounts_status CHECK (status IN ('Active', 'Suspended'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE connections ADD CONSTRAINT ck_connections_onboarding_status CHECK (onboarding_status IN ('NotStarted', 'WaitingForAccess', 'Connected', 'NeedsAttention'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE TABLE account_tool_audit_log (
+        id uuid PRIMARY KEY,
+        account_id uuid NOT NULL REFERENCES accounts (id) ON DELETE RESTRICT,
+        api_key_id uuid NOT NULL REFERENCES api_keys (id) ON DELETE RESTRICT,
+        tool varchar(64) NOT NULL,
+        parameters jsonb NOT NULL,
+        started_at timestamptz NOT NULL,
+        duration_ms integer NOT NULL,
+        row_count integer NULL,
+        status varchar(32) NOT NULL CHECK (status IN ('Ok', 'Error', 'RateLimited', 'Timeout')),
+        error_message varchar(2000) NULL,
+        details jsonb NULL,
+        tenant_ids uuid[] NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX ix_account_tool_audit_log_account_id_started_at ON account_tool_audit_log (account_id, started_at);
+    CREATE INDEX ix_account_tool_audit_log_api_key_id ON account_tool_audit_log (api_key_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE accounts ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    REVOKE ALL ON accounts FROM PUBLIC;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE account_tenants ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    REVOKE ALL ON account_tenants FROM PUBLIC;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE api_key_tenants ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    REVOKE ALL ON api_key_tenants FROM PUBLIC;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    ALTER TABLE account_tool_audit_log ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    REVOKE ALL ON account_tool_audit_log FROM PUBLIC;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    DO $do$
+    BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'synect_app') THEN
+            REVOKE ALL ON accounts, account_tenants, api_key_tenants, account_tool_audit_log FROM synect_app;
+        END IF;
+    END
+    $do$;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE FUNCTION synect_check_account_tin()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+    AS $fn$
+    DECLARE
+        v_account uuid;
+        v_tenant uuid;
+        v_tin text;
+    BEGIN
+        IF TG_TABLE_NAME = 'account_tenants' THEN
+            v_account := NEW.account_id;
+            v_tenant := NEW.tenant_id;
+            SELECT t.tin INTO v_tin FROM public.tenants t WHERE t.id = NEW.tenant_id;
+        ELSE
+            v_tenant := NEW.id;
+            v_tin := NEW.tin;
+            SELECT at.account_id INTO v_account FROM public.account_tenants at WHERE at.tenant_id = NEW.id;
+        END IF;
+        IF v_tin IS NULL OR v_account IS NULL THEN
+            RETURN NEW;
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('synect_account_tin:' || v_account::text, 0));
+        IF EXISTS (SELECT 1 FROM public.account_tenants at JOIN public.tenants t ON t.id = at.tenant_id
+                   WHERE at.account_id = v_account AND at.tenant_id <> v_tenant AND t.tin = v_tin) THEN
+            RAISE EXCEPTION 'TIN % is already used by another organization of this account', v_tin
+                USING ERRCODE = '23505', CONSTRAINT = 'ux_account_tenants_tin';
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER trg_account_tenants_tin BEFORE INSERT OR UPDATE OF account_id, tenant_id ON account_tenants
+        FOR EACH ROW EXECUTE FUNCTION synect_check_account_tin();
+    CREATE TRIGGER trg_tenants_tin BEFORE UPDATE OF tin ON tenants
+        FOR EACH ROW EXECUTE FUNCTION synect_check_account_tin();
+    REVOKE ALL ON FUNCTION synect_check_account_tin() FROM PUBLIC;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    DROP FUNCTION synect_resolve_api_key(bytea);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE FUNCTION synect_resolve_api_key(p_key_hash bytea)
+    RETURNS TABLE (api_key_id uuid, account_id uuid, tenant_id uuid, scopes text[])
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+    AS $fn$
+    #variable_conflict use_column
+    BEGIN
+        IF p_key_hash IS NULL OR octet_length(p_key_hash) <> 32 THEN
+            RETURN;
+        END IF;
+        RETURN QUERY
+            SELECT k.id, k.account_id, k.tenant_id, k.scopes FROM public.api_keys k
+            WHERE k.key_hash = p_key_hash AND k.revoked_at IS NULL
+              AND ((k.tenant_id IS NOT NULL AND NOT EXISTS (
+                        SELECT 1 FROM public.account_tenants at JOIN public.accounts a ON a.id = at.account_id
+                        WHERE at.tenant_id = k.tenant_id AND (at.disabled_at IS NOT NULL OR a.status <> 'Active')))
+                OR (k.account_id IS NOT NULL AND EXISTS (
+                        SELECT 1 FROM public.accounts a WHERE a.id = k.account_id AND a.status = 'Active')));
+        IF FOUND THEN
+            -- At most one write per key and minute.
+            UPDATE public.api_keys SET last_used_at = now()
+            WHERE key_hash = p_key_hash AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute');
+        END IF;
+    END
+    $fn$;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE FUNCTION synect_api_key_organizations(p_key_hash bytea)
+    RETURNS TABLE (tenant_id uuid, name text, tin text)
+    LANGUAGE sql
+    STABLE
+    SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+    AS $fn$
+        WITH k AS (
+            SELECT k.id, k.tenant_id, k.account_id FROM public.api_keys k
+            WHERE p_key_hash IS NOT NULL AND octet_length(p_key_hash) = 32
+              AND k.key_hash = p_key_hash AND k.revoked_at IS NULL)
+        SELECT t.id, COALESCE(at.display_name, t.name)::text, t.tin::text
+        FROM k
+        JOIN public.tenants t ON t.id = k.tenant_id
+        LEFT JOIN public.account_tenants at ON at.tenant_id = t.id
+        LEFT JOIN public.accounts a ON a.id = at.account_id
+        WHERE at.tenant_id IS NULL OR (at.disabled_at IS NULL AND a.status = 'Active')
+        UNION ALL
+        SELECT t.id, COALESCE(at.display_name, t.name)::text, t.tin::text
+        FROM k
+        JOIN public.accounts a ON a.id = k.account_id AND a.status = 'Active'
+        JOIN public.account_tenants at ON at.account_id = a.id AND at.disabled_at IS NULL
+        JOIN public.tenants t ON t.id = at.tenant_id
+        WHERE NOT EXISTS (SELECT 1 FROM public.api_key_tenants kt WHERE kt.key_id = k.id)
+           OR EXISTS (SELECT 1 FROM public.api_key_tenants kt WHERE kt.key_id = k.id AND kt.tenant_id = t.id)
+    $fn$;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    CREATE FUNCTION synect_write_account_tool_audit(
+        p_key_hash bytea, p_tool text, p_parameters jsonb, p_started_at timestamptz, p_duration_ms integer,
+        p_row_count integer, p_status text, p_error_message text, p_details jsonb, p_tenant_ids uuid[])
+    RETURNS boolean
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+    AS $fn$
+    DECLARE
+        v_key uuid;
+        v_account uuid;
+    BEGIN
+        IF p_key_hash IS NULL OR octet_length(p_key_hash) <> 32 THEN
+            RETURN false;
+        END IF;
+        SELECT k.id, k.account_id INTO v_key, v_account FROM public.api_keys k
+        WHERE k.key_hash = p_key_hash AND k.account_id IS NOT NULL;
+        IF v_key IS NULL THEN
+            RETURN false;
+        END IF;
+        IF EXISTS (SELECT 1 FROM unnest(COALESCE(p_tenant_ids, '{}'::uuid[])) x(id)
+                   WHERE NOT EXISTS (SELECT 1 FROM public.account_tenants at
+                                     WHERE at.account_id = v_account AND at.tenant_id = x.id)) THEN
+            RAISE EXCEPTION 'organization outside the account' USING ERRCODE = '42501';
+        END IF;
+        INSERT INTO public.account_tool_audit_log
+            (id, account_id, api_key_id, tool, parameters, started_at, duration_ms, row_count, status, error_message, details, tenant_ids)
+        VALUES (gen_random_uuid(), v_account, v_key, left(p_tool, 64), COALESCE(p_parameters, '{}'::jsonb), p_started_at,
+                GREATEST(p_duration_ms, 0), p_row_count, p_status, left(p_error_message, 2000), p_details,
+                COALESCE(p_tenant_ids, '{}'::uuid[]));
+        RETURN true;
+    END
+    $fn$;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    REVOKE ALL ON FUNCTION synect_resolve_api_key(bytea) FROM PUBLIC;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    DO $do$
+    BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'synect_app') THEN
+            GRANT EXECUTE ON FUNCTION synect_resolve_api_key(bytea) TO synect_app;
+        END IF;
+    END
+    $do$;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    REVOKE ALL ON FUNCTION synect_api_key_organizations(bytea) FROM PUBLIC;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    DO $do$
+    BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'synect_app') THEN
+            GRANT EXECUTE ON FUNCTION synect_api_key_organizations(bytea) TO synect_app;
+        END IF;
+    END
+    $do$;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    REVOKE ALL ON FUNCTION synect_write_account_tool_audit(bytea, text, jsonb, timestamptz, integer, integer, text, text, jsonb, uuid[]) FROM PUBLIC;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    DO $do$
+    BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'synect_app') THEN
+            GRANT EXECUTE ON FUNCTION synect_write_account_tool_audit(bytea, text, jsonb, timestamptz, integer, integer, text, text, jsonb, uuid[]) TO synect_app;
+        END IF;
+    END
+    $do$;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261111034710_AccountsStage65') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261111034710_AccountsStage65', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+

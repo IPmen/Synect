@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Synect.Domain.Access;
+using Synect.Domain.Accounts;
 using Synect.Domain.Analytics;
 using Synect.Domain.Attention;
 using Synect.Domain.Banking;
@@ -39,7 +40,46 @@ internal sealed class TenantConfiguration : IEntityTypeConfiguration<Tenant>
         b.HasKey(e => e.Id);
         b.Property(e => e.Id).ValueGeneratedNever();
         b.Property(e => e.Name).HasMaxLength(256);
-        b.Property(e => e.Inn).HasMaxLength(16);
+        b.Property(e => e.Tin).HasMaxLength(16);
+    }
+}
+
+internal sealed class AccountConfiguration : IEntityTypeConfiguration<Account>
+{
+    public void Configure(EntityTypeBuilder<Account> b)
+    {
+        b.ToTable("accounts");
+        b.HasKey(e => e.Id);
+        b.Property(e => e.Id).ValueGeneratedNever();
+        b.Property(e => e.Name).HasMaxLength(256);
+        b.Property(e => e.Status).HasConversion<string>().HasMaxLength(32);
+        b.HasIndex(e => e.Name).IsUnique();
+    }
+}
+
+internal sealed class AccountTenantConfiguration : IEntityTypeConfiguration<AccountTenant>
+{
+    public void Configure(EntityTypeBuilder<AccountTenant> b)
+    {
+        b.ToTable("account_tenants");
+        b.HasKey(e => new { e.AccountId, e.TenantId });
+        b.Property(e => e.DisplayName).HasMaxLength(AccountTenant.MaxDisplayNameLength);
+        b.HasOne<Account>().WithMany().HasForeignKey(e => e.AccountId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<Tenant>().WithMany().HasForeignKey(e => e.TenantId).OnDelete(DeleteBehavior.Restrict);
+        // A tenant belongs to at most one account.
+        b.HasIndex(e => e.TenantId).IsUnique();
+    }
+}
+
+internal sealed class ApiKeyTenantConfiguration : IEntityTypeConfiguration<ApiKeyTenant>
+{
+    public void Configure(EntityTypeBuilder<ApiKeyTenant> b)
+    {
+        b.ToTable("api_key_tenants");
+        b.HasKey(e => new { e.KeyId, e.TenantId });
+        b.HasOne<ApiKey>().WithMany().HasForeignKey(e => e.KeyId).OnDelete(DeleteBehavior.Cascade);
+        b.HasOne<Tenant>().WithMany().HasForeignKey(e => e.TenantId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(e => e.TenantId);
     }
 }
 
@@ -56,6 +96,8 @@ internal sealed class ConnectionConfiguration : IEntityTypeConfiguration<Connect
         b.Property(e => e.ConsecutiveFailures).HasDefaultValue(0);
         b.Property(e => e.Settings).HasColumnType(TenantEntityConfiguration.Jsonb);
         b.Property(e => e.CredentialsRef).HasMaxLength(256);
+        b.Property(e => e.OnboardingStatus).HasConversion<string>().HasMaxLength(32).HasDefaultValue(OnboardingStatus.NotStarted);
+        b.Property(e => e.OnboardingNote).HasMaxLength(Connection.MaxOnboardingNoteLength);
         b.HasIndex(e => new { e.TenantId, e.SourceCode });
     }
 }
@@ -255,7 +297,13 @@ internal sealed class ApiKeyConfiguration : IEntityTypeConfiguration<ApiKey>
     public void Configure(EntityTypeBuilder<ApiKey> b)
     {
         b.ToTable("api_keys");
-        b.ConfigureTenantEntity();
+        // Not a TenantEntity since stage 6.5: an account key has no tenant, so the key is the id alone.
+        b.HasKey(e => e.Id);
+        b.Property(e => e.Id).ValueGeneratedNever();
+        b.HasOne<Tenant>().WithMany().HasForeignKey(e => e.TenantId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<Account>().WithMany().HasForeignKey(e => e.AccountId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(e => e.TenantId);
+        b.HasIndex(e => e.AccountId);
         b.Property(e => e.Name).HasMaxLength(256);
         b.Property(e => e.KeyHash).HasMaxLength(32);
         b.Property(e => e.KeyPrefix).HasMaxLength(32);
@@ -276,7 +324,9 @@ internal sealed class ToolAuditLogConfiguration : IEntityTypeConfiguration<ToolA
         b.Property(e => e.Status).HasConversion<string>().HasMaxLength(32);
         b.Property(e => e.ErrorMessage).HasMaxLength(2000);
         b.Property(e => e.Details).HasColumnType(TenantEntityConfiguration.Jsonb);
-        b.HasOne<ApiKey>().WithMany().HasForeignKey(e => new { e.TenantId, e.ApiKeyId }).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<ApiKey>().WithMany().HasForeignKey(e => e.ApiKeyId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<Account>().WithMany().HasForeignKey(e => e.AccountId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(e => new { e.TenantId, e.ApiKeyId });
         b.HasIndex(e => new { e.TenantId, e.StartedAt });
     }
 }

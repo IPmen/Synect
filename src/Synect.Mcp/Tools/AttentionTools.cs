@@ -3,7 +3,10 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Microsoft.Extensions.DependencyInjection;
 using Synect.Application.Abstractions;
+using Synect.Application.Access;
+using Synect.Application.Accounts;
 using Synect.Application.Analytics;
 using Synect.Application.Attention;
 using Synect.Application.Freshness;
@@ -27,7 +30,7 @@ internal static class AttentionText
 [McpServerToolType]
 public sealed class AttentionTools(
     ToolRunner runner, AttentionService attention, McpCaller caller, ISourceFreshnessQuery freshness, ITenantContext tenant,
-    IOptions<AttentionOptions> options, TimeProvider time)
+    IOptions<AttentionOptions> options, TimeProvider time, OrganizationFanOut fanOut)
 {
     public const string GetItems = "get_attention_items";
     public const string GetSummary = "get_attention_summary";
@@ -42,7 +45,9 @@ public sealed class AttentionTools(
                  "or rejected. Sorted by severity (critical first), then the newest first. By default only new and seen items. Each item has id, rule_code, " +
                  "category, severity, status, title and body (English, translate them), details (identifiers and amounts; grouped items have count, totals and " +
                  "up to 20 entries) and entity. Examples: «Что требует внимания?», «Есть ли критичные проблемы?», «Покажи новые предупреждения по сверке», " +
-                 "«Nimalarga e'tibor berish kerak?», «Нималарга эътибор бериш керак?»." + AttentionText.About + Common)]
+                 "«Nimalarga e'tibor berish kerak?», «Нималарга эътибор бериш керак?», «Что требует внимания по всем клиентам?» (organization = all)." +
+                 " With organization = \"all\" the items of every organization of the API key come together (each with its organization), in the same order." +
+                 AttentionText.About + Common)]
     public Task<CallToolResult> GetAttentionItems(
         [Description("Optional severities, comma separated: critical, high, medium, low.")] string? severity = null,
         [Description("Optional categories, comma separated: connection, bank, reconciliation, documents.")] string? category = null,
@@ -56,6 +61,7 @@ public sealed class AttentionTools(
                 a.EnumList("severity", severity, ToolEnums.Severity),
                 a.EnumList("category", category, ToolEnums.Category),
                 a.EnumList("status", status, ToolEnums.AttentionStatus));
+            if (caller.Organizations is { } orgs) return await ItemsOfAllAsync(orgs, filter, a.Page(limit, cursor), ct);
             var r = await attention.ListAsync(filter, a.Page(limit, cursor), ct);
             return ToolOutputs.Page(r, Item);
         }, cancellationToken);
@@ -64,10 +70,12 @@ public sealed class AttentionTools(
     [Description("Counts of the attention inbox: open (new and seen) items by severity and by category, how many are new, snoozed and dismissed, and when the " +
                  "rules last ran. Call it at the start of a conversation about the client's finances and tell the user briefly if there are new critical or " +
                  "high items. Examples: «Есть что-то срочное?», «Сколько новых предупреждений?», «Muhim ogohlantirishlar bormi?», «Муҳим огоҳлантиришлар борми?»." +
+                 " With organization = \"all\": the counts of every organization of the API key, one row per organization (most important first) and their totals." +
                  AttentionText.About + Common)]
     public Task<CallToolResult> GetAttentionSummary(CancellationToken cancellationToken = default) =>
         runner.RunAsync(GetSummary, ToolGroup.Attention, async (a, ct) =>
         {
+            if (caller.Organizations is { } orgs) return await SummaryOfAllAsync(orgs, ct);
             var r = await attention.SummaryAsync(ct);
             var s = r.Data;
             var urgent = s.NewBySeverity[AttentionSeverity.Critical] + s.NewBySeverity[AttentionSeverity.High];
@@ -156,6 +164,80 @@ public sealed class AttentionTools(
                 "Only Synect's attention list changed; no source system (Didox, bank, 1C) was contacted.",
             ]);
         }, cancellationToken);
+
+    /// <summary>
+    /// organization = all: every organization is listed in its own scope with the same filter and cursor (the keyset
+    /// severity, first_seen_at, id is a total order, ids are unique), then the pages are merged; nothing is queried across
+    /// organizations.
+    /// </summary>
+    private async Task<ToolOutput> ItemsOfAllAsync(IReadOnlyList<OrganizationInfo> orgs, AttentionFilter filter, PageRequest page, CancellationToken ct)
+    {
+        var results = await fanOut.RunAsync(orgs.Select(o => o.TenantId).ToList(), async (sp, _, token) =>
+            (await sp.GetRequiredService<AttentionService>().ListAsync(filter, page, token)).Data, ct);
+        var byTenant = orgs.ToDictionary(o => o.TenantId);
+        var limit = page.Limit ?? runner.Options.DefaultLimit;
+        var merged = results.Where(r => r.Succeeded)
+            .SelectMany(r => r.Value!.Items.Select(i => (Organization: byTenant[r.TenantId], Item: i)))
+            .OrderBy(x => (int)x.Item.Severity).ThenByDescending(x => x.Item.FirstSeenAt).ThenBy(x => x.Item.Id)
+            .ToList();
+        var taken = merged.Take(limit).ToList();
+        var more = merged.Count > limit || results.Any(r => r.Succeeded && r.Value!.NextCursor is not null);
+        var next = more && taken.Count > 0 ? Cursor.Encode((int)taken[^1].Item.Severity, taken[^1].Item.FirstSeenAt, taken[^1].Item.Id) : null;
+        var failed = results.Where(r => !r.Succeeded).Select(r => byTenant[r.TenantId]).ToList();
+        var notes = new List<string>
+        {
+            $"Items of {orgs.Count} organizations, each read separately; every item names its organization. Mention the organization of each item to the user.",
+            "To mark an item use update_attention_item with its item_id (and organization = the TIN of its organization).",
+        };
+        if (failed.Count > 0)
+            notes.Add($"{failed.Count} organizations could not be read now (see unreadable_organizations); their items are missing from this list.");
+        return new ToolOutput(new
+        {
+            Items = taken.Select(x => ItemOf(x.Organization, x.Item)).ToList(),
+            UnreadableOrganizations = failed.Select(runner.Organization).ToList(),
+        }, taken.Count, null, next, Notes: notes);
+    }
+
+    private async Task<ToolOutput> SummaryOfAllAsync(IReadOnlyList<OrganizationInfo> orgs, CancellationToken ct)
+    {
+        var results = await fanOut.RunAsync(orgs.Select(o => o.TenantId).ToList(), async (sp, _, token) =>
+            (await sp.GetRequiredService<AttentionService>().SummaryAsync(token)).Data, ct);
+        var byTenant = orgs.ToDictionary(o => o.TenantId);
+        var ok = results.Where(r => r.Succeeded).Select(r => (Organization: byTenant[r.TenantId], Summary: r.Value!)).ToList();
+        var rows = ok
+            .OrderByDescending(x => x.Summary.NewBySeverity[AttentionSeverity.Critical])
+            .ThenByDescending(x => x.Summary.NewBySeverity[AttentionSeverity.High])
+            .ThenByDescending(x => x.Summary.New)
+            .ThenBy(x => x.Organization.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Select(x => new
+            {
+                Organization = runner.Organization(x.Organization),
+                x.Summary.Open,
+                x.Summary.New,
+                NewBySeverity = x.Summary.NewBySeverity,
+                OpenBySeverity = x.Summary.OpenBySeverity,
+                x.Summary.LastEvaluatedAt,
+            }).ToList();
+        var newBy = Enum.GetValues<AttentionSeverity>().ToDictionary(s => s, s => ok.Sum(x => x.Summary.NewBySeverity[s]));
+        var failed = results.Where(r => !r.Succeeded).Select(r => byTenant[r.TenantId]).ToList();
+        var notes = new List<string> { $"Counts of {orgs.Count} organizations, each read separately; rows are per organization, most important first." };
+        var urgent = newBy[AttentionSeverity.Critical] + newBy[AttentionSeverity.High];
+        if (urgent > 0)
+            notes.Add($"There are {urgent} new critical or high items in total; name the organizations concerned and call get_attention_items with organization = the TIN (or all).");
+        if (failed.Count > 0) notes.Add($"{failed.Count} organizations could not be read now (see unreadable_organizations).");
+        return new ToolOutput(new
+        {
+            Totals = new { Open = ok.Sum(x => x.Summary.Open), New = ok.Sum(x => x.Summary.New), NewBySeverity = newBy },
+            Organizations = rows,
+            UnreadableOrganizations = failed.Select(runner.Organization).ToList(),
+        }, rows.Count, null, Notes: notes);
+    }
+
+    private object ItemOf(OrganizationInfo organization, AttentionItemView i) => new
+    {
+        Organization = runner.Organization(organization),
+        Item = Item(i),
+    };
 
     private object Item(AttentionItemView i) => new
     {

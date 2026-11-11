@@ -48,23 +48,23 @@ public class AnalyticsTimeoutTests(PostgresFixture fixture) : IClassFixture<Post
             await tx.RollbackAsync();
         }
 
-        // A timeout while the connection is still being opened is a timeout too, not a raw driver error (before the fix
-        // Npgsql's NpgsqlException/TimeoutException or an interrupted DNS lookup escaped as is). A local socket accepts the
-        // connection and never answers the PostgreSQL startup message. Npgsql does not abort that wait on the cancellation
-        // token: it ends at the driver's connection Timeout (3 s here, 15 s by default), so QueryTimeout does not bound
-        // connection opening; the answer is still the analytics timeout error.
+        // A timeout while the connection is still being opened is a timeout too, not a raw driver error. A local socket
+        // accepts the connection and never answers the PostgreSQL startup message. Npgsql does not abort that wait on the
+        // cancellation token (it would wait for the driver's connection Timeout, 15 s by default and here), so analytics
+        // bounds the open itself with the same budget as the query (stage 6.5): the error comes after about QueryTimeout.
         using (var silent = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0))
         {
             silent.Start();
             var port = ((System.Net.IPEndPoint)silent.LocalEndpoint).Port;
-            var mute = new NpgsqlConnectionStringBuilder(fixture.AppConnectionString) { Host = "127.0.0.1", Port = port, Pooling = false, Timeout = 3 }.ConnectionString;
+            var mute = new NpgsqlConnectionStringBuilder(fixture.AppConnectionString) { Host = "127.0.0.1", Port = port, Pooling = false, Timeout = 15 }.ConnectionString;
             await using var unreachable = TestHost.CreatePostgres(mute, () => Task.CompletedTask,
                 s => s.Configure<AnalyticsOptions>(o => o.QueryTimeout = timeout));
             var sw = Stopwatch.StartNew();
             var connect = await Assert.ThrowsAsync<AnalyticsTimeoutException>(() => unreachable.InTenantAsync(tenant, sp =>
                 sp.GetRequiredService<BalancesAnalytics>().GetStatsAsync(period, CancellationToken.None)));
             Assert.Contains("did not finish", connect.Message);
-            Assert.True(sw.Elapsed < TimeSpan.FromSeconds(10), $"took {sw.Elapsed}");
+            // Bounded by QueryTimeout (200 ms), far below the driver's 15 s connection Timeout.
+            Assert.True(sw.Elapsed < TimeSpan.FromSeconds(4), $"took {sw.Elapsed}");
             silent.Stop();
         }
 

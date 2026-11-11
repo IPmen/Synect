@@ -29,7 +29,11 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         "get_account_mismatches", "get_possible_duplicate_payments", "get_counterparty_balance_estimate", "get_match_details",
         "confirm_match", "reject_match",
         "get_attention_items", "get_attention_summary", "update_attention_item",
+        "list_organizations", "get_portfolio_overview", "get_connections_overview",
     ];
+
+    /// <summary>Tools over every organization of the key (stage 6.5).</summary>
+    public static readonly string[] PortfolioTools = ["list_organizations", "get_portfolio_overview", "get_connections_overview"];
 
     /// <summary>Tools that change data (only Synect's own: the sync queue or the reconciliation decisions).</summary>
     public static readonly string[] WritingTools = ["request_data_refresh", "confirm_match", "reject_match", "update_attention_item"];
@@ -79,6 +83,9 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         ["get_account_mismatches"] = October,
         ["get_possible_duplicate_payments"] = October,
         ["get_counterparty_balance_estimate"] = new { inn = Alpha },
+        ["list_organizations"] = new { },
+        ["get_portfolio_overview"] = new { },
+        ["get_connections_overview"] = new { },
         ["get_match_details"] = new { match_id = "00000000-0000-0000-0000-000000000001" },
         ["confirm_match"] = new { match_id = "00000000-0000-0000-0000-000000000001" },
         ["reject_match"] = new { match_id = "00000000-0000-0000-0000-000000000001" },
@@ -124,7 +131,9 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
     {
         RequirePostgres();
         await using var client = await f.ClientAsync(f.KeyASync);
-        foreach (var tool in AllTools.Except(ReviewTools)) // review tools: McpReconciliationTests, McpAttentionTests
+        // review tools: McpReconciliationTests, McpAttentionTests; portfolio tools carry freshness per organization row
+        // (McpAccountTests).
+        foreach (var tool in AllTools.Except(ReviewTools).Except(PortfolioTools))
         {
             var (body, raw) = await McpFixture.CallAsync(client, tool, ValidArgs[tool]);
             Assert.True(raw.IsError != true, $"{tool}: {body}");
@@ -357,7 +366,7 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         var gate = api.Services.GetRequiredService<ToolCallGate>();
 
         // A call of another key of the same tenant is running.
-        var running = gate.TryEnter(f.KeyCSync.Id, f.TenantC, out _);
+        var running = gate.TryEnter(f.KeyCSync.Id, f.TenantC, null, out _);
         Assert.NotNull(running);
         var (body, raw) = await McpFixture.CallAsync(client, "get_data_freshness");
         Assert.True(raw.IsError);

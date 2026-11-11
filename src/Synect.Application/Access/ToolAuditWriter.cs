@@ -8,7 +8,7 @@ namespace Synect.Application.Access;
 
 public sealed record ToolAuditEntry(
     Guid TenantId, Guid ApiKeyId, string Tool, string ParametersJson, DateTimeOffset StartedAt,
-    TimeSpan Duration, int? RowCount, ToolCallStatus Status, string? ErrorMessage, string? DetailsJson = null);
+    TimeSpan Duration, int? RowCount, ToolCallStatus Status, string? ErrorMessage, string? DetailsJson = null, Guid? AccountId = null);
 
 /// <summary>
 /// Writes tool_audit_log in its own scope and transaction, so that the row exists even when the tool call
@@ -30,6 +30,7 @@ public sealed class ToolAuditWriter(TenantScopeRunner scopes, ILogger<ToolAuditW
                     db.ToolAuditLogs.Add(new ToolAuditLog
                     {
                         ApiKeyId = entry.ApiKeyId,
+                        AccountId = entry.AccountId,
                         Tool = entry.Tool.Length > 64 ? entry.Tool[..64] : entry.Tool,
                         Parameters = entry.ParametersJson,
                         StartedAt = entry.StartedAt,

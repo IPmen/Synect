@@ -19,7 +19,9 @@ internal static class ToolText
     public const string ModelRules =
         " RULES FOR THE MODEL: do not recommend actions or give advice; do not draw conclusions beyond the returned data;" +
         " always state data_freshness and the notes of the answer to the user; when the user names a counterparty by name," +
-        " call find_counterparties first and use the INN it returns.";
+        " call find_counterparties first and use the INN it returns. ORGANIZATIONS: when the key serves several organizations, pass" +
+        " 'organization' (TIN, name or id); if the user did not say which, ask; never mix data of different organizations, and say" +
+        " whose data it is (the 'organization' block of the answer).";
 
     /// <summary>Added to every tool that takes an INN.</summary>
     public const string InnHint =

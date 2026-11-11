@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Synect.Application.Abstractions;
 using Synect.Domain.Access;
+using Synect.Domain.Accounts;
 using Synect.Domain.Analytics;
 using Synect.Domain.Attention;
 using Synect.Domain.Banking;
@@ -50,6 +51,12 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
     public DbSet<AttentionItem> AttentionItems => Set<AttentionItem>();
     public DbSet<AttentionItemEvent> AttentionItemEvents => Set<AttentionItemEvent>();
     public DbSet<StatementImport> StatementImports => Set<StatementImport>();
+
+    // Account tables (stage 6.5). The application role has no access to them (no grants, row-level security without a
+    // policy); only the owner (DevTools administration) and the SECURITY DEFINER functions read them.
+    public DbSet<Account> Accounts => Set<Account>();
+    public DbSet<AccountTenant> AccountTenants => Set<AccountTenant>();
+    public DbSet<ApiKeyTenant> ApiKeyTenants => Set<ApiKeyTenant>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -112,6 +119,23 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
 
             if (entry.Entity.TenantId != current.Value)
                 throw new InvalidOperationException("Attempt to write data of another tenant.");
+        }
+
+        // api_keys is not ITenantOwned since stage 6.5 (account keys have no tenant). A single-organization key is written
+        // only in its own tenant context; an account key (no tenant) only by the owner, outside a tenant context (the
+        // application role could not insert it anyway: row-level security rejects a NULL tenant_id).
+        foreach (var entry in ChangeTracker.Entries<ApiKey>())
+        {
+            if (entry.State is EntityState.Unchanged or EntityState.Detached) continue;
+            var key = entry.Entity;
+            if ((key.TenantId is null) == (key.AccountId is null))
+                throw new InvalidOperationException("An API key belongs to exactly one of: a tenant or an account.");
+            if (key.TenantId is { } keyTenant && current is not null && keyTenant != current.Value)
+                throw new InvalidOperationException("Attempt to write data of another tenant.");
+            if (key.TenantId is not null && current is null)
+                throw new InvalidOperationException("Tenant context is not set; tenant-scoped data cannot be written.");
+            if (key.AccountId is not null && current is not null)
+                throw new InvalidOperationException("Account keys are written outside a tenant context (administration).");
         }
     }
 }

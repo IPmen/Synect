@@ -40,6 +40,9 @@ public sealed class McpRateLimitOptions
     /// <summary>Tool calls running at the same time per tenant.</summary>
     public int MaxConcurrentPerTenant { get; set; } = 4;
 
+    /// <summary>Tool calls running at the same time per account (all keys of the account together; stage 6.5).</summary>
+    public int MaxConcurrentPerAccount { get; set; } = 8;
+
     /// <summary>Window of the per-key limit.</summary>
     public TimeSpan Window { get; set; } = TimeSpan.FromMinutes(1);
 }

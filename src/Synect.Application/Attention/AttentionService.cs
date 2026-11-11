@@ -98,6 +98,10 @@ public sealed class AttentionService(AnalyticsContext ctx, ISynectDbContext db, 
                 r => Cursor.Encode(r.Rank, r.FirstSeenAt, r.Id));
         }, ct);
 
+    /// <summary>Whether the current tenant has an attention item with this id (any status).</summary>
+    public Task<bool> ExistsAsync(Guid itemId, CancellationToken ct) =>
+        db.InTransactionAsync(t => db.AttentionItems.AsNoTracking().AnyAsync(i => i.Id == itemId, t), ct);
+
     public Task<AnalyticsResult<AttentionSummary>> SummaryAsync(CancellationToken ct) =>
         ctx.RunAsync(async token =>
         {

@@ -69,8 +69,12 @@ public sealed class PostgresFixture : IAsyncLifetime
             CREATE ROLE {AppRole} NOLOGIN;
             GRANT USAGE ON SCHEMA public TO {AppRole};
             GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {AppRole};
-            GRANT EXECUTE ON FUNCTION synect_resolve_api_key(bytea) TO {AppRole};
             """);
+        // Like synect_app: EXECUTE on the SECURITY DEFINER functions. The account tables keep the table grants above on
+        // purpose (stricter than production, where they are revoked): row-level security without a policy must still
+        // hide every row from the application role.
+        foreach (var function in Synect.Infrastructure.Persistence.Migrations.AccountsStage65.AppFunctions)
+            await ExecAsync(AdminDbConnectionString, $"GRANT EXECUTE ON FUNCTION {function} TO {AppRole}");
 
         // The application session switches to the restricted role right at connection start.
         AppConnectionString = new NpgsqlConnectionStringBuilder(AdminDbConnectionString) { Options = $"-c role={AppRole}" }.ConnectionString;
