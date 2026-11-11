@@ -1,0 +1,29 @@
+{
+  // Example custom CSV profile (fictitious bank export).
+  "name": "test_bank_cp866",
+  "format": "csv",
+  "encoding": "cp866",
+  "accountNumber": "20208000900100009009",
+  "currency": "UZS",
+  "csv": {
+    "delimiter": "|",
+    "headerRow": 2,
+    "decimalSeparator": ",",
+    "amountMode": "signed",
+    "dateFormats": ["dd.MM.yyyy"],
+    "columns": {
+      "postingDate": "ДатаПров",
+      "amount": "Сумма",
+      "direction": "Д/К",
+      "counterpartyAccount": "КоррСчет",
+      "counterpartyInn": "КоррИНН",
+      "counterpartyName": "КоррНаим",
+      "documentNumber": "НомДок",
+      "purpose": "Назн"
+    }
+  },
+  "textFields": {
+    "inn": { "markers": ["ИНН"], "pattern": "\\d{9}|\\d{14}" },
+    "documentNumber": { "markers": ["№"], "pattern": "\\d[\\d/-]*" }
+  }
+}

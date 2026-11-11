@@ -7,6 +7,12 @@ public enum AdapterKind
     Bank = 1,
     Edo = 2,
     Accounting = 3,
+
+    /// <summary>
+    /// Bank statements imported from files (MT940, CSV) for banks without an API. Never planned or queued: data arrives
+    /// only when a file is imported; freshness is the time of the last import.
+    /// </summary>
+    File = 4,
 }
 
 public enum ConnectionStatus
@@ -22,9 +28,15 @@ public enum ConnectionStatus
 /// </summary>
 public class Connection : TenantEntity
 {
+    /// <summary>Source code of file import connections (<see cref="AdapterKind.File"/>); no adapter is registered for it.</summary>
+    public const string FileImportSourceCode = "file_import";
+
+    /// <summary>True for connections whose data is loaded by the sync queue (not file imports or accounting).</summary>
+    public bool IsSyncable => AdapterKind is AdapterKind.Bank or AdapterKind.Edo;
+
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>Adapter registry key, e.g. "kapitalbank", "didox", "fake_kapitalbank".</summary>
+    /// <summary>Adapter registry key, e.g. "kapitalbank", "didox", "fake_kapitalbank"; "file_import" for file connections.</summary>
     public string SourceCode { get; set; } = string.Empty;
 
     public AdapterKind AdapterKind { get; set; }

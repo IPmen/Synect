@@ -32,16 +32,10 @@ public sealed class BankSyncOptions
 public sealed class BankSyncService(
     ISynectDbContext db,
     IAdapterRegistry registry,
-    RawObjectStore rawStore,
-    CounterpartyStore counterparties,
+    BankLoadWriter writer,
     ICredentialProvider credentials,
     AdapterCallPolicy policy,
-    AnalyticsChangeSet changes,
-    CounterpartyMonthlyRefresher monthly,
-    ReconciliationService reconciliation,
-    AliasVolumeMonitor aliasMonitor,
     AttentionTrigger attention,
-    IOptions<ReconciliationOptions> reconciliationOptions,
     TimeProvider time,
     IOptions<BankSyncOptions> bankOptions,
     IOptions<CircuitBreakerOptions> breakerOptions,
@@ -97,7 +91,7 @@ public sealed class BankSyncService(
             records += accountInfos.Count;
             var accounts = await db.InTransactionAsync(async token =>
             {
-                var result = await UpsertAccountsAsync(connection, accountInfos, token);
+                var result = await writer.UpsertAccountsAsync(connection, accountInfos, token);
                 await db.SaveChangesAsync(token);
                 return result;
             }, ct);
@@ -125,10 +119,15 @@ public sealed class BankSyncService(
 
                     await db.InTransactionAsync(async token =>
                     {
-                        await UpsertTransactionsAsync(connection, account, dayTransactions.Transactions,
-                            dayClosed, adapter.Capabilities, token);
+                        var items = adapter.Capabilities.HasStableOperationId
+                            ? dayTransactions.Transactions
+                            : dayTransactions.Transactions.Select(i => i with
+                            {
+                                OperationId = SyntheticOperationId(account, i), IdSource = OperationIdSource.Synthetic,
+                            }).ToList();
+                        await writer.UpsertTransactionsAsync(connection, account, items, dayClosed, token);
                         if (balance is not null)
-                            await UpsertBalanceAsync(connection, account, balance, token);
+                            await writer.UpsertBalanceAsync(connection, account, balance, token);
                         await db.SaveChangesAsync(token);
                     }, ct);
                 }
@@ -138,13 +137,8 @@ public sealed class BankSyncService(
             {
                 var now = time.GetUtcNow();
                 if (explicitRange is null && rangeFrom is { } f && rangeTo is { } t) run.SetRange(f, t);
-                // Precomputed totals for exactly the (INN, month) pairs this load touched, atomically with success.
-                await monthly.RefreshAsync(changes.Keys, token);
-                // Reconciliation of exactly the INNs whose operations changed (whole history of each), atomically too.
-                if (reconciliationOptions.Value.RunAfterLoad)
-                    await reconciliation.ReconcileAsync(ReconciliationScope.ForInns(changes.Keys.Select(k => k.Inn)), token);
-                changes.Clear();
-                await aliasMonitor.CheckAsync(db, connection.TenantId, token);
+                // Monthly totals and reconciliation of exactly what this load touched, atomically with success.
+                await writer.CompleteAsync(connection, token);
                 run.Succeed(now, allDaysClosed, records);
                 connection.MarkSyncSucceeded(now);
                 await db.SaveChangesAsync(token);
@@ -193,166 +187,6 @@ public sealed class BankSyncService(
         if (capabilities.HistoryDepthDays is { } maxDepth && from < today.AddDays(-maxDepth + 1))
             from = today.AddDays(-maxDepth + 1);
         return (from, today);
-    }
-
-    private async Task<List<BankAccount>> UpsertAccountsAsync(
-        Connection connection, IReadOnlyList<BankAccountInfo> infos, CancellationToken ct)
-    {
-        var now = time.GetUtcNow();
-        await rawStore.UpsertAsync(connection, infos.Select(i => i.Raw).ToList(), now, ct);
-
-        var existing = await db.BankAccounts
-            .Where(a => a.ConnectionId == connection.Id)
-            .ToDictionaryAsync(a => a.AccountNumber, ct);
-
-        var result = new List<BankAccount>();
-        foreach (var info in infos.DistinctBy(i => i.AccountNumber))
-        {
-            if (!existing.TryGetValue(info.AccountNumber, out var account))
-            {
-                account = new BankAccount
-                {
-                    TenantId = connection.TenantId,
-                    ConnectionId = connection.Id,
-                    AccountNumber = info.AccountNumber,
-                    CreatedAt = now,
-                };
-                db.BankAccounts.Add(account);
-            }
-
-            if (account.Mfo != info.Mfo || account.Currency != info.Currency
-                || account.Name != info.Name || account.ExternalId != info.ExternalId)
-            {
-                account.Mfo = info.Mfo;
-                account.Currency = info.Currency;
-                account.Name = info.Name;
-                account.ExternalId = info.ExternalId;
-                account.UpdatedAt = now;
-            }
-            result.Add(account);
-        }
-        return result;
-    }
-
-    private async Task UpsertTransactionsAsync(
-        Connection connection,
-        BankAccount account,
-        IReadOnlyList<BankTransactionInfo> infos,
-        bool dayClosed,
-        BankAdapterCapabilities capabilities,
-        CancellationToken ct)
-    {
-        if (infos.Count == 0) return;
-        var now = time.GetUtcNow();
-
-        // Last occurrence wins when the bank repeats an operation in the same response.
-        var items = infos
-            .Select(i => capabilities.HasStableOperationId ? i : i with { OperationId = SyntheticOperationId(account, i) })
-            .GroupBy(i => i.OperationId)
-            .Select(g => g.Last())
-            .ToList();
-
-        var hashes = await rawStore.UpsertAsync(connection, items.Select(i => i.Raw).ToList(), now, ct);
-
-        var ids = items.Select(i => i.OperationId).ToList();
-        var existing = await db.BankTransactions
-            .Where(t => t.BankAccountId == account.Id && ids.Contains(t.OperationId))
-            .ToDictionaryAsync(t => t.OperationId, StringComparer.Ordinal, ct);
-
-        var names = new List<NameSighting>();
-        NameSighting Seen(BankTransactionInfo x) => new(x.CounterpartyInn, x.CounterpartyName, CounterpartyNameSource.Bank,
-            new DateTimeOffset(x.PostingDate.ToDateTime(TimeOnly.MinValue), bankOptions.Value.OperationalDayUtcOffset));
-        for (var i = 0; i < items.Count; i++)
-        {
-            var info = items[i];
-            var hash = hashes[i];
-            if (existing.TryGetValue(info.OperationId, out var tx))
-            {
-                var isFinal = tx.IsFinal || dayClosed;
-                if (tx.SourceHash == hash && tx.IsFinal == isFinal) continue;
-                // A changed operation counts its name again only when the name itself changed.
-                if (tx.CounterpartyInn != info.CounterpartyInn || tx.CounterpartyName != info.CounterpartyName) names.Add(Seen(info));
-                changes.Add(tx.CounterpartyInn, tx.PostingDate);
-                changes.Add(info.CounterpartyInn, info.PostingDate);
-                Apply(tx, info, account, hash, isFinal);
-                tx.UpdatedAt = now;
-                continue;
-            }
-
-            tx = new BankTransaction
-            {
-                TenantId = connection.TenantId,
-                ConnectionId = connection.Id,
-                BankAccountId = account.Id,
-                OperationId = info.OperationId,
-                CreatedAt = now,
-                UpdatedAt = now,
-            };
-            Apply(tx, info, account, hash, dayClosed);
-            db.BankTransactions.Add(tx);
-            changes.Add(info.CounterpartyInn, info.PostingDate);
-            names.Add(Seen(info));
-        }
-
-        await counterparties.UpsertAsync(connection.TenantId,
-            items.Select(i => (i.CounterpartyInn, i.CounterpartyName)), now, ct);
-        await counterparties.RecordNamesAsync(connection.TenantId, names, ct);
-    }
-
-    private static void Apply(BankTransaction tx, BankTransactionInfo info, BankAccount account, string hash, bool isFinal)
-    {
-        tx.Amount = info.Amount;
-        // An operation is in the currency of its account; the account currency comes from the bank's "val".
-        tx.Currency = string.IsNullOrEmpty(account.Currency) ? info.Currency : account.Currency;
-        tx.Direction = info.Direction;
-        tx.CounterpartyInn = info.CounterpartyInn;
-        tx.CounterpartyName = info.CounterpartyName;
-        tx.CounterpartyAccount = info.CounterpartyAccount;
-        tx.CounterpartyMfo = info.CounterpartyMfo;
-        tx.Purpose = info.Purpose;
-        tx.PurposeCode = info.PurposeCode;
-        tx.DocumentNumber = info.DocumentNumber;
-        tx.PostingDate = info.PostingDate;
-        tx.ValueDate = info.ValueDate;
-        tx.SourceState = info.SourceState;
-        tx.HasError = info.HasError;
-        tx.ErrorCode = info.ErrorCode;
-        tx.ErrorMessage = info.ErrorMessage;
-        tx.SourceHash = hash;
-        tx.IsFinal = isFinal;
-    }
-
-    private async Task UpsertBalanceAsync(
-        Connection connection, BankAccount account, BankBalanceInfo info, CancellationToken ct)
-    {
-        var now = time.GetUtcNow();
-        await rawStore.UpsertAsync(connection, [info.Raw], now, ct);
-
-        var balance = await db.BankDailyBalances
-            .SingleOrDefaultAsync(b => b.BankAccountId == account.Id && b.Date == info.Day, ct);
-        if (balance is null)
-        {
-            balance = new BankDailyBalance
-            {
-                TenantId = connection.TenantId,
-                BankAccountId = account.Id,
-                Date = info.Day,
-            };
-            db.BankDailyBalances.Add(balance);
-        }
-        else if (balance.OpeningBalance == info.OpeningBalance && balance.ClosingBalance == info.ClosingBalance
-                 && balance.TotalDebit == info.TotalDebit && balance.TotalCredit == info.TotalCredit
-                 && balance.IsDayClosed == info.IsDayClosed)
-        {
-            return;
-        }
-
-        balance.OpeningBalance = info.OpeningBalance;
-        balance.ClosingBalance = info.ClosingBalance;
-        balance.TotalDebit = info.TotalDebit;
-        balance.TotalCredit = info.TotalCredit;
-        balance.IsDayClosed = info.IsDayClosed;
-        balance.UpdatedAt = now;
     }
 
     /// <summary>Fallback id for banks without stable operation ids: hash of the identifying fields.</summary>

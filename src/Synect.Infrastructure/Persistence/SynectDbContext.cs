@@ -49,6 +49,7 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
     public DbSet<ReconciliationMatchDecision> ReconciliationMatchDecisions => Set<ReconciliationMatchDecision>();
     public DbSet<AttentionItem> AttentionItems => Set<AttentionItem>();
     public DbSet<AttentionItemEvent> AttentionItemEvents => Set<AttentionItemEvent>();
+    public DbSet<StatementImport> StatementImports => Set<StatementImport>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -76,6 +77,7 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
         modelBuilder.Entity<ReconciliationFinding>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<AttentionItem>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<AttentionItemEvent>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<StatementImport>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)

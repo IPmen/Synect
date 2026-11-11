@@ -480,3 +480,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Real bank statements (stage 6): never committed. Anonymize first (docs/import-profiles.md).
+samples-private/

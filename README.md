@@ -1,20 +1,20 @@
 # Synect
 
-Loads data from Didox, banks and 1C into PostgreSQL on a schedule (or on demand); REST and MCP tools read only this
-database and never call external systems.
+Loads data from Didox, banks and 1C into PostgreSQL on a schedule (or on demand), and bank statement files (MT940, CSV)
+on import; REST and MCP tools read only this database and never call external systems.
 
 ## Layout
 
 | Project | Purpose |
 |---|---|
-| `Synect.Domain` | Entities: tenants, connections (states), sync runs, sync jobs, connection secrets, raw objects, bank, EDO, counterparties, monthly counterparty totals, counterparty name spellings (aliases), API keys, tool audit log, reconciliation runs / matches / match items / findings, attention items and their events; shared transliteration (`Text/`) and currency codes (`Common/IsoCurrency`) |
-| `Synect.Application` | Adapter contracts and registry, sync services, queue (planner, dispatcher, requests), rate limiting and retries, secrets and credentials contracts, freshness query, read-only analytics (`Analytics/`), reconciliation of payments with documents (`Reconciliation/`), attention rules and inbox (`Attention/`), API keys and tool audit (`Access/`) |
-| `Synect.Infrastructure` | EF Core + Npgsql, migrations, RLS interceptor, Data Protection secret store, Kapital Bank / Didox mappers, session and token caches, fake adapters |
+| `Synect.Domain` | Entities: tenants, connections (states; kinds Bank, Edo, File), sync runs, sync jobs, connection secrets, raw objects, bank, EDO, counterparties, monthly counterparty totals, counterparty name spellings (aliases), API keys, tool audit log, reconciliation runs / matches / match items / findings, attention items and their events, statement imports; shared transliteration (`Text/`) and currency codes (`Common/IsoCurrency`) |
+| `Synect.Application` | Adapter contracts and registry, sync services and the shared bank writer (`Sync/BankLoadWriter`), queue (planner, dispatcher, requests), rate limiting and retries, secrets and credentials contracts, freshness query, read-only analytics (`Analytics/`), reconciliation of payments with documents (`Reconciliation/`), attention rules and inbox (`Attention/`), API keys and tool audit (`Access/`), bank statement files: parsers, profiles, import, anonymizer (`Statements/`) |
+| `Synect.Infrastructure` | EF Core + Npgsql, migrations, RLS interceptor, Data Protection secret store, Kapital Bank / Didox mappers, session and token caches, fake adapters, synthetic statement generator |
 | `Synect.Api` | HTTP host: `/health` and the MCP endpoint `/mcp` (Streamable HTTP, API key) |
 | `Synect.Mcp` | MCP tools over `Analytics`, `Reconciliation`, `Attention`, `ISourceFreshnessQuery` and `SyncRequestService`; API key authentication, HTTP and tool limits, tool call journal. No reference to Infrastructure, adapters, queue internals or secrets (enforced by a test) |
 | `Synect.Worker` | Hosts the sync queue (`SyncWorker`) |
-| `Synect.DevTools` | Development only: demo/load data, `query`, `bench`, `explain`, API keys, reconciliation (`reconcile`, `rebuild-reconciliation`, `reconcile-eval`, `reconcile-bench`), attention (`attention`, `attention-eval`, `attention-bench`), `normalize-currency`, test database cleanup (not referenced by Api or Worker) |
-| `Synect.Tests` | xUnit v3 tests (SQLite temporary file + local PostgreSQL) |
+| `Synect.DevTools` | Development only: demo/load data, `query`, `bench`, `explain`, API keys, reconciliation (`reconcile`, `rebuild-reconciliation`, `reconcile-eval`, `reconcile-bench`), attention (`attention`, `attention-eval`, `attention-bench`), statement files (`create-file-connection`, `import-statement`, `list-imports`, `anonymize-statement`, `statement-bench`), `normalize-currency`, test database cleanup (not referenced by Api or Worker) |
+| `Synect.Tests` | xUnit v3 tests (SQLite temporary file + local PostgreSQL); synthetic statement files in `Fixtures/Statements` |
 
 ## Local database (no Docker)
 
@@ -49,7 +49,9 @@ Own queue on PostgreSQL (`sync_jobs`) run by `SyncDispatcher` in the Worker:
 - Schedule: nightly load inside `Sync:Schedule:NightlyWindowStart..End` (local time, UTC+5); the start is shifted by a
   deterministic hash of the connection id. EDO connections also refresh every `EdoDaytimeRefreshHours` during the day.
 - "Refresh now": `SyncRequestService.RequestSyncAsync(connectionId)` queues a job and returns at once:
-  `Queued`, `AlreadyQueued`, `AlreadyRunning`, `TooSoon` (`ManualRequestMinInterval`) or `ConnectionNotActive`.
+  `Queued`, `AlreadyQueued`, `AlreadyRunning`, `TooSoon` (`ManualRequestMinInterval`), `ConnectionNotActive` or
+  `NotLoadable` (a file import connection: its data comes only from imported statements).
+- File import connections (`adapter_kind = 'File'`) are never planned, queued or refreshed by `request_data_refresh`.
 - Connection states: Active, NeedsAttention, Disabled (with reason and time of change). After `Sync:CircuitBreaker:FailureThreshold`
   failed loads in a row, or at once on an authentication error, a connection goes to NeedsAttention and is no longer
   scheduled. `ReactivateAsync(connectionId)` tests the connection and, on success, makes it Active and queues a load.
@@ -334,8 +336,8 @@ the list and the accountant marks items. There are no external notifications (Te
 
 | Table | Content |
 |---|---|
-| `attention_items` | `rule_code`, `category` (`Connection`, `Bank`, `Reconciliation`, `Documents`), `severity` (`Critical`, `High`, `Medium`, `Low`), `title` and `body` (short English text; the model translates it), `details` jsonb (identifiers and amounts only: masked accounts, cleaned document numbers, no names or purposes), `entity_kind` / `entity_ref` (`connection`, `bank_account`, `transaction`, `document`, `tenant` for grouped items), `dedup_key` (unique per client among non-resolved items, partial unique index), `member_keys` (cases of a grouped item), `status` (`New`, `Seen`, `Snoozed`, `Dismissed`, `Resolved`), `snoozed_until`, `first_seen_at`, `last_seen_at`, `resolved_at`, `decided_by_key`, `comment`, `updated_at` |
-| `attention_item_events` | append-only history: `item_id`, `kind` (`Created`, `Reopened`, `Seen`, `Snoozed`, `Dismissed`, `AutoResolved`), `at`, `api_key_id` (null for the platform), `comment` |
+| `attention_items` | `rule_code`, `category` (`Connection`, `Bank`, `Reconciliation`, `Documents`), `severity` (`Critical`, `High`, `Medium`, `Low`), `title` and `body` (short English text; the model translates it), `details` jsonb (identifiers and amounts only: masked accounts, cleaned document numbers, no names or purposes), `entity_kind` / `entity_ref` (`connection`, `bank_account`, `transaction`, `document`, `tenant` for grouped items), `dedup_key` (unique per client among non-resolved, non-archived items, partial unique index), `member_keys` (cases of a grouped item), `status` (`New`, `Seen`, `Snoozed`, `Dismissed`, `Resolved`, `Archived`), `snoozed_until`, `first_seen_at`, `last_seen_at`, `resolved_at`, `decided_by_key`, `comment`, `updated_at` |
+| `attention_item_events` | append-only history: `item_id`, `kind` (`Created`, `Reopened`, `Seen`, `Snoozed`, `Dismissed`, `AutoResolved`, `Archived`), `at`, `api_key_id` (null for the platform), `comment` |
 
 **Life cycle.** A case is identified by its `dedup_key` = rule code + significant parameters (for single cases the ids and
 the amount, e.g. `reconciliation.possible_duplicate:<payment>:<earlier payment>:<amount>`; for grouped items
@@ -345,8 +347,11 @@ opens again as `New` (event `Reopened`). A `Snoozed` item counts as `New` in lis
 passed and is stored as `New` (event `Reopened`) by the next evaluation if the condition still holds. A `Dismissed`
 item stays dismissed (it is neither resolved nor reopened by the platform) until its significant content changes: a
 different amount gives a different key, hence a new item; a dismissed grouped item opens again only when a case appears
-that was not in it when it was dismissed. Evaluations and person decisions of a client are serialized with a PostgreSQL
-advisory lock.
+that was not in it when it was dismissed. A `Dismissed` item whose condition has not been found for
+`Attention:DismissedRetentionDays` (90, counted from `last_seen_at`) becomes `Archived` (event `Archived`, stage 6): it
+leaves the default lists and the counters, its events stay, a person cannot change it, and it opens again as `New` on the
+same row (event `Reopened`) if the condition comes back. Evaluations and person decisions of a client are serialized with
+a PostgreSQL advisory lock.
 
 **When the rules run** (`AttentionTrigger`, its own DI scope and transaction; a failed evaluation is logged and never fails
 the load): after a successful bank load (connection, bank and reconciliation rules), after a successful Didox load
@@ -363,8 +368,8 @@ one grouped item with `count`, `totals` per currency and at most `MaxListedEntri
 | Rule (`rule_code`) | Severity | Condition |
 |---|---|---|
 | `connection.needs_attention` | Critical | the connection is in `NeedsAttention` (authentication failure or `Sync:CircuitBreaker:FailureThreshold` failed loads) |
-| `connection.stale_data` | High | an Active connection's last successful load (or creation, if never loaded) is older than `StaleAfter` (36 h) |
-| `connection.incomplete_load` | High | bank: a stored day older than yesterday is still not closed by the bank (today and yesterday are open in normal operation); Didox: the last successful load is incomplete (page limit) |
+| `connection.stale_data` | High | an Active connection's last successful load (or creation, if never loaded) is older than `StaleAfter` (36 h); for file import connections the last import is older than `FileStaleAfter` (7 days) |
+| `connection.incomplete_load` | High | bank and file import: a stored day older than yesterday is still not closed (today and yesterday are open in normal operation; imported days are always closed); Didox: the last successful load is incomplete (page limit) |
 | `bank.balance_mismatch` | High | per account, closed days of the last `BalanceCheckDays` (60): opening + credit - debit != closing, or the day totals differ from the stored error-free operations (the day part of `check_balance_integrity`; carry-over between days and gaps stay in that tool) |
 | `bank.failed_operations` | Medium | operations with `has_error` posted in the last `FailedOperationsDays` (7) (grouped) |
 | `bank.idle_accounts` | Low | no error-free movement for more than `IdleAccountDays` (90), counted from the account's first appearance if it never moved (grouped) |
@@ -380,7 +385,7 @@ NeedsAttention and Disabled connections get no stale or incomplete item (the Cri
 off on purpose). Bank-amount rules carry `details.note` about the unconfirmed amount unit.
 
 **MCP** (common answer rules: freshness, notes, masked accounts, untrusted text wrapped):
-`get_attention_items` (filters `severity`, `category`, `status` as comma separated lists, default `new,seen`; `limit`,
+`get_attention_items` (filters `severity`, `category`, `status` as comma separated lists including `archived`, default `new,seen`; `limit`,
 `cursor`; sorted by severity, then the newest case), `get_attention_summary` (open = new + seen by severity and category,
 new by severity, snoozed, dismissed, last evaluation time; a note when there are new critical or high items) and
 `update_attention_item` (scope `review`: `seen`, `snooze` with `until` = local date or `days` 1-90, `dismiss` with a
@@ -400,6 +405,56 @@ to be created; tests pin the result.
 rule median 58 ms (first, cold run 674 ms); after a bank load 24 ms, after a Didox load 42 ms. With
 `Attention__LargePaymentMinor=1000000000` (17 211 large unmatched payments in one grouped item) the full evaluation takes
 about 200 ms (750 ms cold). Target: under 2 s.
+
+## Bank statement files (stage 6)
+
+Banks without an API, and reconciliation checks on real statements: statement files are imported into the same model and
+through the same writer as the bank API load (`Sync/BankLoadWriter`: raw layer, operations by (account, operation id), day
+balances, counterparties and name spellings, monthly totals and reconciliation of the touched INNs), then the attention
+rules run. Analytics, reconciliation, attention and MCP see imported data like any other bank data. Formats, profiles,
+duplicate handling, balance check and anonymization: [docs/import-profiles.md](docs/import-profiles.md).
+
+**Model.** A file import connection has `adapter_kind = 'File'`, `source_code = 'file_import'`, settings `bank_name` and
+`default_profile`; it has the usual state, its freshness is the time of the last import (`last_successful_sync_at`), and
+every import writes a `sync_runs` row (result, record count, date range, error; complete). It is never queued. Migration
+`StatementImports`:
+
+| Table / column | Content |
+|---|---|
+| `statement_imports` | `connection_id`, `sync_run_id`, `file_name`, `file_sha256` (unique per client: a file is imported once), `format` (`Mt940`, `Csv`), `profile`, `imported_at`, `imported_by_key` (API key, null for DevTools), `account` (comma separated when several), `period_from`, `period_to`, `transactions_total`, `transactions_new`, `transactions_duplicate`, `rows_rejected`, `warning_count`, `balance_check` (`Passed`, `Failed`, `Skipped`). Forced RLS, `tenant_id` first in every index |
+| `bank_transactions.id_source` | `Bank` (bank id), `Synthetic` (API without stable ids, `syn:`), `File` (id given by the file), `FileHash` (computed, less reliable) |
+| `bank_transactions.details` | jsonb: `weak_operation_id`, `reversal`, `transaction_type`, `format` for imported rows |
+
+**Code.** `Synect.Application/Statements`: `IStatementParser` (`Mt940Parser`, `CsvStatementParser`; pure, no database,
+enforced by a test), `StatementProfile` / `StatementProfiles` (built-in `generic_mt940`, `kapitalbank_mt940_assumed` -
+**assumed, not verified** -, `generic_csv`; JSON profiles), encoding detection (UTF-8 with or without BOM, Windows-1251,
+CP866), strict decimal-to-tiyin conversion, `BankStatementImportService` (stream, format, profile, `Force`,
+`CreateAccounts`, `DryRun`, `ImportedByKey`; one transaction per file; ready for a future HTTP API, which is not built
+yet: it needs its own authentication), `FileConnectionService`, `StatementAnonymizer`.
+
+**Write path.** On PostgreSQL `BankLoadWriter` writes operations and raw records in bulk
+(`INSERT ... SELECT FROM unnest(...) ON CONFLICT`, existing ids and raw hashes read once per batch), all statements of an
+account at once, one `SaveChanges` per file, totals / reconciliation / attention once per import. Elsewhere (SQLite tests)
+it uses EF entities; `BulkWrites = false` forces that path, and a test checks that both paths store identical data. The
+bank API load uses the same writer. Statement imports leave unchanged raw records untouched (no `last_seen_at` refresh).
+
+**Timing** (`statement-bench --sizes ... --timeout 120`, local PostgreSQL 18 with default settings, a database already
+holding about 300 000 operations; synthetic MT940, one statement per day, 300 counterparties; new tenant per size).
+Target: 20 000 operations under 10 s, a repeated import under 2 s.
+
+| Operations | Before (EF, one SaveChanges per statement) | After: first import | After: same file again | After: same operations, other file |
+|---|---|---|---|---|
+| 500 | 1.67 s, 185 round trips | 1.05 s, 44 | 0.01 s (SHA-256) | 0.09 s |
+| 2 000 | 5.13 s, 635 round trips | 0.77 s, 45 | 0.00 s | 0.19 s |
+| 5 000 | not measured | 2.66 s, 53 | 0.00 s | 0.40 s |
+| 10 000 | not measured | 4.46 s, 59 | 0.00 s | 0.52 s |
+| 20 000 | stopped after 38 min | 7.97-8.14 s, 73 | 0.01 s | 1.03-1.12 s |
+
+Before, time grew faster than the number of operations: `SaveChanges` after every statement of a file made EF scan every
+entity tracked so far (quadratic). 20 000 operations after the fix, by phase: bulk insert of operations 2.8 s, reconciliation
+1.7 s, raw layer 1.2 s, monthly totals 0.7 s, parse 0.6 s, plan 0.4 s, attention rules 0.3 s. The same bulk INSERT takes
+about 1 s on the server; the rest of the variance (up to 2 s between equal runs) is I/O of a PostgreSQL with default
+`shared_buffers` (128 MB) and about 200 MB of indexes on the two tables.
 
 ## Developer tools
 
@@ -424,6 +479,11 @@ dotnet run --project src/Synect.DevTools -- reconcile-bench --tenant "Load test"
 dotnet run --project src/Synect.DevTools -- attention --tenant "Demo client 1"
 dotnet run --project src/Synect.DevTools -- attention-eval
 dotnet run --project src/Synect.DevTools -- attention-bench --tenant "Load test" --runs 7
+dotnet run --project src/Synect.DevTools -- create-file-connection --tenant "Demo client 1" --bank-name "Test bank" [--profile generic_mt940]
+dotnet run --project src/Synect.DevTools -- import-statement --tenant "Demo client 1" --connection "Test bank (file import)" --file <path> --format mt940|csv [--profile <name|path.json>] [--force] [--create-accounts] [--dry-run]
+dotnet run --project src/Synect.DevTools -- list-imports --tenant "Demo client 1"
+dotnet run --project src/Synect.DevTools -- anonymize-statement --file <path> --format mt940|csv [--profile ...] --out <path>
+dotnet run --project src/Synect.DevTools -- statement-bench [--operations 20000] [--days 250]
 ```
 
 Data is loaded through the real sync services and the fake adapters. Timings are measured by `bench`, never asserted in tests.
@@ -442,7 +502,7 @@ cached in memory per connection.
 dotnet test --solution Synect.slnx
 ```
 
-PostgreSQL tests (migrations, RLS, queue, secrets, analytics, reconciliation, attention, MCP) create and drop a temporary database and role
+PostgreSQL tests (migrations, RLS, queue, secrets, analytics, reconciliation, attention, statement imports, MCP) create and drop a temporary database and role
 (`synect_test_*`, `synect_rls_*`; the API key lookup test also a `synect_own_*` owner role). `test-db-leftovers`
 lists anything left after an interrupted run (`--drop` removes it). MCP tests run the real `Synect.Api` in memory
 (`WebApplicationFactory`) and call it with the MCP SDK client over Streamable HTTP. They need a
@@ -519,8 +579,15 @@ timeout, so a genuinely slow query still fails.
 | `Mcp:RateLimit:MaxConcurrentPerTenant` | 4 | Tool calls running at once per tenant. |
 | `Mcp:Notes:Bank` / `Documents` / `Counterparties` | see `McpOptions` | Warnings added to `notes` of the matching tools. |
 
-All money is stored as `long` in minor units.
+| `Attention:*` | see "Attention inbox" | Rule thresholds (assumptions), `GroupAbove` 5, `MaxListedEntries` 20, `PeriodicInterval` 1 h, `ReminderInterval` 30 min, `MaxSnoozeDays` 90, `Enabled`. |
+| `Attention:DismissedRetentionDays` | 90 | A dismissed item whose condition has been gone this long becomes `Archived`. |
+| `Attention:FileStaleAfter` | 7 days | `connection.stale_data` threshold of file import connections. **Assumption.** |
+| `Statements:MaxFileBytes` | 50 MB | Largest statement file. |
+| `Statements:PreviewRows` | 5 | Operations shown by a dry run. |
+| `Statements:MaxPeriodDays` | 3700 | Longest period of one statement. |
+
+All money is stored as `long` in minor units. Statement files hold decimal sum: imports multiply by 100 exactly and reject
+rows with fractions of a tiyin; the Kapital Bank API amount unit (`Adapters:KapitalBank:AmountUnit`) is unrelated.
 
 Bank operations with `err != 0` are stored with `has_error = true`, `error_code`, `error_message`; balances and
 reconciliation use `BankTransactionQueries.WithoutErrors()`.
-| `Attention:*` | see "Attention inbox" | Rule thresholds (assumptions), `GroupAbove` 5, `MaxListedEntries` 20, `PeriodicInterval` 1 h, `ReminderInterval` 30 min, `MaxSnoozeDays` 90, `Enabled`. |

@@ -148,7 +148,7 @@ internal static class AttentionRuleSet
     private static Dictionary<string, object?> ConnectionEntry(Connection c) => new()
     {
         ["connection_id"] = c.Id,
-        ["kind"] = c.AdapterKind == AdapterKind.Edo ? "Didox" : c.AdapterKind.ToString().ToLowerInvariant(),
+        ["kind"] = c.AdapterKind switch { AdapterKind.Edo => "Didox", AdapterKind.File => "file_import", _ => c.AdapterKind.ToString().ToLowerInvariant() },
         ["source"] = c.SourceCode,
         ["status"] = c.Status.ToString(),
         ["status_changed_at"] = c.StatusChangedAt,
@@ -165,14 +165,15 @@ internal static class AttentionRuleSet
     /// <summary>Active connections only: a NeedsAttention connection already has a Critical item, a Disabled one is off on purpose.</summary>
     private static async Task<List<Finding>> StaleAsync(RuleContext c, CancellationToken ct)
     {
-        var limit = c.Now - c.Options.StaleAfter;
+        // File import connections get data only when someone imports a statement: their own, longer threshold.
+        TimeSpan Threshold(Connection x) => x.AdapterKind == AdapterKind.File ? c.Options.FileStaleAfter : c.Options.StaleAfter;
         var rows = await c.Db.Connections.AsNoTracking().Where(x => x.Status == ConnectionStatus.Active).OrderBy(x => x.Id).ToListAsync(ct);
-        return rows.Where(x => (x.LastSuccessfulSyncAt ?? x.CreatedAt) < limit)
+        return rows.Where(x => (x.LastSuccessfulSyncAt ?? x.CreatedAt) < c.Now - Threshold(x))
             .Select(x =>
             {
                 var entry = ConnectionEntry(x);
                 entry["hours_since_last_load"] = x.LastSuccessfulSyncAt is { } at ? Math.Round((c.Now - at).TotalHours, 1) : null;
-                entry["threshold_hours"] = c.Options.StaleAfter.TotalHours;
+                entry["threshold_hours"] = Threshold(x).TotalHours;
                 return new Finding(x.Id.ToString(), "connection", x.Id.ToString(), entry);
             }).ToList();
     }
@@ -185,7 +186,8 @@ internal static class AttentionRuleSet
     {
         var connections = await c.Db.Connections.AsNoTracking().Where(x => x.Status == ConnectionStatus.Active).OrderBy(x => x.Id).ToListAsync(ct);
         var result = new List<Finding>();
-        var bank = connections.Where(x => x.AdapterKind == AdapterKind.Bank).Select(x => x.Id).ToList();
+        // File imports store closed days only, so they are checked like bank connections.
+        var bank = connections.Where(x => x.AdapterKind is AdapterKind.Bank or AdapterKind.File).Select(x => x.Id).ToList();
         if (bank.Count > 0)
         {
             var before = c.Today.AddDays(-1);
@@ -204,7 +206,7 @@ internal static class AttentionRuleSet
                 result.Add(new Finding(g.Key.ToString(), "connection", g.Key.ToString(), entry, days.Select(d => d.ToString("O")).ToList()));
             }
         }
-        foreach (var x in connections.Where(x => x.AdapterKind != AdapterKind.Bank))
+        foreach (var x in connections.Where(x => x.AdapterKind is not (AdapterKind.Bank or AdapterKind.File)))
         {
             var last = await c.Db.SyncRuns.AsNoTracking()
                 .Where(r => r.ConnectionId == x.Id && r.Result == SyncRunResult.Succeeded)

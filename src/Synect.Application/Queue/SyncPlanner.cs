@@ -16,7 +16,7 @@ public sealed class SyncPlanner(ISynectDbContext db, SyncJobQueue queue, SyncSch
         var now = time.GetUtcNow();
         var queued = 0;
         var connections = await db.Connections
-            .Where(c => c.Status == ConnectionStatus.Active && c.AdapterKind != AdapterKind.Accounting)
+            .Where(c => c.Status == ConnectionStatus.Active && (c.AdapterKind == AdapterKind.Bank || c.AdapterKind == AdapterKind.Edo))
             .ToListAsync(token);
 
         foreach (var connection in connections)

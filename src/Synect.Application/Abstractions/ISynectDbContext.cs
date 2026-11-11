@@ -43,6 +43,7 @@ public interface ISynectDbContext
     DbSet<ReconciliationMatchDecision> ReconciliationMatchDecisions { get; }
     DbSet<AttentionItem> AttentionItems { get; }
     DbSet<AttentionItemEvent> AttentionItemEvents { get; }
+    DbSet<StatementImport> StatementImports { get; }
 
     DatabaseFacade Database { get; }
     ChangeTracker ChangeTracker { get; }

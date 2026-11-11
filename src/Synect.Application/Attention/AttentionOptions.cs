@@ -61,6 +61,15 @@ public sealed class AttentionOptions
     /// <summary>The "N new items need attention" note is added at most once per API key in this interval.</summary>
     public TimeSpan ReminderInterval { get; set; } = TimeSpan.FromMinutes(30);
 
+    /// <summary>
+    /// A Dismissed item whose condition has not been found for this many days becomes Archived (hidden from the default
+    /// lists; its history stays).
+    /// </summary>
+    public int DismissedRetentionDays { get; set; } = 90;
+
+    /// <summary>connection.stale_data for file import connections: the last import is older than this.</summary>
+    public TimeSpan FileStaleAfter { get; set; } = TimeSpan.FromDays(7);
+
     /// <summary>Longest snooze.</summary>
     public int MaxSnoozeDays { get; set; } = 90;
 }

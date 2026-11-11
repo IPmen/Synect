@@ -121,6 +121,8 @@ internal sealed class BankTransactionConfiguration : IEntityTypeConfiguration<Ba
         b.Property(e => e.SourceState).HasMaxLength(32);
         b.Property(e => e.ErrorMessage).HasMaxLength(1000);
         b.Property(e => e.SourceHash).HasMaxLength(64).IsFixedLength();
+        b.Property(e => e.IdSource).HasConversion<string>().HasMaxLength(16).HasDefaultValue(OperationIdSource.Bank).HasSentinel((OperationIdSource)0);
+        b.Property(e => e.Details).HasColumnType(TenantEntityConfiguration.Jsonb);
         b.HasOne<Connection>().WithMany().HasForeignKey(e => new { e.TenantId, e.ConnectionId }).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<BankAccount>().WithMany().HasForeignKey(e => new { e.TenantId, e.BankAccountId }).OnDelete(DeleteBehavior.Restrict);
         // Idempotency key: the same bank operation is stored once per account.
@@ -396,10 +398,10 @@ internal sealed class AttentionItemConfiguration : IEntityTypeConfiguration<Atte
         b.Property(e => e.EntityRef).HasMaxLength(64);
         b.Property(e => e.DedupKey).HasMaxLength(256);
         b.Property(e => e.Comment).HasMaxLength(AttentionItem.MaxCommentLength);
-        // One open (non-resolved) item per case; resolved rows are reused when the case comes back.
+        // One open (non-resolved, non-archived) item per case; resolved and archived rows are reused when the case comes back.
         b.HasIndex(e => new { e.TenantId, e.DedupKey })
             .IsUnique()
-            .HasFilter("status <> 'Resolved'")
+            .HasFilter("status NOT IN ('Resolved', 'Archived')")
             .HasDatabaseName("ux_attention_items_dedup_open");
         // Lookup of resolved rows to reopen, and the rule-by-rule evaluation.
         b.HasIndex(e => new { e.TenantId, e.RuleCode, e.Status });
@@ -418,5 +420,25 @@ internal sealed class AttentionItemEventConfiguration : IEntityTypeConfiguration
         b.Property(e => e.Comment).HasMaxLength(AttentionItem.MaxCommentLength);
         b.HasOne<AttentionItem>().WithMany().HasForeignKey(e => new { e.TenantId, e.ItemId }).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(e => new { e.TenantId, e.ItemId, e.At });
+    }
+}
+
+internal sealed class StatementImportConfiguration : IEntityTypeConfiguration<StatementImport>
+{
+    public void Configure(EntityTypeBuilder<StatementImport> b)
+    {
+        b.ToTable("statement_imports");
+        b.ConfigureTenantEntity();
+        b.Property(e => e.FileName).HasMaxLength(256);
+        b.Property(e => e.FileSha256).HasMaxLength(64).IsFixedLength();
+        b.Property(e => e.Format).HasConversion<string>().HasMaxLength(16);
+        b.Property(e => e.Profile).HasMaxLength(128);
+        b.Property(e => e.Account).HasMaxLength(StatementImport.MaxAccountLength);
+        b.Property(e => e.BalanceCheck).HasConversion<string>().HasMaxLength(16);
+        b.HasOne<Connection>().WithMany().HasForeignKey(e => new { e.TenantId, e.ConnectionId }).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<SyncRun>().WithMany().HasForeignKey(e => new { e.TenantId, e.SyncRunId }).OnDelete(DeleteBehavior.Restrict);
+        // The same file is imported once per tenant.
+        b.HasIndex(e => new { e.TenantId, e.FileSha256 }).IsUnique();
+        b.HasIndex(e => new { e.TenantId, e.ConnectionId, e.ImportedAt });
     }
 }

@@ -1730,3 +1730,178 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    DROP INDEX ux_attention_items_dedup_open;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    ALTER TABLE bank_transactions ADD details jsonb;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    ALTER TABLE bank_transactions ADD id_source character varying(16) NOT NULL DEFAULT 'Bank';
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    CREATE TABLE statement_imports (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        connection_id uuid NOT NULL,
+        sync_run_id uuid,
+        file_name character varying(256) NOT NULL,
+        file_sha256 character(64) NOT NULL,
+        format character varying(16) NOT NULL,
+        profile character varying(128) NOT NULL,
+        imported_at timestamp with time zone NOT NULL,
+        imported_by_key uuid,
+        account character varying(512) NOT NULL,
+        period_from date NOT NULL,
+        period_to date NOT NULL,
+        transactions_total integer NOT NULL,
+        transactions_new integer NOT NULL,
+        transactions_duplicate integer NOT NULL,
+        rows_rejected integer NOT NULL,
+        warning_count integer NOT NULL,
+        balance_check character varying(16) NOT NULL,
+        CONSTRAINT pk_statement_imports PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_statement_imports_connections_tenant_id_connection_id FOREIGN KEY (tenant_id, connection_id) REFERENCES connections (tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_statement_imports_sync_runs_tenant_id_sync_run_id FOREIGN KEY (tenant_id, sync_run_id) REFERENCES sync_runs (tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_statement_imports_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    CREATE UNIQUE INDEX ux_attention_items_dedup_open ON attention_items (tenant_id, dedup_key) WHERE status NOT IN ('Resolved', 'Archived');
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    CREATE INDEX ix_statement_imports_tenant_id_connection_id_imported_at ON statement_imports (tenant_id, connection_id, imported_at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    CREATE UNIQUE INDEX ix_statement_imports_tenant_id_file_sha256 ON statement_imports (tenant_id, file_sha256);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    CREATE INDEX ix_statement_imports_tenant_id_sync_run_id ON statement_imports (tenant_id, sync_run_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    ALTER TABLE statement_imports ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    ALTER TABLE statement_imports FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    CREATE POLICY tenant_isolation ON statement_imports USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    ALTER TABLE statement_imports ADD CONSTRAINT ck_statement_imports_format CHECK (format IN ('Mt940', 'Csv'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    ALTER TABLE statement_imports ADD CONSTRAINT ck_statement_imports_balance_check CHECK (balance_check IN ('Passed', 'Failed', 'Skipped'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    ALTER TABLE statement_imports ADD CONSTRAINT ck_statement_imports_counts CHECK (transactions_total >= 0 AND transactions_new >= 0 AND transactions_duplicate >= 0 AND rows_rejected >= 0 AND period_from <= period_to);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    UPDATE bank_transactions SET id_source = 'Synthetic' WHERE operation_id LIKE 'syn:%';
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    ALTER TABLE bank_transactions ADD CONSTRAINT ck_bank_transactions_id_source CHECK (id_source IN ('Bank', 'Synthetic', 'File', 'FileHash'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    ALTER TABLE attention_items DROP CONSTRAINT ck_attention_items_status;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    ALTER TABLE attention_items ADD CONSTRAINT ck_attention_items_status CHECK (status IN ('New', 'Seen', 'Snoozed', 'Dismissed', 'Resolved', 'Archived'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    ALTER TABLE attention_item_events DROP CONSTRAINT ck_attention_item_events_kind;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    ALTER TABLE attention_item_events ADD CONSTRAINT ck_attention_item_events_kind CHECK (kind IN ('Created', 'Reopened', 'Seen', 'Snoozed', 'Dismissed', 'AutoResolved', 'Archived'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261110143731_StatementImports') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261110143731_StatementImports', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+

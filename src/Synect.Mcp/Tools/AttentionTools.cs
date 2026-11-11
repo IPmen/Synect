@@ -18,8 +18,8 @@ internal static class AttentionText
 {
     public const string About =
         " Attention items are findings of Synect's own rules over the loaded bank and Didox data (thresholds in Attention:*, assumptions still to be" +
-        " checked on real data); severity is critical, high, medium or low; status is new, seen, snoozed, dismissed or resolved (resolved = the" +
-        " condition is no longer found). Describe each item to the user as a POSSIBLE discrepancy with its basis (body and details), never as a" +
+        " checked on real data); severity is critical, high, medium or low; status is new, seen, snoozed, dismissed, resolved (the" +
+        " condition is no longer found) or archived (dismissed long ago and its condition has been gone since). Describe each item to the user as a POSSIBLE discrepancy with its basis (body and details), never as a" +
         " confirmed violation, and translate title and body into the user's language.";
 }
 
@@ -46,7 +46,7 @@ public sealed class AttentionTools(
     public Task<CallToolResult> GetAttentionItems(
         [Description("Optional severities, comma separated: critical, high, medium, low.")] string? severity = null,
         [Description("Optional categories, comma separated: connection, bank, reconciliation, documents.")] string? category = null,
-        [Description("Optional statuses, comma separated: new, seen, snoozed, dismissed, resolved (default: new,seen).")] string? status = null,
+        [Description("Optional statuses, comma separated: new, seen, snoozed, dismissed, resolved, archived (default: new,seen).")] string? status = null,
         [Description(Limit)] int? limit = null,
         [Description(CursorText)] string? cursor = null,
         CancellationToken cancellationToken = default) =>

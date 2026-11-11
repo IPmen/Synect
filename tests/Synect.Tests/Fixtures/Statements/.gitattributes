@@ -1,0 +1,2 @@
+# Statement fixtures are byte-exact (encodings, BOM, CRLF): never convert line endings.
+* -text

@@ -321,7 +321,7 @@ namespace Synect.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "DedupKey")
                         .IsUnique()
                         .HasDatabaseName("ux_attention_items_dedup_open")
-                        .HasFilter("status <> 'Resolved'");
+                        .HasFilter("status NOT IN ('Resolved', 'Archived')");
 
                     b.HasIndex("TenantId", "RuleCode", "Status")
                         .HasDatabaseName("ix_attention_items_tenant_id_rule_code_status");
@@ -541,6 +541,10 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(3)")
                         .HasColumnName("currency");
 
+                    b.Property<string>("Details")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("details");
+
                     b.Property<string>("Direction")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -564,6 +568,14 @@ namespace Synect.Infrastructure.Persistence.Migrations
                     b.Property<bool>("HasError")
                         .HasColumnType("boolean")
                         .HasColumnName("has_error");
+
+                    b.Property<string>("IdSource")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Bank")
+                        .HasColumnName("id_source");
 
                     b.Property<bool>("IsFinal")
                         .HasColumnType("boolean")
@@ -631,6 +643,113 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_bank_transactions_tenant_id_counterparty_inn_posting_date");
 
                     b.ToTable("bank_transactions", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Banking.StatementImport", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Account")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("account");
+
+                    b.Property<string>("BalanceCheck")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("balance_check");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("file_name");
+
+                    b.Property<string>("FileSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .HasColumnName("file_sha256")
+                        .IsFixedLength();
+
+                    b.Property<string>("Format")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("format");
+
+                    b.Property<DateTimeOffset>("ImportedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("imported_at");
+
+                    b.Property<Guid?>("ImportedByKey")
+                        .HasColumnType("uuid")
+                        .HasColumnName("imported_by_key");
+
+                    b.Property<DateOnly>("PeriodFrom")
+                        .HasColumnType("date")
+                        .HasColumnName("period_from");
+
+                    b.Property<DateOnly>("PeriodTo")
+                        .HasColumnType("date")
+                        .HasColumnName("period_to");
+
+                    b.Property<string>("Profile")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("profile");
+
+                    b.Property<int>("RowsRejected")
+                        .HasColumnType("integer")
+                        .HasColumnName("rows_rejected");
+
+                    b.Property<Guid?>("SyncRunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sync_run_id");
+
+                    b.Property<int>("TransactionsDuplicate")
+                        .HasColumnType("integer")
+                        .HasColumnName("transactions_duplicate");
+
+                    b.Property<int>("TransactionsNew")
+                        .HasColumnType("integer")
+                        .HasColumnName("transactions_new");
+
+                    b.Property<int>("TransactionsTotal")
+                        .HasColumnType("integer")
+                        .HasColumnName("transactions_total");
+
+                    b.Property<int>("WarningCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("warning_count");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_statement_imports");
+
+                    b.HasIndex("TenantId", "FileSha256")
+                        .IsUnique()
+                        .HasDatabaseName("ix_statement_imports_tenant_id_file_sha256");
+
+                    b.HasIndex("TenantId", "SyncRunId")
+                        .HasDatabaseName("ix_statement_imports_tenant_id_sync_run_id");
+
+                    b.HasIndex("TenantId", "ConnectionId", "ImportedAt")
+                        .HasDatabaseName("ix_statement_imports_tenant_id_connection_id_imported_at");
+
+                    b.ToTable("statement_imports", (string)null);
                 });
 
             modelBuilder.Entity("Synect.Domain.Counterparties.Counterparty", b =>
@@ -1724,6 +1843,29 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_bank_transactions_connections_tenant_id_connection_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Banking.StatementImport", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_statement_imports_tenants_tenant_id");
+
+                    b.HasOne("Synect.Domain.Sync.Connection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_statement_imports_connections_tenant_id_connection_id");
+
+                    b.HasOne("Synect.Domain.Sync.SyncRun", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "SyncRunId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_statement_imports_sync_runs_tenant_id_sync_run_id");
                 });
 
             modelBuilder.Entity("Synect.Domain.Counterparties.Counterparty", b =>

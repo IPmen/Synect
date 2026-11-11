@@ -134,7 +134,7 @@ public sealed class AttentionCommands(IServiceProvider services, TenantScopeRunn
     private Task<List<AttentionItem>> ItemsAsync(Guid tenant) => tenants.InTenantAsync(tenant, (sp, ct) =>
     {
         var db = sp.GetRequiredService<ISynectDbContext>();
-        return db.InTransactionAsync(async t => (await db.AttentionItems.AsNoTracking().Where(i => i.Status != AttentionStatus.Resolved).ToListAsync(t))
+        return db.InTransactionAsync(async t => (await db.AttentionItems.AsNoTracking().Where(i => i.Status != AttentionStatus.Resolved && i.Status != AttentionStatus.Archived).ToListAsync(t))
             .OrderBy(i => i.Severity).ThenBy(i => i.RuleCode, StringComparer.Ordinal).ThenBy(i => i.DedupKey, StringComparer.Ordinal).ToList(), ct);
     }, CancellationToken.None);
 

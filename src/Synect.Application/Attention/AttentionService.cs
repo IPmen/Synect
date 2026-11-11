@@ -134,7 +134,7 @@ public sealed class AttentionService(AnalyticsContext ctx, ISynectDbContext db, 
     /// <summary>
     /// seen: New -> Seen. snooze: New, Seen or Snoozed -> Snoozed until <paramref name="snoozeUntil"/>. dismiss: New, Seen or
     /// Snoozed -> Dismissed (comment required). reopen: Seen, Snoozed or Dismissed -> New. A Resolved item cannot be changed
-    /// (its condition is gone; it opens again by itself when the condition comes back).
+    /// (its condition is gone; it opens again by itself when the condition comes back); neither can an Archived one.
     /// </summary>
     public Task<AttentionUpdateResult> UpdateAsync(
         Guid itemId, AttentionAction action, DateTimeOffset? snoozeUntil, string? comment, Guid? apiKeyId, CancellationToken ct) =>
@@ -155,6 +155,8 @@ public sealed class AttentionService(AnalyticsContext ctx, ISynectDbContext db, 
 
             if (previous == AttentionStatus.Resolved)
                 return Refuse("The item is resolved: its condition is no longer found. It opens again by itself if the condition comes back.");
+            if (previous == AttentionStatus.Archived)
+                return Refuse("The item is archived: it was dismissed and its condition has been gone for a long time. It opens again by itself if the condition comes back.");
 
             AttentionStatus next;
             AttentionEventKind kind;
@@ -200,7 +202,7 @@ public sealed class AttentionService(AnalyticsContext ctx, ISynectDbContext db, 
         status == AttentionStatus.Snoozed && until is { } u && u <= now ? AttentionStatus.New : status;
 
     private async Task<List<OpenRow>> OpenRowsAsync(CancellationToken ct) =>
-        (await db.AttentionItems.AsNoTracking().Where(i => i.Status != AttentionStatus.Resolved)
+        (await db.AttentionItems.AsNoTracking().Where(i => i.Status != AttentionStatus.Resolved && i.Status != AttentionStatus.Archived)
             .Select(i => new { i.Severity, i.Category, i.Status, i.SnoozedUntil }).ToListAsync(ct))
         .Select(r => new OpenRow(r.Severity, r.Category, r.Status, r.SnoozedUntil)).ToList();
 

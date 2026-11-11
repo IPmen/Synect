@@ -41,6 +41,12 @@ public sealed record BankTransactionInfo(
     RawRecord Raw)
 {
     public bool HasError => ErrorCode is not null;
+
+    /// <summary>Origin of <see cref="OperationId"/> (bank id by default).</summary>
+    public OperationIdSource IdSource { get; init; } = OperationIdSource.Bank;
+
+    /// <summary>Optional technical details stored with the operation (JSON object).</summary>
+    public string? Details { get; init; }
 }
 
 /// <param name="IsDayClosed">Null when the bank does not report finality.</param>

@@ -42,6 +42,12 @@ public enum AttentionStatus
 
     /// <summary>The condition is gone (set by the platform); opened again (Reopened) if the condition comes back.</summary>
     Resolved,
+
+    /// <summary>
+    /// A Dismissed item whose condition has not been found for Attention:DismissedRetentionDays (set by the platform). Hidden
+    /// from the default lists; its events stay. Opened again as New (event Reopened) if the condition comes back.
+    /// </summary>
+    Archived,
 }
 
 public enum AttentionEventKind
@@ -52,6 +58,9 @@ public enum AttentionEventKind
     Snoozed,
     Dismissed,
     AutoResolved,
+
+    /// <summary>The platform archived a dismissed item whose condition stayed gone (Attention:DismissedRetentionDays).</summary>
+    Archived,
 }
 
 /// <summary>

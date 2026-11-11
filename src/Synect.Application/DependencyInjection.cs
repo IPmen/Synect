@@ -11,6 +11,7 @@ using Synect.Application.Queue;
 using Synect.Application.Reconciliation;
 using Synect.Application.Resilience;
 using Synect.Application.Secrets;
+using Synect.Application.Statements;
 using Synect.Application.Sync;
 
 namespace Synect.Application;
@@ -43,9 +44,18 @@ public static class DependencyInjection
         services.AddScoped<RawObjectStore>();
         services.AddScoped<CounterpartyStore>();
         services.AddScoped<CounterpartyAliasRebuilder>();
+        services.AddScoped<LoadProfile>();
+        services.AddScoped<BankLoadWriter>();
         services.AddScoped<BankSyncService>();
         services.AddScoped<EdoSyncService>();
         services.AddScoped<ConnectionSyncService>();
+
+        // Bank statement files (MT940, CSV): parsers are pure; the import writes through BankLoadWriter.
+        services.AddOptions<StatementImportOptions>();
+        services.AddSingleton<IStatementParser, Mt940Parser>();
+        services.AddSingleton<IStatementParser, CsvStatementParser>();
+        services.AddScoped<BankStatementImportService>();
+        services.AddScoped<FileConnectionService>();
 
         // Queue and scheduler.
         services.AddSingleton<SyncScheduleCalculator>();

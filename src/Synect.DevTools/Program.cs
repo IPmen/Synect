@@ -31,6 +31,12 @@ using Synect.Infrastructure.Persistence;
 //   attention --tenant <name|id>                  evaluates every attention rule now and prints the open items
 //   attention-eval                                attention golden set (fixed clock): created items, severities, what is not created
 //   attention-bench --tenant <name|id> [--runs 5] time of a full evaluation and of the evaluations after a load
+//   create-file-connection --tenant <name|id> --bank-name <bank> [--profile <name|path.json>]   file import connection
+//   import-statement --tenant <name|id> --connection <name|id> --file <path> --format mt940|csv [--profile <name|path.json>]
+//                    [--force] [--create-accounts] [--dry-run]   imports a bank statement file (dry run: checks only)
+//   list-imports --tenant <name|id> [--connection <name|id>]   imported statement files
+//   anonymize-statement --file <path> --format mt940|csv [--profile <name|path.json>] --out <path>   pseudonymizes names, INNs, accounts
+//   statement-bench [--sizes 500,2000,20000] [--days 250] [--timeout 120]   import time of synthetic MT940 files (new tenant per size)
 
 var command = args.FirstOrDefault() ?? "help";
 var options = CliArgs.Parse(args.Skip(1).ToArray());
@@ -58,6 +64,7 @@ builder.Services.AddSingleton<Seeder>();
 builder.Services.AddSingleton<QueryCatalog>();
 builder.Services.AddSingleton<ReconciliationCommands>();
 builder.Services.AddSingleton<AttentionCommands>();
+builder.Services.AddSingleton<StatementCommands>();
 
 using var host = builder.Build();
 var services = host.Services;
@@ -128,12 +135,26 @@ try
         case "attention-bench":
             await services.GetRequiredService<AttentionCommands>().BenchAsync(await Tenant(), options.Int("runs", 5));
             break;
+        case "create-file-connection":
+            return await services.GetRequiredService<StatementCommands>().CreateConnectionAsync(await Tenant(), options);
+        case "import-statement":
+            return await services.GetRequiredService<StatementCommands>().ImportAsync(await Tenant(), options);
+        case "list-imports":
+            return await services.GetRequiredService<StatementCommands>().ListAsync(await Tenant(), options);
+        case "anonymize-statement":
+            return services.GetRequiredService<StatementCommands>().Anonymize(options);
+        case "statement-bench":
+            await services.GetRequiredService<StatementCommands>().BenchAsync(
+                (options.Get("sizes") ?? options.Get("operations") ?? "20000").Split(',').Select(x => int.Parse(x.Trim(), System.Globalization.CultureInfo.InvariantCulture)).ToList(),
+                options.Int("days", 250), TimeSpan.FromSeconds(options.Int("timeout", 120)));
+            break;
         case "test-db-leftovers":
             return await TestDbLeftovers.RunAsync(builder.Configuration, options.Get("drop") == "true");
         default:
             Console.WriteLine("Commands: seed-demo, seed-load, rebuild-totals, rebuild-counterparty-aliases, list-queries, query <name>, bench, explain, " +
                               "create-api-key, revoke-api-key, list-api-keys, test-db-leftovers, reconcile, rebuild-reconciliation, reconcile-eval, " +
-                              "reconcile-bench, normalize-currency, attention, attention-eval, attention-bench. See Program.cs.");
+                              "reconcile-bench, normalize-currency, attention, attention-eval, attention-bench, create-file-connection, " +
+                              "import-statement, list-imports, anonymize-statement, statement-bench. See Program.cs.");
             break;
     }
 }

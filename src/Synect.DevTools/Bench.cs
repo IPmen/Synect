@@ -41,6 +41,30 @@ public sealed class CommandCapture : DbCommandInterceptor
         return ValueTask.FromResult(result);
     }
 
+    public override int NonQueryExecuted(DbCommand command, CommandExecutedEventData eventData, int result)
+    {
+        Record(command, eventData.Duration);
+        return result;
+    }
+
+    public override ValueTask<int> NonQueryExecutedAsync(DbCommand command, CommandExecutedEventData eventData, int result, CancellationToken cancellationToken = default)
+    {
+        Record(command, eventData.Duration);
+        return ValueTask.FromResult(result);
+    }
+
+    public override object? ScalarExecuted(DbCommand command, CommandExecutedEventData eventData, object? result)
+    {
+        Record(command, eventData.Duration);
+        return result;
+    }
+
+    public override ValueTask<object?> ScalarExecutedAsync(DbCommand command, CommandExecutedEventData eventData, object? result, CancellationToken cancellationToken = default)
+    {
+        Record(command, eventData.Duration);
+        return ValueTask.FromResult(result);
+    }
+
     private void Record(DbCommand command, TimeSpan duration)
     {
         if (!Enabled) return;

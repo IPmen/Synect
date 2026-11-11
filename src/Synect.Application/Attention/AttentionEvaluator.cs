@@ -25,7 +25,7 @@ public sealed record AttentionChange(Guid ItemId, string RuleCode, AttentionSeve
 /// <param name="Findings">Cases found per rule code (before grouping).</param>
 public sealed record AttentionEvaluation(
     IReadOnlyList<AttentionCategory> Categories, int Created, int Reopened, int Updated, int Resolved, int Open,
-    IReadOnlyDictionary<string, int> Findings, IReadOnlyList<AttentionChange> Changes, TimeSpan Elapsed);
+    IReadOnlyDictionary<string, int> Findings, IReadOnlyList<AttentionChange> Changes, TimeSpan Elapsed, int Archived = 0);
 
 /// <summary>
 /// Evaluates the attention rules of the current tenant (tenant from the context, RLS) over the Synect database only, and
@@ -35,7 +35,9 @@ public sealed record AttentionEvaluation(
 ///   back is opened again as New (event Reopened) on the same row;
 /// - a Snoozed item whose time is over becomes New again (event Reopened) if the condition still holds;
 /// - a Dismissed item stays Dismissed while its content is unchanged (a changed amount is a different key, so a new item);
-///   a dismissed grouped item opens again only when a case appears that was not in it when it was dismissed.
+///   a dismissed grouped item opens again only when a case appears that was not in it when it was dismissed;
+/// - a Dismissed item whose condition has been gone for Attention:DismissedRetentionDays becomes Archived (event Archived);
+///   like a Resolved one, it opens again on the same row if the condition comes back.
 /// Only the rules of the requested categories run, so loads re-check only what their data can change.
 /// Evaluations and person decisions of one tenant are serialized with a PostgreSQL advisory lock.
 /// </summary>
@@ -97,13 +99,15 @@ public sealed class AttentionEvaluator(
             candidates.AddRange(Build(context, rule, found));
         }
 
-        var open = await db.AttentionItems.Where(i => codes.Contains(i.RuleCode) && i.Status != AttentionStatus.Resolved).ToListAsync(ct);
+        var open = await db.AttentionItems.Where(i => codes.Contains(i.RuleCode) && i.Status != AttentionStatus.Resolved
+            && i.Status != AttentionStatus.Archived).ToListAsync(ct);
         var openByKey = open.ToDictionary(i => i.DedupKey, StringComparer.Ordinal);
         var missingKeys = candidates.Select(c => c.Key).Where(k => !openByKey.ContainsKey(k)).ToList();
         var resolvedByKey = new Dictionary<string, AttentionItem>(StringComparer.Ordinal);
         foreach (var chunk in missingKeys.Chunk(1000))
         {
-            var rows = await db.AttentionItems.Where(i => i.Status == AttentionStatus.Resolved && chunk.Contains(i.DedupKey)).ToListAsync(ct);
+            var rows = await db.AttentionItems.Where(i => (i.Status == AttentionStatus.Resolved || i.Status == AttentionStatus.Archived)
+                && chunk.Contains(i.DedupKey)).ToListAsync(ct);
             foreach (var row in rows.OrderByDescending(r => r.ResolvedAt).ThenBy(r => r.Id))
                 resolvedByKey.TryAdd(row.DedupKey, row);
         }
@@ -138,10 +142,13 @@ public sealed class AttentionEvaluator(
 
             if (resolvedByKey.TryGetValue(c.Key, out item))
             {
+                var wasArchived = item.Status == AttentionStatus.Archived;
                 Apply(item, c, keepMembers: false, now);
                 item.LastSeenAt = now;
                 item.ResolvedAt = null;
-                Reopen(item, now, "The condition is back after it was resolved.");
+                Reopen(item, now, wasArchived
+                    ? "The condition is back after the dismissed item was archived."
+                    : "The condition is back after it was resolved.");
                 reopened++;
                 changes.Add(new(item.Id, item.RuleCode, item.Severity, AttentionChangeKind.Reopened, item.Title));
                 continue;
@@ -165,10 +172,26 @@ public sealed class AttentionEvaluator(
             changes.Add(new(item.Id, item.RuleCode, item.Severity, AttentionChangeKind.Created, item.Title));
         }
 
+        var archiveBefore = now.AddDays(-Math.Max(0, context.Options.DismissedRetentionDays));
+        int archived = 0;
         foreach (var item in open.Where(i => !seenKeys.Contains(i.DedupKey)))
         {
             // Dismissed stays dismissed: the accountant decided about it; it is not resolved and not reopened by the platform.
-            if (item.Status == AttentionStatus.Dismissed) continue;
+            // Once its condition has been gone for DismissedRetentionDays (counted from the last evaluation that found it),
+            // it is archived: hidden from the default lists, history kept.
+            if (item.Status == AttentionStatus.Dismissed)
+            {
+                if (item.LastSeenAt > archiveBefore) continue;
+                item.Status = AttentionStatus.Archived;
+                item.UpdatedAt = now;
+                db.AttentionItemEvents.Add(new AttentionItemEvent
+                {
+                    ItemId = item.Id, Kind = AttentionEventKind.Archived, At = now,
+                    Comment = $"Dismissed and not found for {context.Options.DismissedRetentionDays} days.",
+                });
+                archived++;
+                continue;
+            }
             item.Status = AttentionStatus.Resolved;
             item.ResolvedAt = now;
             item.SnoozedUntil = null;
@@ -184,7 +207,7 @@ public sealed class AttentionEvaluator(
         await db.SaveChangesAsync(ct);
         var openCount = await db.AttentionItems.CountAsync(i => codes.Contains(i.RuleCode)
             && (i.Status == AttentionStatus.New || i.Status == AttentionStatus.Seen || i.Status == AttentionStatus.Snoozed), ct);
-        return new AttentionEvaluation(categories, created, reopened, updated, resolved, openCount, findings, changes, stopwatch.Elapsed);
+        return new AttentionEvaluation(categories, created, reopened, updated, resolved, openCount, findings, changes, stopwatch.Elapsed, archived);
     }
 
     private void Reopen(AttentionItem item, DateTimeOffset now, string comment)

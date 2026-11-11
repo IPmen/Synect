@@ -26,6 +26,9 @@ public enum SyncRequestStatus
 
     /// <summary>The connection is NeedsAttention or Disabled.</summary>
     ConnectionNotActive,
+
+    /// <summary>The connection gets its data from imported statement files; there is nothing to load.</summary>
+    NotLoadable,
 }
 
 public sealed record SyncRequestResult(SyncRequestStatus Status, Guid? JobId = null, TimeSpan? RetryAfter = null, string? Reason = null);
@@ -56,6 +59,9 @@ public sealed class SyncRequestService(
         db.InTransactionAsync(async token =>
         {
             var connection = await LoadAsync(connectionId, token);
+            if (!connection.IsSyncable)
+                return new SyncRequestResult(SyncRequestStatus.NotLoadable,
+                    Reason: "Data of this connection comes from imported bank statement files; import a newer statement to refresh it.");
             if (connection.Status != ConnectionStatus.Active)
                 return new SyncRequestResult(SyncRequestStatus.ConnectionNotActive, Reason: connection.StatusReason);
 

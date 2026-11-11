@@ -75,7 +75,7 @@ public sealed class SyncWorker(
                 {
                     var count = 0;
                     var connections = await db.Connections
-                        .Where(c => c.Status == ConnectionStatus.Active && c.AdapterKind != AdapterKind.Accounting)
+                        .Where(c => c.Status == ConnectionStatus.Active && (c.AdapterKind == AdapterKind.Bank || c.AdapterKind == AdapterKind.Edo))
                         .ToListAsync(t);
                     foreach (var connection in connections)
                         if ((await queue.EnqueueAsync(connection, SyncJobKind.Manual, null, t)).Created) count++;

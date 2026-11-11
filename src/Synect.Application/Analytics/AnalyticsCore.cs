@@ -179,8 +179,11 @@ public sealed class AnalyticsContext(
                 return new AnalyticsResult<T>(data, new DataFreshness(time.GetUtcNow(), sources));
             }, cts.Token);
         }
+        // Our own timeout fired (and the caller did not cancel): whatever failed - opening the connection (Npgsql may then
+        // throw a SocketException from an interrupted DNS lookup instead of OperationCanceledException), the query or the
+        // freshness read - it is a timeout. statement_timeout on the server (57014) is one too.
         catch (Exception ex) when (!ct.IsCancellationRequested
-                                   && (ex is OperationCanceledException || ex is DbException { SqlState: "57014" }
+                                   && (cts.IsCancellationRequested || ex is OperationCanceledException || ex is DbException { SqlState: "57014" }
                                        || ex.InnerException is DbException { SqlState: "57014" }))
         {
             throw new AnalyticsTimeoutException(timeout, ex);

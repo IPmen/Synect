@@ -42,11 +42,12 @@ public sealed class SourceTools(ToolRunner runner, ISourceFreshnessQuery freshne
             var which = a.Enum("source", source, ToolEnums.Source);
             var connection = a.OptionalGuid("connection_id", connection_id);
             var sources = await freshness.GetAsync(TenantId, ct);
+            // File import connections are never refreshed (their data comes from imported statements) unless named explicitly.
             var selected = sources.Where(s => connection is { } id ? s.ConnectionId == id : which switch
             {
                 "bank" => s.Kind == AdapterKind.Bank,
                 "edo" => s.Kind == AdapterKind.Edo,
-                _ => true,
+                _ => s.Kind is AdapterKind.Bank or AdapterKind.Edo,
             }).ToList();
             if (connection is not null && selected.Count == 0)
                 throw new ToolArgumentException("No connection with this connection_id exists for the client. Take connection_id from data_freshness.");
