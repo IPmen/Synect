@@ -760,6 +760,42 @@ MCP transport and pin these answers (`AccountingToolsTests`), and check that an 
 (`--plant` adds differences by fixed rules and prints how many); `--scenario golden` sends the golden data for a tenant
 holding the reconciliation golden set (`reconcile-eval` creates "Reconciliation golden set"; give it a TIN with `add-organization`) and prints the expected answers.
 
+## Didox adapter
+
+`DidoxEdoAdapter` (source code `didox`, `Synect.Infrastructure/Adapters/Didox`) loads the documents of one organization
+from the Didox partner API over HTTPS. It is used only by connections created with `--source didox`; the fake adapter
+`fake_didox` stays for demos and tests.
+
+**Not confirmed.** Public documentation of the Didox partner API was not available. The host, paths and header names
+come from an unofficial community client (github.com/mirzaevoff/didox) and must be checked against the documentation
+Didox gives to partners before the first real load; they are settings (`Adapters:Didox:Api:*`), so a correction needs no
+code change. The document field names are those of `DidoxMapper` (doc_id, doc_status, owner, doctype, name, doc_date,
+partnerTin, partnerCompany, total_*, created, updated, sellerAccount). No request has ever been sent to real Didox.
+
+| Step | Request (defaults) |
+|---|---|
+| Login of the organization | `POST {BaseUrl}/v1/auth/{tin}/password/{locale}`, body `{"password": "..."}`; the token is `token` of the answer |
+| Document list | `GET {BaseUrl}/v2/documents?owner=0|1&page=N&limit=100[&dateFromUpdated=yyyy-MM-dd]` |
+| One document | `GET {BaseUrl}/v1/documents/{id}` |
+| Every request | header `Partner-Authorization: <partner token of Synect>`; after the login also `user-key: <user token>` |
+
+- The connection's credentials are the organization's TIN (as the login) and its Didox password:
+  `create-connection --tenant X --source didox --login <TIN> --test`.
+- The partner token is Synect's own secret from Didox: `dotnet user-secrets set "Adapters:Didox:Api:PartnerToken" "..."`
+  for `src/Synect.Worker` and `src/Synect.Api` (never in appsettings). Without it no request is sent and the error says so
+  (it is not blamed on the client's access).
+- The user token is cached per connection for `Adapters:Didox:Token:TokenLifetime` (360 min); after an HTTP 401 the
+  adapter logs in once more, a second 401 is an authentication failure.
+- Errors: 401, 403 and a refused login (422) are authentication failures (the connection goes to NeedsAttention); 429 is
+  a rate limit (Retry-After respected); 5xx, timeouts (`Timeout`, 30 s) and network errors are retried by the call policy;
+  other answers and unreadable JSON fail the load. Messages carry the operation and the HTTP status only (never a token,
+  password, TIN or response body).
+- The list is filtered by date only (local Tashkent date of `updatedSince`); `Sync:Edo:UpdatedSinceOverlap` (1 day)
+  re-reads the overlap. Paging uses `total` (or `meta.total`) of the answer, else a full page means another page.
+- Tests run the adapter against an in-process HTTP stub (`StubDidoxServer`): login path and body, both headers, paging,
+  the date filter, a 401 with a second login, wrong password, 429 / 5xx / network errors, a missing partner token, and a
+  full load through the sync service.
+
 ## Developer tools
 
 ```
@@ -821,8 +857,8 @@ dotnet run --project src/Synect.DevTools -- list-connections --tenant "ООО К
   process list). It is typed twice without echo, or read as one line of standard input with `--password-stdin` (for a
   password manager or a script). Login and password are stored together, encrypted, as the `credentials` secret; they are
   never logged or printed. `list-connections` shows the login masked (`ac********`), the secret version and dates.
-- `--source` must be the source code of an adapter registered in this build (`list-sources`); today only the fake
-  adapters `fake_kapitalbank` and `fake_didox` exist, so real client access cannot be used until the real adapters are written.
+- `--source` must be the source code of an adapter registered in this build (`list-sources`): `didox` (real, see "Didox adapter") and the fake
+  adapters `fake_kapitalbank` and `fake_didox`; a real Kapital Bank adapter does not exist yet.
 - Without `--test` a new connection is Active and loaded on the schedule. With `--test` (and `test-connection`) the
   connection waits in NeedsAttention, the adapter's connection test runs with the stored access, and on success the
   connection becomes Active and its first load is queued; on failure it stays in NeedsAttention with the reason and is
@@ -932,6 +968,7 @@ timeout, so a genuinely slow query still fails.
 | `Accounting:PaymentDateWindowDays` | 3 | Bank payment and 1C bank document are one payment within this many days. **Assumption.** |
 | `Accounting:DocumentDateWindowDays` | 5 | Didox and 1C documents without a common number, same amount and INN. **Assumption.** |
 | `Accounting:MaxCompareRows` | 50 000 | Most records a side of a comparison reads; a longer period must be narrowed. |
+| `Adapters:Didox:Api:*` | see "Didox adapter" | Host, paths, headers, page size (100), timeout (30 s) of the Didox partner API. **Unconfirmed.** `PartnerToken` only in user-secrets. |
 | `Statements:MaxFileBytes` | 50 MB | Largest statement file. |
 | `Statements:PreviewRows` | 5 | Operations shown by a dry run. |
 | `Statements:MaxPeriodDays` | 3700 | Longest period of one statement. |

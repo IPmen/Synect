@@ -109,6 +109,7 @@ public static class DependencyInjection
             services.Configure<KapitalBankMapperOptions>(configuration.GetSection("Adapters:KapitalBank"));
             services.Configure<DidoxMapperOptions>(configuration.GetSection("Adapters:Didox"));
             services.Configure<DidoxTokenOptions>(configuration.GetSection("Adapters:Didox:Token"));
+            services.Configure<DidoxApiOptions>(configuration.GetSection("Adapters:Didox:Api"));
             foreach (var provider in Providers)
                 services.Configure<RateLimitOptions>(provider, configuration.GetSection($"Adapters:{provider}:RateLimit"));
         }
@@ -117,6 +118,7 @@ public static class DependencyInjection
             services.AddOptions<KapitalBankMapperOptions>();
             services.AddOptions<DidoxMapperOptions>();
             services.AddOptions<DidoxTokenOptions>();
+            services.AddOptions<DidoxApiOptions>();
         }
 
         services.AddSingleton<KapitalBankMapper>();
@@ -127,6 +129,9 @@ public static class DependencyInjection
         services.AddSingleton<FakeEdoDataSource>();
         services.AddSingleton<IBankAdapter, FakeBankAdapter>();
         services.AddSingleton<IEdoAdapter, FakeEdoAdapter>();
+        // The real Didox adapter (source code "didox"): used only by connections created with that source code.
+        services.AddSingleton(_ => DidoxHttp.CreateDefault());
+        services.AddSingleton<IEdoAdapter, DidoxEdoAdapter>();
         services.AddScoped<ConnectionCredentialsService>();
         return services;
     }

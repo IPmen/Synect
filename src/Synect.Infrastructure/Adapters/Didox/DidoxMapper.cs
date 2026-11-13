@@ -24,7 +24,7 @@ public sealed class DidoxMapper(IOptions<DidoxMapperOptions> options)
 
     private readonly DidoxMapperOptions _options = options.Value;
 
-    /// <summary>Maps a document list response: an array, or { "data": [...], "total": n }.</summary>
+    /// <summary>Maps a document list response: an array, or { "data": [...], "total": n } (also "meta": { "total": n }).</summary>
     public DidoxDocumentList MapDocumentList(string json)
     {
         using var doc = JsonDocument.Parse(json);
@@ -33,7 +33,9 @@ public sealed class DidoxMapper(IOptions<DidoxMapperOptions> options)
         var items = data.ValueKind == JsonValueKind.Array
             ? data.EnumerateArray().Select(MapDocument).ToList()
             : [];
-        var total = root.ValueKind == JsonValueKind.Object ? SourceJson.Int(root, "total") : null;
+        var total = root.ValueKind != JsonValueKind.Object ? null
+            : SourceJson.Int(root, "total")
+              ?? (root.TryGetProperty("meta", out var meta) && meta.ValueKind == JsonValueKind.Object ? SourceJson.Int(meta, "total") : null);
         return new DidoxDocumentList(items, total);
     }
 
