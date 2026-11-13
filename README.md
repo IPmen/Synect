@@ -796,6 +796,46 @@ partnerTin, partnerCompany, total_*, created, updated, sellerAccount). No reques
   the date filter, a 401 with a second login, wrong password, 429 / 5xx / network errors, a missing partner token, and a
   full load through the sync service.
 
+## Kapital Bank adapter
+
+`KapitalBankAdapter` (source code `kapitalbank`, `Synect.Infrastructure/Adapters/KapitalBank`) loads the accounts,
+operations and day balances of one organization from the corporate API of Kapital Bank. It is used only by connections
+created with `--source kapitalbank`; the fake adapter `fake_kapitalbank` stays for demos and tests.
+
+**Not confirmed, and less known than Didox.** No public documentation of the Kapital Bank corporate API (and no community
+client) was found. What the code knows comes from the documentation description used for `KapitalBankMapper`: every
+answer is an envelope `{ "error", "id", "result" }` with errors under HTTP 200, the methods `APILogin`, `GetAccounts` /
+`GetAcc1C` and `GetDoc1C`, the session id `sid`, the result fields (b2_id, dir, amount, inn_dt / inn_ct, saldo_in,
+saldo_out, fin, oper_day, ...) and the error code 61002 "IP address not allowed". The endpoint, the request format and the
+parameter names are **not known**: they are settings (`Adapters:KapitalBank:Api:*`) to be taken from the bank's
+documentation. No request has ever been sent to the real bank.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `Endpoint` | empty (required) | The bank's API URL; without it no request is sent and the error says so |
+| `JsonRpc` | true | Every request is `POST {Endpoint}` with `{"jsonrpc": "2.0", "id", "method", "params"}` (assumed from the envelope) |
+| `LoginMethod` / `AccountsMethod` / `StatementMethod` | `APILogin` / `GetAccounts` / `GetDoc1C` | Method names |
+| `LoginParameter` / `PasswordParameter` / `SidParameter` / `AccountParameter` / `DateParameter` | `login` / `password` / `sid` / `account` / `date` | Parameter names. **Assumptions.** |
+| `DateFormat` | `yyyy-MM-dd` | Format of the operational day in GetDoc1C. **Assumption.** |
+| `SessionExpiredErrorCodes` | none | Envelope codes meaning "session expired" (the adapter logs in again once); HTTP 401 always counts |
+| `HistoryDepthDays` | 365 | How far back the bank returns days (the first load is capped by it) |
+| `Timeout` | 60 s | Per request |
+
+- The connection's credentials are the client's login and password of the bank's API:
+  `create-connection --tenant X --source kapitalbank --login <login> --test`.
+- The bank restricts API access by IP (error 61002): the address of the server running the Worker must be registered
+  with the bank; until then every call is an authentication failure and the connection goes to NeedsAttention.
+- The amount unit is still unconfirmed (`Adapters:KapitalBank:AmountUnit`, default `Minor` = tiyin): check it on the
+  first real statement, otherwise every bank figure is off by 100.
+- The sid is kept per connection (`KapitalSessionManager`); after HTTP 401/403 or a configured session code the adapter
+  logs in once more. A refused login (any envelope error of APILogin) and 61002 are authentication failures; HTTP 429 is a
+  rate limit; 5xx, timeouts and network errors are retried by the call policy; other envelope errors fail the load with
+  the bank's code and message. Messages never contain the password, the sid or the request body.
+- GetDoc1C is called per account and day (once for the operations, once for the day balance).
+- Tests run the adapter against an in-process stub (`StubKapitalBank`): request format, the sid reuse and a new login
+  after an expired session, wrong password, 61002, 429 / 5xx / network errors, other envelope errors, a missing endpoint,
+  and a full load (accounts, operations, day balances) through the sync service.
+
 ## Developer tools
 
 ```
@@ -857,8 +897,8 @@ dotnet run --project src/Synect.DevTools -- list-connections --tenant "ООО К
   process list). It is typed twice without echo, or read as one line of standard input with `--password-stdin` (for a
   password manager or a script). Login and password are stored together, encrypted, as the `credentials` secret; they are
   never logged or printed. `list-connections` shows the login masked (`ac********`), the secret version and dates.
-- `--source` must be the source code of an adapter registered in this build (`list-sources`): `didox` (real, see "Didox adapter") and the fake
-  adapters `fake_kapitalbank` and `fake_didox`; a real Kapital Bank adapter does not exist yet.
+- `--source` must be the source code of an adapter registered in this build (`list-sources`): `didox` and `kapitalbank` (real, see "Didox adapter" and "Kapital Bank adapter") and the fake
+  adapters `fake_kapitalbank` and `fake_didox`.
 - Without `--test` a new connection is Active and loaded on the schedule. With `--test` (and `test-connection`) the
   connection waits in NeedsAttention, the adapter's connection test runs with the stored access, and on success the
   connection becomes Active and its first load is queued; on failure it stays in NeedsAttention with the reason and is
@@ -968,6 +1008,7 @@ timeout, so a genuinely slow query still fails.
 | `Accounting:PaymentDateWindowDays` | 3 | Bank payment and 1C bank document are one payment within this many days. **Assumption.** |
 | `Accounting:DocumentDateWindowDays` | 5 | Didox and 1C documents without a common number, same amount and INN. **Assumption.** |
 | `Accounting:MaxCompareRows` | 50 000 | Most records a side of a comparison reads; a longer period must be narrowed. |
+| `Adapters:KapitalBank:Api:*` | see "Kapital Bank adapter" | Endpoint (required, no default), method and parameter names, date format, session codes. **Unconfirmed.** |
 | `Adapters:Didox:Api:*` | see "Didox adapter" | Host, paths, headers, page size (100), timeout (30 s) of the Didox partner API. **Unconfirmed.** `PartnerToken` only in user-secrets. |
 | `Statements:MaxFileBytes` | 50 MB | Largest statement file. |
 | `Statements:PreviewRows` | 5 | Operations shown by a dry run. |
