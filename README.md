@@ -807,6 +807,29 @@ Windows), never in the repository. `ISecretStore` (Get/Set/Rotate) writes secret
 `ICredentialProvider`. `SecretValue.ToString()` is redacted. Didox tokens (360 min) and Kapital Bank sessions (`sid`) are
 cached in memory per connection.
 
+**Entering a client's access** (`ConnectionCredentialsService`, DevTools; tenant context, one organization at a time):
+
+```
+dotnet run --project src/Synect.DevTools -- list-sources
+dotnet run --project src/Synect.DevTools -- create-connection --tenant "ООО Клиент" --source <code> --login <login> [--name "Kapital Bank"] [--test]
+dotnet run --project src/Synect.DevTools -- set-credentials --tenant "ООО Клиент" --connection <id|name> --login <login> [--test]
+dotnet run --project src/Synect.DevTools -- test-connection --tenant "ООО Клиент" --connection <id|name>
+dotnet run --project src/Synect.DevTools -- list-connections --tenant "ООО Клиент"
+```
+
+- The password is never a command-line argument (`--password` is refused: it would stay in the shell history and the
+  process list). It is typed twice without echo, or read as one line of standard input with `--password-stdin` (for a
+  password manager or a script). Login and password are stored together, encrypted, as the `credentials` secret; they are
+  never logged or printed. `list-connections` shows the login masked (`ac********`), the secret version and dates.
+- `--source` must be the source code of an adapter registered in this build (`list-sources`); today only the fake
+  adapters `fake_kapitalbank` and `fake_didox` exist, so real client access cannot be used until the real adapters are written.
+- Without `--test` a new connection is Active and loaded on the schedule. With `--test` (and `test-connection`) the
+  connection waits in NeedsAttention, the adapter's connection test runs with the stored access, and on success the
+  connection becomes Active and its first load is queued; on failure it stays in NeedsAttention with the reason and is
+  not loaded. `set-credentials` replaces the access as a rotation (version + 1, `rotated_at`).
+- Only bank and Didox connections take credentials (not file imports, not 1C). The connection name is unique within the
+  organization.
+
 ## Tests
 
 ```

@@ -11,6 +11,7 @@ using Synect.Application.Queue;
 using Synect.Application.Resilience;
 using Synect.Application.Secrets;
 using Synect.Application.Sync;
+using Synect.Infrastructure.Adapters;
 using Synect.Infrastructure.Adapters.Didox;
 using Synect.Infrastructure.Adapters.Fake;
 using Synect.Infrastructure.Adapters.KapitalBank;
@@ -126,6 +127,7 @@ public static class DependencyInjection
         services.AddSingleton<FakeEdoDataSource>();
         services.AddSingleton<IBankAdapter, FakeBankAdapter>();
         services.AddSingleton<IEdoAdapter, FakeEdoAdapter>();
+        services.AddScoped<ConnectionCredentialsService>();
         return services;
     }
 

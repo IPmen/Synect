@@ -83,9 +83,16 @@ public class AccountingToolsTests(AccountingFixture f) : IClassFixture<Accountin
         Assert.Equal(1_000_000, Minor(differs.GetProperty("amount_difference")));
         Assert.Equal("Didox id (esf_id)", differs.GetProperty("matched_by").GetString());
         // The draft (d14) and the contract (d19) are not accounting documents to compare; the deleted 1C document is ignored.
-        Assert.DoesNotContain("d14", body.GetRawText());
-        Assert.DoesNotContain("d19", body.GetRawText());
-        Assert.DoesNotContain("doc-deleted-1", body.GetRawText());
+        // (Checked on the document identifiers of the rows, not on the raw text: ids such as "d14" can occur inside a UUID.)
+        var didoxIds = rows.Select(r => r.GetProperty("didox_document")).Where(d => d.ValueKind != JsonValueKind.Null)
+            .Select(d => d.GetProperty("external_id").GetString()).ToList();
+        var accountingRefs = rows.Select(r => r.GetProperty("accounting_document")).Where(d => d.ValueKind != JsonValueKind.Null)
+            .Select(d => d.GetProperty("ref").GetString()).ToList();
+        Assert.DoesNotContain("d14", didoxIds);
+        Assert.DoesNotContain("d19", didoxIds);
+        Assert.DoesNotContain("doc-deleted-1", accountingRefs);
+        Assert.DoesNotContain("doc-d14", accountingRefs);
+        Assert.DoesNotContain("doc-d19", accountingRefs);
     }
 
     [Fact]

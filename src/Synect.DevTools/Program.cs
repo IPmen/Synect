@@ -50,6 +50,12 @@ using Synect.Infrastructure.Persistence;
 //   import-organizations --account <name|id> --file <csv with columns name,tin>   idempotent, errors per row
 //   seed-account --name <name> [--organizations 50]   account with N organizations loaded through the real services
 //   account-bench --account <name|id> [--runs 20] [--url http://localhost:5299/mcp]   p50/p95 of the portfolio tools (running Api)
+// Access of a client organization to a bank or Didox (the password is typed without echo, or --password-stdin; never an argument):
+//   list-sources                                  source codes of the adapters registered in this build
+//   create-connection --tenant <name|id> --source <code> --login <login> [--name ...] [--test] [--password-stdin]
+//   set-credentials --tenant <name|id> --connection <id|name> --login <login> [--test] [--password-stdin]   replaces the access (new version)
+//   test-connection --tenant <name|id> --connection <id|name>   tests the stored access; on success Active and first load queued
+//   list-connections --tenant <name|id>           connections, masked login, secret version (never the password)
 // 1C ingest (stage 8a):
 //   create-ingest-key --tenant <name|id> [--name ...]   creates the 1C connection if needed, prints the ingest key ONCE
 //   revoke-ingest-key --tenant <name|id> --key <key id|key prefix>
@@ -89,6 +95,7 @@ builder.Services.AddSingleton<AttentionCommands>();
 builder.Services.AddSingleton<StatementCommands>();
 builder.Services.AddSingleton<AccountCommands>();
 builder.Services.AddSingleton<IngestCommands>();
+builder.Services.AddSingleton<ConnectionCommands>();
 
 using var host = builder.Build();
 var services = host.Services;
@@ -196,6 +203,16 @@ try
                 (options.Get("sizes") ?? options.Get("operations") ?? "20000").Split(',').Select(x => int.Parse(x.Trim(), System.Globalization.CultureInfo.InvariantCulture)).ToList(),
                 options.Int("days", 250), TimeSpan.FromSeconds(options.Int("timeout", 120)));
             break;
+        case "list-sources":
+            return services.GetRequiredService<ConnectionCommands>().ListSources();
+        case "create-connection":
+            return await services.GetRequiredService<ConnectionCommands>().CreateAsync(await Tenant(), options);
+        case "set-credentials":
+            return await services.GetRequiredService<ConnectionCommands>().SetAsync(await Tenant(), options);
+        case "test-connection":
+            return await services.GetRequiredService<ConnectionCommands>().TestAsync(await Tenant(), options);
+        case "list-connections":
+            return await services.GetRequiredService<ConnectionCommands>().ListAsync(await Tenant());
         case "create-ingest-key":
             return await services.GetRequiredService<IngestCommands>().CreateKeyAsync(await Tenant(), options);
         case "revoke-ingest-key":
@@ -213,7 +230,7 @@ try
                               "create-api-key, revoke-api-key, list-api-keys, test-db-leftovers, reconcile, rebuild-reconciliation, reconcile-eval, " +
                               "reconcile-bench, normalize-currency, attention, attention-eval, attention-bench, create-file-connection, " +
                               "import-statement, list-imports, anonymize-statement, statement-bench, delete-tenant, create-account, add-organization, " +
-                              "list-accounts, disable-organization, create-account-key, set-onboarding, import-organizations, seed-account, account-bench, create-ingest-key, revoke-ingest-key, list-ingest-keys, list-ingest-batches, send-1c-sample. See Program.cs.");
+                              "list-accounts, disable-organization, create-account-key, set-onboarding, import-organizations, seed-account, account-bench, list-sources, create-connection, set-credentials, test-connection, list-connections, create-ingest-key, revoke-ingest-key, list-ingest-keys, list-ingest-batches, send-1c-sample. See Program.cs.");
             break;
     }
 }
