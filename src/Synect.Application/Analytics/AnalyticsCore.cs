@@ -122,6 +122,35 @@ internal sealed class Sql
         return this;
     }
 
+    /// <summary>Appends another fragment, renumbering its parameters after the ones already here.</summary>
+    public Sql Append(Sql other)
+    {
+        var offset = _args.Count;
+        var text = other._text.ToString();
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if ((c is '{' or '}') && i + 1 < text.Length && text[i + 1] == c)
+            {
+                _text.Append(c).Append(c);
+                i++;
+            }
+            else if (c == '{')
+            {
+                var end = text.IndexOf('}', i);
+                var index = int.Parse(text.AsSpan(i + 1, end - i - 1), System.Globalization.CultureInfo.InvariantCulture);
+                _text.Append('{').Append(index + offset).Append('}');
+                i = end;
+            }
+            else
+            {
+                _text.Append(c);
+            }
+        }
+        _args.AddRange(other._args);
+        return this;
+    }
+
     public FormattableString Build() => FormattableStringFactory.Create(_text.ToString(), _args.ToArray());
 }
 

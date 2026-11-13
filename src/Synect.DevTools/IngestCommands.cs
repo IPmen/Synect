@@ -79,7 +79,8 @@ public sealed class IngestCommands(IServiceProvider services)
     public async Task<int> SendSampleAsync(Guid tenantId, CliArgs options)
     {
         var scenario = (options.Get("scenario") ?? "basic").ToLowerInvariant();
-        if (scenario is not ("basic" or "messy" or "large")) throw new ArgumentException("--scenario must be basic, messy or large");
+        if (scenario is not ("basic" or "messy" or "large" or "mirror" or "golden"))
+            throw new ArgumentException("--scenario must be basic, messy, large, mirror or golden");
         var url = options.Get("url") ?? "http://localhost:5299";
         string? tin;
         await using (var scope = services.CreateAsyncScope())
@@ -108,6 +109,7 @@ public sealed class IngestCommands(IServiceProvider services)
                 Console.WriteLine($"| Same records, new batch_id | {r.Records} | {r.Packages} | {S(r.Unchanged)} | unchanged {r.UnchangedItems} |");
                 return r.Rejected == 0 && r.Accepted == r.Records && r.UnchangedItems == r.Records ? 0 : 1;
             }
+            if (scenario is "mirror" or "golden") return await SendMirrorAsync(tenantId, new OneCSampleClient(http, key, tin), scenario, options);
             if (scenario == "basic") await scenarios.BasicAsync();
             else await scenarios.MessyAsync();
             foreach (var s in scenarios.Steps)
@@ -125,6 +127,41 @@ public sealed class IngestCommands(IServiceProvider services)
             if (temporary is not null)
                 await InTenantAsync(tenantId, sp => sp.GetRequiredService<IngestKeyService>().RevokeAsync(temporary.Id.ToString(), CancellationToken.None));
         }
+    }
+
+    /// <summary>
+    /// mirror: 1C data built from the organization's own bank operations and Didox documents (everything agrees; --plant adds
+    /// differences by fixed rules). golden: the same for the reconciliation golden set with the planted differences of
+    /// <see cref="Accounting1CGoldenSet"/>, whose right answers are printed.
+    /// </summary>
+    private async Task<int> SendMirrorAsync(Guid tenantId, OneCSampleClient client, string scenario, CliArgs options)
+    {
+        var golden = scenario == "golden";
+        var data = await InTenantAsync(tenantId, sp =>
+        {
+            var analytics = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Synect.Application.Analytics.AnalyticsOptions>>().Value;
+            var reconciliation = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Synect.Application.Reconciliation.ReconciliationOptions>>().Value;
+            var asOf = golden ? Accounting1CGoldenSet.AsOf : options.Date("date", DateOnly.FromDateTime(DateTime.UtcNow.Add(analytics.UtcOffset)));
+            return OneCMirror.BuildAsync(sp.GetRequiredService<ISynectDbContext>(), asOf, analytics.Edo.CountedStatuses, reconciliation.DocumentTypes,
+                analytics.UtcOffset, CancellationToken.None);
+        });
+        IReadOnlyDictionary<string, int>? planted = null;
+        if (golden) Accounting1CGoldenSet.Apply(data);
+        else if (options.Get("plant") == "true") planted = OneCMirror.PlantGenericDifferences(data);
+
+        var sent = await OneCMirror.SendAsync(client, data, $"{scenario}-{DateTime.UtcNow:yyyyMMddHHmmss}");
+        Console.WriteLine($"Balance date {data.AsOf:yyyy-MM-dd}: {data.Counterparties.Count} counterparties, {data.Documents.Count} documents, " +
+                          $"{data.BankDocuments.Count} bank documents, {data.PaymentOrders.Count} payment orders, {data.SettlementBalances.Count} settlement balances.");
+        Console.WriteLine($"Sent {sent.Packages} packages: accepted {sent.Accepted}, unchanged {sent.Unchanged}, rejected {sent.Rejected}.");
+        if (planted is not null)
+            foreach (var (name, count) in planted) Console.WriteLine($"  planted {name}: {count}");
+        if (golden)
+        {
+            Console.WriteLine($"Expected for 2026-10-01..2026-10-31 (pairs without a difference: {Accounting1CGoldenSet.MatchedPayments} payments, {Accounting1CGoldenSet.MatchedDocuments} documents):");
+            foreach (var e in Accounting1CGoldenSet.Expected) Console.WriteLine($"  {e.Tool,-22} {e.Kind,-16} {e.Key,-22} {e.Case}");
+            Console.WriteLine($"  compare_bank_balances_with_1c: the USD account differs by {OneCMirror.Money(Accounting1CGoldenSet.UsdBalanceDifference)}");
+        }
+        return sent.Rejected == 0 ? 0 : 1;
     }
 
     private static string S(TimeSpan t) => t.TotalSeconds.ToString("0.00", CultureInfo.InvariantCulture);

@@ -94,6 +94,13 @@ public sealed class McpNotesOptions
         "Attention items come from Synect's rules over loaded data; their thresholds (Attention:*) are assumptions still to be checked on real data. Present each item as a possible discrepancy with its basis (body, details), not as a confirmed violation.",
     ];
 
+    public string[] Accounting { get; set; } =
+    [
+        "1C figures are what the 1C extension sent to Synect; check the 1C source in data_freshness (it is stale when its last package is older than Ingest:StaleAfter).",
+        "The field mapping of the 1C export and the pairing rules of the comparison (Accounting:*) are assumptions still to be checked on real 1C data.",
+        "Comparison rows are possible discrepancies with their basis; the accountant decides what each one means.",
+    ];
+
     /// <summary>Added to tools that compare documents and payments by INN without the reconciliation.</summary>
     public string NotReconciliation { get; set; } =
         "This is a check whether Didox documents exist for the INN, not a matching of payments with documents (Это проверка наличия документов по ИНН, а не сопоставление платежей с документами). For matches use the reconciliation tools (get_paid_documents, get_unpaid_documents, get_unmatched_payments, get_counterparty_balance_estimate).";

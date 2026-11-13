@@ -22,6 +22,9 @@ public enum ToolGroup
     Documents = 4,
     Reconciliation = 8,
     Attention = 16,
+
+    /// <summary>1C data and its comparison with the bank and Didox.</summary>
+    Accounting = 32,
 }
 
 /// <summary>
@@ -253,6 +256,7 @@ public sealed class ToolRunner(
         }
         if (group.HasFlag(ToolGroup.Reconciliation)) foreach (var n in notes.Reconciliation) yield return n;
         if (group.HasFlag(ToolGroup.Attention)) foreach (var n in notes.Attention) yield return n;
+        if (group.HasFlag(ToolGroup.Accounting)) foreach (var n in notes.Accounting) yield return n;
     }
 
     public string CountedStatusesNote =>

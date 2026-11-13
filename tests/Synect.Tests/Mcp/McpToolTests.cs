@@ -30,6 +30,9 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         "confirm_match", "reject_match",
         "get_attention_items", "get_attention_summary", "update_attention_item",
         "list_organizations", "get_portfolio_overview", "get_connections_overview",
+        // 1C (stage 8b).
+        "get_1c_documents", "get_1c_payment_orders", "get_1c_settlement_balances", "get_1c_bank_account_balances",
+        "compare_bank_with_1c", "compare_didox_with_1c", "compare_bank_balances_with_1c", "compare_counterparty_with_1c",
     ];
 
     /// <summary>Tools over every organization of the key (stage 6.5).</summary>
@@ -89,6 +92,14 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         ["get_match_details"] = new { match_id = "00000000-0000-0000-0000-000000000001" },
         ["confirm_match"] = new { match_id = "00000000-0000-0000-0000-000000000001" },
         ["reject_match"] = new { match_id = "00000000-0000-0000-0000-000000000001" },
+        ["get_1c_documents"] = null,
+        ["get_1c_payment_orders"] = null,
+        ["get_1c_settlement_balances"] = null,
+        ["get_1c_bank_account_balances"] = null,
+        ["compare_bank_with_1c"] = October,
+        ["compare_didox_with_1c"] = October,
+        ["compare_bank_balances_with_1c"] = null,
+        ["compare_counterparty_with_1c"] = new { inn = Alpha, from = "2026-10-01", to = "2026-10-31" },
         ["get_attention_items"] = null,
         ["get_attention_summary"] = null,
         ["update_attention_item"] = new { item_id = "00000000-0000-0000-0000-000000000001", action = "seen" },

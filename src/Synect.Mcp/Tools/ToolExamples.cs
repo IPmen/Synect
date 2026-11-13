@@ -55,6 +55,15 @@ public static class ToolExamples
         ["get_match_details"] = "«Bu moslik nima asosida?», «Бу мослик қайси сабабларга асосланган?»",
         ["confirm_match"] = "«Bu moslikni tasdiqla», «Бу мосликни тасдиқла»",
         ["reject_match"] = "«Bu moslik noto'g'ri, rad et», «Бу мослик нотўғри, рад эт»",
+        // 1C
+        ["get_1c_documents"] = "«1C da qaysi hujjatlar o'tkazilmagan?», «1С да қайси ҳужжатлар ўтказилмаган?»",
+        ["get_1c_payment_orders"] = "«1C dagi to'lov topshiriqnomalari», «1С даги тўлов топшириқномалари»",
+        ["get_1c_settlement_balances"] = "«1C bo'yicha debitorlik va kreditorlik qarzi qancha?», «1С бўйича дебиторлик қарзи қанча?»",
+        ["get_1c_bank_account_balances"] = "«1C da hisob raqamdagi qoldiq qancha?», «1С да ҳисоб рақамдаги қолдиқ қанча?»",
+        ["compare_bank_with_1c"] = "«Bank ko'chirmasidagi qaysi to'lovlar 1C ga kiritilmagan?», «Кўчирмадаги қайси тўловлар 1С га киритилмаган?»",
+        ["compare_didox_with_1c"] = "«Didoxdagi qaysi hisob-fakturalar 1C ga kiritilmagan?», «Қайси ҳисоб-фактуралар 1С га киритилмаган?»",
+        ["compare_bank_balances_with_1c"] = "«1C dagi qoldiq bank bilan to'g'ri keladimi?», «1С даги қолдиқ банк билан тўғри келадими?»",
+        ["compare_counterparty_with_1c"] = "«Kontragent bilan o'zaro hisob-kitoblar 1C bilan to'g'ri keladimi?», «Контрагент билан ҳисоб-китоблар 1С билан тўғри келадими?»",
         // Attention
         ["get_attention_items"] = "«Nimalarga e'tibor berish kerak?», «Muhim ogohlantirishlar ro'yxati», «Нималарга эътибор бериш керак?», «Қандай огоҳлантиришлар бор?»",
         ["get_attention_summary"] = "«Muhim ogohlantirishlar bormi?», «Муҳим огоҳлантиришлар борми?»",

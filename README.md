@@ -176,6 +176,7 @@ Errors are answers with `isError: true` and `error.code`: `invalid_argument`, `t
 | Review | `confirm_match`, `reject_match` (scope `review`; change only Synect's reconciliation data) |
 | Attention | `get_attention_items`, `get_attention_summary`, `update_attention_item` (scope `review`; changes only Synect's attention list) |
 | Refresh | `request_data_refresh` (scope `sync_request`) |
+| 1C | `get_1c_documents`, `get_1c_payment_orders`, `get_1c_settlement_balances`, `get_1c_bank_account_balances`, `compare_bank_with_1c`, `compare_didox_with_1c`, `compare_bank_balances_with_1c`, `compare_counterparty_with_1c` (see "1C questions and comparison") |
 
 Typical questions and the tool for each: [docs/demo-questions.md](docs/demo-questions.md).
 
@@ -583,8 +584,8 @@ part are unchanged.
 
 ## 1C data: storage and receiver (stage 8a)
 
-Our side for 1C data: tables and a receiver of packages pushed by a 1C extension. The extension itself, reconciliation
-with 1C, MCP tools and attention rules for 1C data are not part of this stage. The real 1C object and field names are not
+Our side for 1C data: tables and a receiver of packages pushed by a 1C extension. The extension itself and attention rules
+for 1C data are not part of this stage; the MCP tools and the comparison with the bank and Didox came with stage 8b (below). The real 1C object and field names are not
 known yet: the receiver works with the logical fields of the export contract ("Контракт выгрузки данных 1С в Synect").
 
 **Design rules.**
@@ -699,6 +700,66 @@ PostgreSQL writes: 20 000 records, 26 000 child rows and 20 000 raw objects), th
 (duplicates), the same records under new batch ids 1.4-1.6 s (all unchanged). `Ingest:RateLimit:PackagesPerMinute` must
 be raised for this run (the sender waits for `Retry-After` otherwise).
 
+## 1C questions and comparison with the bank and Didox (stage 8b)
+
+Eight read-only MCP tools over the data received from 1C (`Synect.Application/Accounting1C`, `Synect.Mcp/Tools/AccountingTools.cs`).
+Nothing is stored: every comparison is computed on request from `accounting_*`, `bank_transactions`, `edo_documents` and
+`bank_daily_balances`. They read only the Synect database, never 1C.
+
+| Tool | Question |
+|---|---|
+| `get_1c_documents` | Sales and purchase documents of 1C by period, kind, counterparty, state (`active`, `posted`, `unposted`, `deleted`, `all`), `without_esf`, number |
+| `get_1c_payment_orders` | Payment orders created in 1C and their bank status |
+| `get_1c_settlement_balances` | Receivables and payables by the accounting records (latest 1C export on or before a date), per counterparty and currency, with totals |
+| `get_1c_bank_account_balances` | Bank account balances as 1C shows them |
+| `compare_bank_with_1c` | Bank statement against 1C bank documents: `missing_in_1c`, `missing_in_bank`, `amount_differs`, `not_posted_in_1c` |
+| `compare_didox_with_1c` | Didox invoices and acts (counted statuses) against 1C documents: `missing_in_1c`, `missing_in_didox`, `amount_differs`, `not_posted_in_1c` |
+| `compare_bank_balances_with_1c` | Per account: balance by 1C against the bank's closing balance (`equal`, `differs`, `no_1c_balance`, `no_bank_data`) |
+| `compare_counterparty_with_1c` | One counterparty and period: documents (Didox against 1C) and payments (bank against 1C) per currency, differences, 1C settlement balance |
+
+**Pairing rules** (`AccountingMatcher`, deterministic, each record in at most one pair, ties by date and id; **assumptions
+to check on real data**, `Accounting:*`):
+- Payments: same direction, currency, amount and INN with dates at most `PaymentDateWindowDays` (3) apart; then the same
+  when one side has no INN; then same direction, currency and INN with another amount (`amount_differs`).
+- Documents: the Didox id stored in the 1C document (`esf_id`); then direction, INN and document number (number keys of
+  the reconciliation: "СФ-101" = "сф 101"); then direction, INN and amount with dates at most `DocumentDateWindowDays` (5)
+  apart. A pair with different amounts is `amount_differs`.
+- A pair whose 1C document is not posted is `not_posted_in_1c`. Deleted 1C records and bank operations rejected by the
+  bank are never compared. Matching runs over the period widened by the window; a row is reported by its own date.
+- A comparison reads at most `MaxCompareRows` (50 000) records a side and asks to narrow the period otherwise.
+
+Answers follow the common rules: `data_freshness` (with the 1C source), `notes` (1C data is what the extension sent; the
+field mapping and the pairing rules are unconfirmed; rows are possible discrepancies), masked account numbers, 1C text
+(names, purposes, comments, statuses) wrapped as `untrusted_text`. Fields named `accounting_*` are the 1C side.
+
+**Data with known answers.** `OneCMirror` builds 1C data from what Synect already holds for an organization: every
+error-free bank operation becomes a 1C bank document, every comparable Didox document a 1C document, plus counterparties,
+contracts, bank accounts, payment orders and balances. An unchanged mirror compares as "everything agrees".
+`Accounting1CGoldenSet` is the mirror of the reconciliation golden set with planted differences:
+
+| Planted | Expected |
+|---|---|
+| Receipt of 333 333.33 (p4) left out of 1C | `compare_bank_with_1c`: `missing_in_1c` |
+| Receipt of 500 000 (p2) entered as 505 000 | `amount_differs`, +5 000.00 |
+| Receipt of 555 000 (p17) entered and not posted | `not_posted_in_1c` |
+| Payment of 150 000 only in 1C | `missing_in_bank` |
+| Payment entered a day later (p8b); cash receipt without an INN (p12) | found, not reported |
+| Invoice F-3 (d7c) left out of 1C | `compare_didox_with_1c`: `missing_in_1c` |
+| Invoice 47 (d9) entered as 110 000 instead of 100 000 | `amount_differs`, +10 000.00 |
+| Invoice H-20 (d16h) not posted | `not_posted_in_1c` |
+| Sales document H-99 only in 1C, without ESF | `missing_in_didox`; `get_1c_documents` with `without_esf` |
+| Documents without the Didox id in 1C (d2, d3, d15e); act without ESF data (d20) | found by number and INN / by amount, INN and date |
+| A document marked deleted in 1C | never compared; `get_1c_documents` with `state = deleted` |
+| USD account: 1C balance 1 000.00 higher | `compare_bank_balances_with_1c`: `differs` |
+| Payment order prepared and not sent | `get_1c_payment_orders` with `state = unposted` |
+
+Pairs without a difference in October 2026: 20 of 23 payments, 21 of 24 documents. Tests ask the tools through the real
+MCP transport and pin these answers (`AccountingToolsTests`), and check that an unchanged mirror has no differences.
+
+`send-1c-sample --tenant X --scenario mirror [--plant] [--date yyyy-MM-dd]` sends a mirror of any organization
+(`--plant` adds differences by fixed rules and prints how many); `--scenario golden` sends the golden data for a tenant
+holding the reconciliation golden set (`reconcile-eval` creates "Reconciliation golden set"; give it a TIN with `add-organization`) and prints the expected answers.
+
 ## Developer tools
 
 ```
@@ -719,6 +780,8 @@ dotnet run --project src/Synect.DevTools -- list-ingest-keys --tenant "Demo clie
 dotnet run --project src/Synect.DevTools -- revoke-ingest-key --tenant "Demo client 1" --key <key id or prefix>
 dotnet run --project src/Synect.DevTools -- list-ingest-batches --tenant "Demo client 1" [--limit 50]
 dotnet run --project src/Synect.DevTools -- send-1c-sample --tenant "Demo client 1" --scenario basic|messy|large
+dotnet run --project src/Synect.DevTools -- send-1c-sample --tenant "Demo client 1" --scenario mirror [--plant]
+dotnet run --project src/Synect.DevTools -- send-1c-sample --tenant "Reconciliation golden set" --scenario golden
 dotnet run --project src/Synect.DevTools -- normalize-currency --all
 dotnet run --project src/Synect.DevTools -- reconcile --tenant "Demo client 1" [--inn 300000005]
 dotnet run --project src/Synect.DevTools -- rebuild-reconciliation --tenant "Demo client 1"
@@ -843,6 +906,9 @@ timeout, so a genuinely slow query still fails.
 | `Ingest:SourceUtcOffset` | 05:00 | Offset of 1C date-times sent without one. **Assumption.** |
 | `Ingest:MaxTextLength` | 4000 | Longest free text of an item (names, purpose, comment). |
 | `Ingest:FullSyncRetention` | 7 days | Key lists of full exports that never finished are removed after this. |
+| `Accounting:PaymentDateWindowDays` | 3 | Bank payment and 1C bank document are one payment within this many days. **Assumption.** |
+| `Accounting:DocumentDateWindowDays` | 5 | Didox and 1C documents without a common number, same amount and INN. **Assumption.** |
+| `Accounting:MaxCompareRows` | 50 000 | Most records a side of a comparison reads; a longer period must be narrowed. |
 | `Statements:MaxFileBytes` | 50 MB | Largest statement file. |
 | `Statements:PreviewRows` | 5 | Operations shown by a dry run. |
 | `Statements:MaxPeriodDays` | 3700 | Longest period of one statement. |

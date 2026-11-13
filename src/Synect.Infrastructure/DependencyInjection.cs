@@ -71,6 +71,7 @@ public static class DependencyInjection
         services.Configure<Synect.Application.Attention.AttentionOptions>(configuration.GetSection("Attention"));
         services.Configure<Synect.Application.Accounts.AccountsOptions>(configuration.GetSection("Accounts"));
         services.Configure<Synect.Application.Ingest.IngestOptions>(configuration.GetSection("Ingest"));
+        services.Configure<Synect.Application.Accounting1C.AccountingOptions>(configuration.GetSection("Accounting"));
         return services;
     }
 
