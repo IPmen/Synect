@@ -20,7 +20,7 @@ public sealed class ParsedItem
     public string? ErrorMessage { get; set; }
     public bool IsValid => ErrorCode is null;
 
-    /// <summary>Column -> value (string, long, int, decimal, bool, DateOnly, DateTimeOffset or null).</summary>
+    /// <summary>Column -> value (string, string[], long, int, decimal, bool, DateOnly, DateTimeOffset or null).</summary>
     public Dictionary<string, object?> Values { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Fields Synect does not know, as a JSON object.</summary>
@@ -111,6 +111,8 @@ public sealed class IngestItemParser
                 result.Values[f.Column] = _options.DefaultCurrency;
             if (_spec.Fields.Any(f => f.Column == "posted") && !result.Values.ContainsKey("posted") && !_spec.Fields.Single(f => f.Column == "posted").Required)
                 result.Values["posted"] = false;
+            foreach (var f in _spec.Fields.Where(f => f.Default != IngestFieldDefault.None && !result.Values.ContainsKey(f.Column)))
+                result.Values[f.Column] = f.Default == IngestFieldDefault.False ? false : exportedAt;
 
             var missingKeys = _spec.Keys.Where(k => k.Required && !result.Values.ContainsKey(k.Column)).ToList();
             if (_spec.HasRef && missingKeys.Count > 0)
@@ -123,8 +125,8 @@ public sealed class IngestItemParser
             var missing = _spec.Fields.Where(f => f.Required && !result.Values.ContainsKey(f.Column)).Select(f => f.Name).ToList();
             if (missing.Count > 0)
             {
-                // A deletion of an object that 1C no longer has may carry only its ref.
-                if (!(result.IsDeleted && _spec.HasRef))
+                // A deletion of an object that 1C no longer has may carry only its ref (current-state rows: only their key).
+                if (!(result.IsDeleted && (_spec.HasRef || _spec.CurrentState)))
                     throw new IngestValueException(IngestCodes.MissingField, $"Required field(s) missing: {string.Join(", ", missing)}.");
                 result.IsDeletionNotice = true;
             }
@@ -133,6 +135,10 @@ public sealed class IngestItemParser
                 result.Children = ReadChildren(rows);
             else if (children is not null)
                 result.Children = [];
+
+            if (_spec.SearchColumn is { } search)
+                result.Values[search] = Synect.Domain.Counterparties.CounterpartyNameNormalizer.NormalizeText(
+                    result.Values.GetValueOrDefault("name") as string);
 
             result.ExtraJson = WriteObject(extra);
             result.ContentHash = IngestHash.Compute(item);
@@ -199,10 +205,12 @@ public sealed class IngestItemParser
             IngestFieldType.Currency => IngestValues.Currency(value, f.Name),
             IngestFieldType.DocKind => IngestValues.DocKind(value, f.Name).ToString(),
             IngestFieldType.Direction => IngestValues.Direction(value, f.Name).ToString(),
+            IngestFieldType.Barcodes => IngestValues.Barcodes(value, f.Name),
+            IngestFieldType.ItemType => IngestValues.ItemType(value),
             _ => throw new InvalidOperationException($"Unknown field type {f.Type}."),
         };
         // A rate that is not a number (e.g. "Без НДС") is not an error: NULL in the column, the source text in extra.
-        if (parsed is null && f.Type == IngestFieldType.Rate) extra.Add(source);
+        if (parsed is null && f.Type is IngestFieldType.Rate or IngestFieldType.ItemType) extra.Add(source);
         if (parsed is not null) target[f.Column] = parsed;
     }
 

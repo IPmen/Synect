@@ -33,7 +33,20 @@ public static class CounterpartyNameNormalizer
 
     public static string Normalize(string? name)
     {
-        if (string.IsNullOrWhiteSpace(name)) return string.Empty;
+        var words = Words(name);
+        var withoutForms = RemoveLegalForms(words);
+        return string.Join(' ', withoutForms.Count > 0 ? withoutForms : words);
+    }
+
+    /// <summary>
+    /// The same canonical form without removing legal forms: for names that are not organizations (catalog items of 1C),
+    /// where "IP" or "AO" may be part of the name ("IP камера").
+    /// </summary>
+    public static string NormalizeText(string? text) => string.Join(' ', Words(text));
+
+    private static List<string> Words(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return [];
 
         // 1. Lower case and Cyrillic to Latin (shared with the payment purpose parser); apostrophes (o', g', tutuq
         //    belgisi) are dropped, so "O'zbekiston", "Oʻzbekiston" and "Ўзбекистон" all give "ozbekiston".
@@ -49,9 +62,7 @@ public static class CounterpartyNameNormalizer
 
         var text = LatinTransliterator.ApplyLatinVariants(cleaned.ToString());
 
-        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
-        var withoutForms = RemoveLegalForms(words);
-        return string.Join(' ', withoutForms.Count > 0 ? withoutForms : words);
+        return text.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
     }
 
     private static List<string> RemoveLegalForms(List<string> words)

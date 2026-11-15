@@ -96,7 +96,7 @@ public sealed class McpNotesOptions
 
     public string[] Accounting { get; set; } =
     [
-        "1C figures are what the 1C extension sent to Synect; check the 1C source in data_freshness (it is stale when its last package is older than Ingest:StaleAfter).",
+        "1C figures are what the 1C extension sent to Synect; check the 1C source in data_freshness (data_groups: accounting is stale when its last package is older than Ingest:AccountingStaleAfter).",
         "The field mapping of the 1C export and the pairing rules of the comparison (Accounting:*) are assumptions still to be checked on real 1C data.",
         "Comparison rows are possible discrepancies with their basis; the accountant decides what each one means.",
     ];

@@ -8,6 +8,7 @@ using ModelContextProtocol.Server;
 using Synect.Application.Access;
 using Synect.Application.Accounts;
 using Synect.Application.Analytics;
+using Synect.Application.Ingest;
 using Synect.Domain.Attention;
 using Synect.Domain.Sync;
 using Synect.Mcp.Hosting;
@@ -253,8 +254,11 @@ public sealed class PortfolioTools(ToolRunner runner, McpCaller caller, Organiza
         c.StatusChangedAt,
         LastSuccessfulLoadAt = c.LastSuccessfulSyncAt,
         HoursSinceLastLoad = c.LastSuccessfulSyncAt is { } at ? Math.Round((now - at).TotalHours, 1) : (double?)null,
-        Stale = c.LastSuccessfulSyncAt is not { } last || now - last > (c.StaleAfter ?? runner.Options.StaleAfter),
+        Stale = c.DataGroups is { } groups
+            ? IngestFreshnessGroups.IsStale(groups)
+            : c.LastSuccessfulSyncAt is not { } last || now - last > (c.StaleAfter ?? runner.Options.StaleAfter),
         StaleAfterHours = (c.StaleAfter ?? runner.Options.StaleAfter).TotalHours,
+        DataGroups = c.DataGroups is { } g ? runner.DataGroups(g, now) : null,
         LastLoadComplete = c.LastLoadComplete,
         c.OnboardingStatus,
         OnboardingNote = TextSafety.Untrusted(c.OnboardingNote, runner.Options.UntrustedTextMaxLength),
@@ -266,6 +270,6 @@ public sealed class PortfolioTools(ToolRunner runner, McpCaller caller, Organiza
         yield return $"{rows.Count} organizations; each was read separately (its own isolated context), figures of different organizations are never added together.";
         var failed = rows.Count(r => r.Summary is null);
         if (failed > 0) yield return $"{failed} organizations could not be read now (read_error); their state is unknown, not good.";
-        yield return $"Freshness is per source in each row (last_successful_load_at, stale = older than stale_after_hours: {runner.Options.StaleAfter.TotalHours:0} hours for bank and Didox; for 1C the time of the last accepted package, stale after Ingest:StaleAfter; or never loaded).";
+        yield return $"Freshness is per source in each row (last_successful_load_at, stale = older than stale_after_hours: {runner.Options.StaleAfter.TotalHours:0} hours for bank and Didox; for 1C the time of the last accepted package, with data_groups: accounting stale after Ingest:AccountingStaleAfter, catalog after Ingest:CatalogStaleAfter, a group never received does not count unless nothing was ever received; or never loaded).";
     }
 }

@@ -197,8 +197,8 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("jsonb")
-                        .HasColumnName("extra")
-                        .HasDefaultValue("{}");
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
 
                     b.Property<DateTimeOffset>("FirstSeenAt")
                         .HasColumnType("timestamp with time zone")
@@ -298,8 +298,8 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("jsonb")
-                        .HasColumnName("extra")
-                        .HasDefaultValue("{}");
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
 
                     b.Property<DateTimeOffset>("FirstSeenAt")
                         .HasColumnType("timestamp with time zone")
@@ -429,8 +429,8 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("jsonb")
-                        .HasColumnName("extra")
-                        .HasDefaultValue("{}");
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
 
                     b.Property<DateTimeOffset>("FirstSeenAt")
                         .HasColumnType("timestamp with time zone")
@@ -517,8 +517,8 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("jsonb")
-                        .HasColumnName("extra")
-                        .HasDefaultValue("{}");
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
 
                     b.Property<string>("SettledDocumentRef")
                         .HasMaxLength(64)
@@ -568,8 +568,8 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("jsonb")
-                        .HasColumnName("extra")
-                        .HasDefaultValue("{}");
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
 
                     b.Property<DateTimeOffset>("FirstSeenAt")
                         .HasColumnType("timestamp with time zone")
@@ -658,8 +658,8 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("jsonb")
-                        .HasColumnName("extra")
-                        .HasDefaultValue("{}");
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
 
                     b.Property<DateTimeOffset>("FirstSeenAt")
                         .HasColumnType("timestamp with time zone")
@@ -825,8 +825,8 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("jsonb")
-                        .HasColumnName("extra")
-                        .HasDefaultValue("{}");
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
 
                     b.Property<DateTimeOffset>("FirstSeenAt")
                         .HasColumnType("timestamp with time zone")
@@ -913,8 +913,8 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("jsonb")
-                        .HasColumnName("extra")
-                        .HasDefaultValue("{}");
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
 
                     b.Property<string>("Name")
                         .HasColumnType("text")
@@ -993,8 +993,8 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("jsonb")
-                        .HasColumnName("extra")
-                        .HasDefaultValue("{}");
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
 
                     b.Property<DateTimeOffset>("FirstSeenAt")
                         .HasColumnType("timestamp with time zone")
@@ -1112,8 +1112,8 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("jsonb")
-                        .HasColumnName("extra")
-                        .HasDefaultValue("{}");
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
 
                     b.Property<DateTimeOffset>("FirstSeenAt")
                         .HasColumnType("timestamp with time zone")
@@ -1282,6 +1282,10 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("rejected");
 
+                    b.Property<int>("RemovedRows")
+                        .HasColumnType("integer")
+                        .HasColumnName("removed_rows");
+
                     b.Property<int>("SchemaVersion")
                         .HasColumnType("integer")
                         .HasColumnName("schema_version");
@@ -1321,6 +1325,31 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasFilter("full_sync_id IS NOT NULL");
 
                     b.ToTable("ingest_batches", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Accounting.IngestFreshness", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<string>("DataGroup")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("data_group");
+
+                    b.Property<DateTimeOffset>("LastAcceptedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_accepted_at");
+
+                    b.HasKey("TenantId", "ConnectionId", "DataGroup")
+                        .HasName("pk_ingest_freshness");
+
+                    b.ToTable("ingest_freshness", (string)null);
                 });
 
             modelBuilder.Entity("Synect.Domain.Accounting.IngestFullSyncItem", b =>
@@ -1412,6 +1441,54 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_ingest_keys_tenant_id_connection_id");
 
                     b.ToTable("ingest_keys", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Accounting.IngestRemovedRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Entity")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("entity");
+
+                    b.Property<string>("FullSyncId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("full_sync_id");
+
+                    b.Property<Guid>("IngestBatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ingest_batch_id");
+
+                    b.Property<string>("ItemKey")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)")
+                        .HasColumnName("item_key");
+
+                    b.Property<DateTimeOffset>("RemovedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("removed_at");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_ingest_removed_rows");
+
+                    b.HasIndex("TenantId", "IngestBatchId")
+                        .HasDatabaseName("ix_ingest_removed_rows_tenant_id_ingest_batch_id");
+
+                    b.HasIndex("TenantId", "Entity", "ItemKey")
+                        .HasDatabaseName("ix_ingest_removed_rows_tenant_id_entity_item_key");
+
+                    b.ToTable("ingest_removed_rows", (string)null);
                 });
 
             modelBuilder.Entity("Synect.Domain.Accounts.Account", b =>
@@ -2107,6 +2184,560 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_statement_imports_tenant_id_connection_id_imported_at");
 
                     b.ToTable("statement_imports", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Catalog.CatalogCategory", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .HasColumnName("content_hash")
+                        .IsFixedLength();
+
+                    b.Property<string>("Extra")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_deleted");
+
+                    b.Property<Guid>("LastBatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_batch_id");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<DateTimeOffset>("ModifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("modified_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("name");
+
+                    b.Property<string>("ParentRef")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("parent_ref");
+
+                    b.Property<string>("Ref")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("ref");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("schema_version");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_catalog_categories");
+
+                    b.HasAlternateKey("TenantId", "Ref")
+                        .HasName("ak_catalog_categories_tenant_id_ref");
+
+                    b.HasIndex("TenantId", "ParentRef")
+                        .HasDatabaseName("ix_catalog_categories_tenant_id_parent_ref");
+
+                    b.ToTable("catalog_categories", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Catalog.CatalogItem", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Article")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("article");
+
+                    b.PrimitiveCollection<string[]>("Barcodes")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("barcodes");
+
+                    b.Property<string>("CategoryRef")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("category_ref");
+
+                    b.Property<string>("Code")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .HasColumnName("content_hash")
+                        .IsFixedLength();
+
+                    b.Property<string>("Extra")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<string>("FullName")
+                        .HasColumnType("text")
+                        .HasColumnName("full_name");
+
+                    b.Property<bool>("IsArchived")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_archived");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_deleted");
+
+                    b.Property<string>("ItemType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("item_type");
+
+                    b.Property<Guid>("LastBatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_batch_id");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<DateTimeOffset>("ModifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("modified_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Ref")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("ref");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("schema_version");
+
+                    b.Property<string>("SearchName")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("search_name");
+
+                    b.Property<string>("Unit")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("unit");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<decimal?>("VatRate")
+                        .HasColumnType("numeric(9,4)")
+                        .HasColumnName("vat_rate");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_catalog_items");
+
+                    b.HasAlternateKey("TenantId", "Ref")
+                        .HasName("ak_catalog_items_tenant_id_ref");
+
+                    b.HasIndex("TenantId", "Article")
+                        .HasDatabaseName("ix_catalog_items_tenant_id_article");
+
+                    b.HasIndex("TenantId", "CategoryRef")
+                        .HasDatabaseName("ix_catalog_items_tenant_id_category_ref");
+
+                    b.HasIndex("TenantId", "Code")
+                        .HasDatabaseName("ix_catalog_items_tenant_id_code");
+
+                    b.ToTable("catalog_items", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Catalog.CatalogPrice", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .HasColumnName("content_hash")
+                        .IsFixedLength();
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<DateOnly?>("EffectiveFrom")
+                        .HasColumnType("date")
+                        .HasColumnName("effective_from");
+
+                    b.Property<string>("Extra")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_deleted");
+
+                    b.Property<string>("ItemRef")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("item_ref");
+
+                    b.Property<Guid>("LastBatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_batch_id");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<DateTimeOffset>("ModifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("modified_at");
+
+                    b.Property<long>("PriceMinor")
+                        .HasColumnType("bigint")
+                        .HasColumnName("price_minor");
+
+                    b.Property<string>("PriceTypeRef")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("price_type_ref");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("schema_version");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_catalog_prices");
+
+                    b.HasIndex("TenantId", "ItemRef", "PriceTypeRef")
+                        .IsUnique()
+                        .HasDatabaseName("ix_catalog_prices_tenant_id_item_ref_price_type_ref");
+
+                    b.ToTable("catalog_prices", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Catalog.CatalogPriceType", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .HasColumnName("content_hash")
+                        .IsFixedLength();
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<string>("Extra")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<bool>("IsDefault")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_default");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_deleted");
+
+                    b.Property<Guid>("LastBatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_batch_id");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<DateTimeOffset>("ModifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("modified_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Ref")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("ref");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("schema_version");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_catalog_price_types");
+
+                    b.HasAlternateKey("TenantId", "Ref")
+                        .HasName("ak_catalog_price_types_tenant_id_ref");
+
+                    b.ToTable("catalog_price_types", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Catalog.CatalogStock", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("AsOf")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("as_of");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .HasColumnName("content_hash")
+                        .IsFixedLength();
+
+                    b.Property<string>("Extra")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_deleted");
+
+                    b.Property<string>("ItemRef")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("item_ref");
+
+                    b.Property<Guid>("LastBatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_batch_id");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<DateTimeOffset>("ModifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("modified_at");
+
+                    b.Property<decimal>("Quantity")
+                        .HasColumnType("numeric(28,6)")
+                        .HasColumnName("quantity");
+
+                    b.Property<decimal?>("Reserved")
+                        .HasColumnType("numeric(28,6)")
+                        .HasColumnName("reserved");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("schema_version");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("WarehouseRef")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("warehouse_ref");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_catalog_stock");
+
+                    b.HasIndex("TenantId", "ItemRef", "WarehouseRef")
+                        .IsUnique()
+                        .HasDatabaseName("ix_catalog_stock_tenant_id_item_ref_warehouse_ref");
+
+                    b.ToTable("catalog_stock", (string)null);
+                });
+
+            modelBuilder.Entity("Synect.Domain.Catalog.CatalogWarehouse", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .HasColumnName("content_hash")
+                        .IsFixedLength();
+
+                    b.Property<string>("Extra")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("extra");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_deleted");
+
+                    b.Property<Guid>("LastBatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_batch_id");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<DateTimeOffset>("ModifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("modified_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Ref")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("ref");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("schema_version");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId", "Id")
+                        .HasName("pk_catalog_warehouses");
+
+                    b.HasAlternateKey("TenantId", "Ref")
+                        .HasName("ak_catalog_warehouses_tenant_id_ref");
+
+                    b.ToTable("catalog_warehouses", (string)null);
                 });
 
             modelBuilder.Entity("Synect.Domain.Counterparties.Counterparty", b =>
@@ -3257,6 +3888,16 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_ingest_batches_ingest_keys_tenant_id_ingest_key_id");
                 });
 
+            modelBuilder.Entity("Synect.Domain.Accounting.IngestFreshness", b =>
+                {
+                    b.HasOne("Synect.Domain.Sync.Connection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_ingest_freshness_connections_tenant_id_connection_id");
+                });
+
             modelBuilder.Entity("Synect.Domain.Accounting.IngestFullSyncItem", b =>
                 {
                     b.HasOne("Synect.Domain.Tenants.Tenant", null)
@@ -3282,6 +3923,16 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_ingest_keys_connections_tenant_id_connection_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Accounting.IngestRemovedRow", b =>
+                {
+                    b.HasOne("Synect.Domain.Accounting.IngestBatch", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "IngestBatchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_ingest_removed_rows_ingest_batches_tenant_id_ingest_batch_id");
                 });
 
             modelBuilder.Entity("Synect.Domain.Accounts.AccountTenant", b =>
@@ -3434,6 +4085,66 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasForeignKey("TenantId", "SyncRunId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_statement_imports_sync_runs_tenant_id_sync_run_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Catalog.CatalogCategory", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_catalog_categories_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Catalog.CatalogItem", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_catalog_items_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Catalog.CatalogPrice", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_catalog_prices_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Catalog.CatalogPriceType", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_catalog_price_types_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Catalog.CatalogStock", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_catalog_stock_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Synect.Domain.Catalog.CatalogWarehouse", b =>
+                {
+                    b.HasOne("Synect.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_catalog_warehouses_tenants_tenant_id");
                 });
 
             modelBuilder.Entity("Synect.Domain.Counterparties.Counterparty", b =>

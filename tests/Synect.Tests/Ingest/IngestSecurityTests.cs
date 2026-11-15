@@ -202,9 +202,10 @@ public class IngestSecurityTests(IngestFixture f) : IClassFixture<IngestFixture>
         Assert.NotNull((await OneCAsync()).LastSuccessfulSyncAt);
 
         var now = f.Host.Time.Now;
-        await f.ExecAdminAsync($"UPDATE connections SET last_successful_sync_at = '{now.AddHours(-47):O}' WHERE id = '{org.Key.ConnectionId}'");
+        // Freshness is per data group (ingest_freshness); this organization sends accounting data only.
+        await f.ExecAdminAsync($"UPDATE ingest_freshness SET last_accepted_at = '{now.AddHours(-47):O}' WHERE connection_id = '{org.Key.ConnectionId}'");
         Assert.False((await OneCAsync()).IsStale);
-        await f.ExecAdminAsync($"UPDATE connections SET last_successful_sync_at = '{now.AddHours(-49):O}' WHERE id = '{org.Key.ConnectionId}'");
+        await f.ExecAdminAsync($"UPDATE ingest_freshness SET last_accepted_at = '{now.AddHours(-49):O}' WHERE connection_id = '{org.Key.ConnectionId}'");
         Assert.True((await OneCAsync()).IsStale);
 
         // The portfolio rows carry the same threshold.
@@ -212,7 +213,7 @@ public class IngestSecurityTests(IngestFixture f) : IClassFixture<IngestFixture>
         Assert.Equal(TimeSpan.FromHours(48), summary.Data.Connections.Single(c => c.Kind == AdapterKind.Accounting1C).StaleAfter);
 
         // MCP: data_freshness lists the 1C source and its stale note uses 48 hours (real clock of the Api host).
-        await f.ExecAdminAsync($"UPDATE connections SET last_successful_sync_at = now() - interval '49 hours' WHERE id = '{org.Key.ConnectionId}'");
+        await f.ExecAdminAsync($"UPDATE ingest_freshness SET last_accepted_at = now() - interval '49 hours' WHERE connection_id = '{org.Key.ConnectionId}'");
         var mcp = await f.CreateMcpKeyAsync(org.TenantId);
         var http = f.Api.CreateClient();
         var transport = new HttpClientTransport(new HttpClientTransportOptions
@@ -225,7 +226,7 @@ public class IngestSecurityTests(IngestFixture f) : IClassFixture<IngestFixture>
         var result = await client2.CallToolAsync("get_data_freshness", new Dictionary<string, object?>());
         var body = JsonSerializer.SerializeToElement(result.StructuredContent).GetRawText();
         Assert.Contains("Accounting1C", body);
-        Assert.Contains("Accounting1C source 1c was last loaded", body);
+        Assert.Contains("accounting data of the Accounting1C source 1c was last received", body);
         Assert.Contains("more than 48 hours ago", body);
     }
 

@@ -22,8 +22,32 @@ public sealed class IngestOptions
     public int[] AcceptedSchemaVersions =>
         SupportedSchemaVersions.Length == 0 ? [DefaultSchemaVersion] : SupportedSchemaVersions.Distinct().Order().ToArray();
 
-    /// <summary>The 1C source counts as stale when its last accepted package is older than this.</summary>
-    public TimeSpan StaleAfter { get; set; } = TimeSpan.FromHours(48);
+    public static readonly TimeSpan DefaultAccountingStaleAfter = TimeSpan.FromHours(48);
+    public static readonly TimeSpan DefaultCatalogStaleAfter = TimeSpan.FromMinutes(60);
+
+    /// <summary>
+    /// Accounting data of 1C (sent about once an hour) counts as stale when its last accepted package is older than this
+    /// (Ingest:AccountingStaleAfter). Not set: the former name Ingest:StaleAfter, then 48 hours. Read through
+    /// <see cref="AccountingStaleAfterOrDefault"/>. Deliberately absent from appsettings.json, so that a value configured
+    /// under the former name elsewhere (user-secrets, environment, appsettings.{Environment}.json) still applies.
+    /// </summary>
+    public TimeSpan? AccountingStaleAfter { get; set; }
+
+    /// <summary>Former name of <see cref="AccountingStaleAfter"/> (stage 8a); still read when the new name is not set.</summary>
+    public TimeSpan? StaleAfter { get; set; }
+
+    /// <summary>The accounting threshold in effect: AccountingStaleAfter, else StaleAfter, else 48 hours.</summary>
+    public TimeSpan AccountingStaleAfterOrDefault => AccountingStaleAfter ?? StaleAfter ?? DefaultAccountingStaleAfter;
+
+    /// <summary>
+    /// The catalog of 1C (changes every minute, a full export once a day) counts as stale when its last accepted package is
+    /// older than this (Ingest:CatalogStaleAfter, 60 minutes).
+    /// </summary>
+    public TimeSpan CatalogStaleAfter { get; set; } = DefaultCatalogStaleAfter;
+
+    /// <summary>Threshold of a data group.</summary>
+    public TimeSpan StaleAfterOf(Synect.Domain.Accounting.IngestDataGroup group) =>
+        group == Synect.Domain.Accounting.IngestDataGroup.Catalog ? CatalogStaleAfter : AccountingStaleAfterOrDefault;
 
     /// <summary>Currency of an item that has none (the regulated accounting currency of Uzbekistan).</summary>
     public string DefaultCurrency { get; set; } = "UZS";
@@ -43,11 +67,21 @@ public sealed class IngestOptions
 /// <summary>Ingest:RateLimit (in memory, per process).</summary>
 public sealed class IngestRateLimitOptions
 {
-    /// <summary>Packages per window and ingest key; over the limit the answer is 429 with Retry-After.</summary>
-    public int PackagesPerMinute { get; set; } = 60;
+    public const int DefaultPackagesPerMinute = 120;
+    public const int DefaultFailedAuthPerMinutePerIp = 20;
 
-    /// <summary>Failed authentications (401) per window and client IP; further requests get 429 until the window ends.</summary>
-    public int FailedAuthPerMinutePerIp { get; set; } = 20;
+    /// <summary>
+    /// Packages per window and ingest key (120: catalog changes every minute plus the hourly accounting export, which is
+    /// several packages per entity); over the limit the answer is 429 with Retry-After. It counts only packages of a VALID
+    /// key, so it does not affect guessing keys: that is limited by <see cref="FailedAuthPerMinutePerIp"/>, checked first.
+    /// </summary>
+    public int PackagesPerMinute { get; set; } = DefaultPackagesPerMinute;
+
+    /// <summary>
+    /// Failed authentications (401) per window and client IP; further requests from that IP get 429 until the window ends,
+    /// even with a valid key.
+    /// </summary>
+    public int FailedAuthPerMinutePerIp { get; set; } = DefaultFailedAuthPerMinutePerIp;
 
     public TimeSpan Window { get; set; } = TimeSpan.FromMinutes(1);
 }

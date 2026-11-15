@@ -173,15 +173,23 @@ public class IngestParserTests
         foreach (var spec in IngestSchema.Entities)
         {
             Assert.NotEmpty(spec.Keys);
-            var entity = types.Single(t => t.Name == "Accounting" + string.Concat(spec.Name.TrimEnd('s').Split('_').Select(p => char.ToUpperInvariant(p[0]) + p[1..]))
-                || (spec.Name == "counterparties" && t.Name == "AccountingCounterparty"));
+            var entity = spec.Group == Synect.Domain.Accounting.IngestDataGroup.Catalog
+                ? types.Single(t => t.Name == spec.Table switch
+                {
+                    "catalog_items" => "CatalogItem", "catalog_categories" => "CatalogCategory", "catalog_price_types" => "CatalogPriceType",
+                    "catalog_prices" => "CatalogPrice", "catalog_warehouses" => "CatalogWarehouse", "catalog_stock" => "CatalogStock",
+                    _ => throw new InvalidOperationException(spec.Table),
+                })
+                : types.Single(t => t.Name == "Accounting" + string.Concat(spec.Name.TrimEnd('s').Split('_').Select(p => char.ToUpperInvariant(p[0]) + p[1..]))
+                    || (spec.Name == "counterparties" && t.Name == "AccountingCounterparty"));
             foreach (var field in spec.DataFields)
             {
                 var property = entity.GetProperties().SingleOrDefault(p => Snake(p.Name) == field.Column);
                 Assert.True(property is not null, $"{spec.Name}.{field.Column} has no property");
                 var nullable = Nullable.GetUnderlyingType(property!.PropertyType) is not null
                                || new NullabilityInfoContext().Create(property).WriteState == NullabilityState.Nullable;
-                if (field.Required) Assert.False(nullable, $"{spec.Name}.{field.Column} is required but nullable");
+                if (field.Required || field.Default != IngestFieldDefault.None)
+                    Assert.False(nullable, $"{spec.Name}.{field.Column} is required (or always filled) but nullable");
             }
         }
     }

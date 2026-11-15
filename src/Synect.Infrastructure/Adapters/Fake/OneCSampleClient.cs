@@ -159,11 +159,51 @@ public sealed class OneCSampleClient(HttpClient http, string key, string organiz
         ["as_of_date"] = date, ["bank_account_ref"] = accountRef, ["balance"] = balance, ["turnover_debit"] = 0, ["turnover_credit"] = balance,
     };
 
+    // ---- Catalog for the Mailo bot -------------------------------------------------------------------------------------
+
+    public static Dictionary<string, object?> CatalogItem(string reference, string name, string? categoryRef, DateTimeOffset modified,
+        string type = "Goods", params string[] barcodes) => new()
+    {
+        ["ref"] = reference, ["item_type"] = type, ["code"] = "C-" + reference, ["article"] = "A-" + reference, ["name"] = name,
+        ["full_name"] = name + " (полное)", ["category_ref"] = categoryRef, ["unit"] = type == "Service" ? "усл" : "шт",
+        ["barcodes"] = barcodes, ["vat_rate"] = "12", ["is_archived"] = false, ["is_deleted"] = false, ["modified_at"] = At(modified),
+    };
+
+    public static Dictionary<string, object?> Category(string reference, string name, string? parentRef, DateTimeOffset modified) => new()
+    {
+        ["ref"] = reference, ["parent_ref"] = parentRef, ["name"] = name, ["modified_at"] = At(modified),
+    };
+
+    public static Dictionary<string, object?> PriceType(string reference, string name, bool isDefault, DateTimeOffset modified) => new()
+    {
+        ["ref"] = reference, ["name"] = name, ["currency"] = "860", ["is_default"] = isDefault, ["modified_at"] = At(modified),
+    };
+
+    public static Dictionary<string, object?> Warehouse(string reference, string name, DateTimeOffset modified) => new()
+    {
+        ["ref"] = reference, ["name"] = name, ["modified_at"] = At(modified),
+    };
+
+    public static Dictionary<string, object?> Price(string itemRef, string priceTypeRef, decimal price, DateTimeOffset modified) => new()
+    {
+        ["item_ref"] = itemRef, ["price_type_ref"] = priceTypeRef, ["price"] = price.ToString("0.00", CultureInfo.InvariantCulture),
+        ["currency"] = "UZS", ["effective_from"] = "2026-11-01", ["modified_at"] = At(modified),
+    };
+
+    public static Dictionary<string, object?> Stock(string itemRef, string warehouseRef, decimal quantity, DateTimeOffset modified, decimal? reserved = null) => new()
+    {
+        ["item_ref"] = itemRef, ["warehouse_ref"] = warehouseRef, ["quantity"] = quantity, ["reserved"] = reserved,
+        ["as_of"] = At(modified), ["modified_at"] = At(modified),
+    };
+
+    /// <summary>A valid synthetic EAN-13-like barcode (13 digits) for sample number <paramref name="n"/>.</summary>
+    public static string Barcode(int n) => (4_780_000_000_000L + n).ToString(CultureInfo.InvariantCulture);
+
     /// <summary>A valid synthetic TIN (9 digits) for sample number <paramref name="n"/>.</summary>
     public static string Tin(int n) => (300_000_000 + n % 99_999_999).ToString(CultureInfo.InvariantCulture);
 }
 
-/// <summary>Scenarios of send-1c-sample: basic, messy and large (see the DevTools command).</summary>
+/// <summary>Scenarios of send-1c-sample: basic, messy, catalog-minute and large (see the DevTools command).</summary>
 public sealed class OneCSampleScenarios(OneCSampleClient client)
 {
     private readonly List<SampleStep> _steps = [];
@@ -210,6 +250,37 @@ public sealed class OneCSampleScenarios(OneCSampleClient client)
         await StepAsync("bank_account_balances", "accepted", client.Envelope("bank_account_balances", b + "-bb", 1, new[]
         {
             OneCSampleClient.BankAccountBalance("2026-10-31", "ba-001", 12_345_678.9m), OneCSampleClient.BankAccountBalance("2026-10-31", "ba-002", 1000m),
+        }), ok, ct: ct);
+
+        // Catalog for the Mailo bot.
+        await StepAsync("catalog categories", "accepted", client.Envelope("categories", b + "-cat", 1, new[]
+        {
+            OneCSampleClient.Category("cat-root", "Товары", null, T(0)), OneCSampleClient.Category("cat-drinks", "Напитки", "cat-root", T(0)),
+            OneCSampleClient.Category("cat-services", "Услуги", null, T(0)),
+        }), ok, ct: ct);
+        await StepAsync("price types", "accepted", client.Envelope("price_types", b + "-pt", 1, new[]
+        {
+            OneCSampleClient.PriceType("pt-retail", "Розничная", true, T(0)), OneCSampleClient.PriceType("pt-wholesale", "Оптовая", false, T(0)),
+        }), ok, ct: ct);
+        await StepAsync("warehouses", "accepted", client.Envelope("warehouses", b + "-wh", 1, new[]
+        {
+            OneCSampleClient.Warehouse("wh-main", "Основной склад", T(0)), OneCSampleClient.Warehouse("wh-shop", "Магазин", T(0)),
+        }), ok, ct: ct);
+        await StepAsync("items (goods with barcodes, a service)", "accepted", client.Envelope("items", b + "-it", 1, new[]
+        {
+            OneCSampleClient.CatalogItem("it-001", "Сок яблочный 1 л", "cat-drinks", T(0), "Goods", OneCSampleClient.Barcode(1), OneCSampleClient.Barcode(2)),
+            OneCSampleClient.CatalogItem("it-002", "Вода минеральная 0,5 л", "cat-drinks", T(0), "Goods", OneCSampleClient.Barcode(3)),
+            OneCSampleClient.CatalogItem("it-003", "Доставка", "cat-services", T(0), "Service"),
+        }), ok, ct: ct);
+        await StepAsync("prices", "accepted", client.Envelope("prices", b + "-pr", 1, new[]
+        {
+            OneCSampleClient.Price("it-001", "pt-retail", 15_000m, T(0)), OneCSampleClient.Price("it-001", "pt-wholesale", 12_500m, T(0)),
+            OneCSampleClient.Price("it-002", "pt-retail", 4_000m, T(0)), OneCSampleClient.Price("it-003", "pt-retail", 30_000m, T(0)),
+        }), ok, ct: ct);
+        await StepAsync("stock", "accepted", client.Envelope("stock", b + "-st", 1, new[]
+        {
+            OneCSampleClient.Stock("it-001", "wh-main", 120m, T(0), 5m), OneCSampleClient.Stock("it-001", "wh-shop", 12.5m, T(0)),
+            OneCSampleClient.Stock("it-002", "wh-main", 480m, T(0)),
         }), ok, ct: ct);
     }
 
@@ -287,9 +358,79 @@ public sealed class OneCSampleScenarios(OneCSampleClient client)
             client.Envelope("payment_orders", b + "-full2", 2, orders.Skip(2).Take(1), "full", "F2-" + _run, true),
             r => Is(r, "accepted") && r.Int("marked_deleted") >= 1, ct: ct);
 
+        // Catalog: a price and stock before their item, wrong barcodes, full stock exports with and without is_last_batch.
+        await StepAsync("price and stock before the item exists", "accepted (no foreign key to catalog_items)",
+            client.Envelope("prices", b + "-c1", 1, new object[] { OneCSampleClient.Price(p + "it-late", "pt-retail", 9_900m, T(60)) }),
+            r => Is(r, "accepted"), ct: ct);
+        var badBarcode = OneCSampleClient.CatalogItem(p + "it-badbar", "Bad barcode", null, T(60), "Goods", "47800ABC");
+        var unknownType = OneCSampleClient.CatalogItem(p + "it-type", "Unknown type", null, T(60), "Комплект");
+        unknownType["ВесНетто"] = 0.5m;
+        await StepAsync("the item arrives later; a wrong barcode; an unknown item type and field", "partially_accepted: accepted, rejected (invalid_barcode), accepted",
+            client.Envelope("items", b + "-c2", 1, new object[] { OneCSampleClient.CatalogItem(p + "it-late", "Late item", null, T(60)), badBarcode, unknownType }),
+            r => Is(r, "partially_accepted") && r.Items is [("accepted", _), ("rejected", "invalid_barcode"), ("accepted", _)], ct: ct);
+        var fractionalPrice = OneCSampleClient.Price(p + "it-late", "pt-wholesale", 0m, T(60));
+        fractionalPrice["price"] = "9900.005";
+        await StepAsync("price with fractional tiyin", "rejected: fractional_minor_units",
+            client.Envelope("prices", b + "-c3", 1, new object[] { fractionalPrice }), r => Is(r, "rejected") && r.Items is [("rejected", "fractional_minor_units")], ct: ct);
+
+        var stock = Enumerable.Range(1, 4).Select(i => OneCSampleClient.Stock(p + $"it-{i}", "wh-main", 10m * i, T(60))).ToList();
+        await StepAsync("delta with stock of 4 items", "accepted", client.Envelope("stock", b + "-c4", 1, stock), r => Is(r, "accepted"), ct: ct);
+        await StepAsync("truncated full stock export (no is_last_batch)", "accepted, nothing removed",
+            client.Envelope("stock", b + "-cfull1", 1, stock.Take(2), "full", "S1-" + _run),
+            r => Is(r, "accepted") && r.Int("removed") == 0, ct: ct);
+        await StepAsync("full stock export with is_last_batch (it-3, it-4 missing)", "accepted, rows not in the export removed and journaled",
+            client.Envelope("stock", b + "-cfull2", 1, stock.Take(2), "full", "S2-" + _run, true),
+            r => Is(r, "accepted") && r.Int("removed") >= 2, ct: ct);
+
         await StepAsync("unsupported schema_version", "HTTP 400 unsupported_schema_version",
             client.Envelope("counterparties", b + "-v", 1, new object[] { OneCSampleClient.Counterparty(p + "cp-v", "V2", null, T(60)) }, schemaVersion: 2),
             r => r.Status == HttpStatusCode.BadRequest && r.Get("error") == "unsupported_schema_version", ct: ct);
+    }
+
+    public sealed record CatalogMinuteResult(int Packages, int Items, int Accepted, int Unchanged, int Rejected, TimeSpan P50, TimeSpan P95, TimeSpan Max);
+
+    /// <summary>
+    /// What the 1C extension does for the Mailo bot: every <paramref name="interval"/> during <paramref name="duration"/>,
+    /// a delta of <paramref name="positions"/> price changes and one of as many stock changes (the same items, new values).
+    /// First a small catalog (items, a price type, a warehouse) is sent so that the changes refer to known items.
+    /// </summary>
+    public async Task<CatalogMinuteResult> CatalogMinuteAsync(TimeSpan duration, TimeSpan interval, int positions = 50, CancellationToken ct = default)
+    {
+        var p = "M" + _run + "-";
+        var start = DateTimeOffset.UtcNow;
+        await client.SendAsync(client.Envelope("price_types", p + "pt", 1, new[] { OneCSampleClient.PriceType(p + "pt", "Розничная", true, start) }), ct: ct);
+        await client.SendAsync(client.Envelope("warehouses", p + "wh", 1, new[] { OneCSampleClient.Warehouse(p + "wh", "Магазин", start) }), ct: ct);
+        await client.SendAsync(client.Envelope("items", p + "it", 1, Enumerable.Range(0, positions)
+            .Select(i => OneCSampleClient.CatalogItem($"{p}it-{i}", $"Товар {i}", null, start, "Goods", OneCSampleClient.Barcode(i)))), ct: ct);
+
+        var times = new List<TimeSpan>();
+        int accepted = 0, unchanged = 0, rejected = 0, items = 0, round = 0;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        while (watch.Elapsed < duration)
+        {
+            round++;
+            var at = start.AddSeconds(round);
+            var prices = client.Envelope("prices", $"{p}pr-{round}", 1, Enumerable.Range(0, positions)
+                .Select(i => OneCSampleClient.Price($"{p}it-{i}", p + "pt", 1000m + round * 10 + i, at)));
+            var stock = client.Envelope("stock", $"{p}st-{round}", 1, Enumerable.Range(0, positions)
+                .Select(i => OneCSampleClient.Stock($"{p}it-{i}", p + "wh", 100m - round + i * 0.5m, at)));
+            foreach (var envelope in new[] { prices, stock })
+            {
+                var r = await client.SendAsync(envelope, ct: ct);
+                if (r.Status != HttpStatusCode.OK) throw new InvalidOperationException($"Catalog package refused: HTTP {(int)r.Status} {r.Get("error")}");
+                times.Add(r.Elapsed);
+                accepted += r.Int("accepted");
+                unchanged += r.Int("unchanged");
+                rejected += r.Int("rejected");
+                items += positions;
+            }
+            var next = interval * round - watch.Elapsed;
+            if (next > TimeSpan.Zero && watch.Elapsed + next < duration) await Task.Delay(next, ct);
+            else if (watch.Elapsed + next >= duration) break;
+        }
+        times.Sort();
+        TimeSpan Pct(double q) => times[Math.Min(times.Count - 1, (int)Math.Ceiling(q * times.Count) - 1)];
+        return new CatalogMinuteResult(times.Count, items, accepted, unchanged, rejected, Pct(0.5), Pct(0.95), times[^1]);
     }
 
     public sealed record LargeResult(int Records, int Packages, TimeSpan First, TimeSpan Duplicates, TimeSpan Unchanged, int Accepted, int Rejected,
@@ -301,11 +442,11 @@ public sealed class OneCSampleScenarios(OneCSampleClient client)
     /// </summary>
     public async Task<LargeResult> LargeAsync(int records = 20_000, int packageSize = 500, CancellationToken ct = default)
     {
+        var p = "L" + _run + "-";
+        var items = new List<(string Entity, object Item)>(records);
         var counterparties = records / 5;
         var documents = records / 2;
         var bank = records - counterparties - documents;
-        var p = "L" + _run + "-";
-        var items = new List<(string Entity, object Item)>(records);
         for (var i = 0; i < counterparties; i++)
             items.Add(("counterparties", OneCSampleClient.Counterparty($"{p}cp-{i}", $"Large counterparty {i}", OneCSampleClient.Tin(i), T(0))));
         for (var i = 0; i < documents; i++)
@@ -314,14 +455,38 @@ public sealed class OneCSampleScenarios(OneCSampleClient client)
         for (var i = 0; i < bank; i++)
             items.Add(("bank_documents", OneCSampleClient.BankDocument($"{p}bd-{i}", i % 2 == 0 ? "Receipt" : "Payment", $"{p}cp-{i % counterparties}",
                 OneCSampleClient.Tin(i % counterparties), 1000m + i, T(0), $"{p}doc-{i}")));
+        return await SendLargeAsync(items, "large-" + _run, packageSize, ct);
+    }
 
+    /// <summary>
+    /// 20 000 catalog records in packages of 500: 10 000 items (with a barcode), 5 000 prices and 5 000 stock rows, then the
+    /// same packages again and the same records under new batch ids.
+    /// </summary>
+    public async Task<LargeResult> LargeCatalogAsync(int records = 20_000, int packageSize = 500, CancellationToken ct = default)
+    {
+        var p = "LC" + _run + "-";
+        var itemCount = records / 2;
+        var prices = records / 4;
+        var stock = records - itemCount - prices;
+        var items = new List<(string Entity, object Item)>(records);
+        for (var i = 0; i < itemCount; i++)
+            items.Add(("items", OneCSampleClient.CatalogItem($"{p}it-{i}", $"Товар номер {i}", $"{p}cat-{i % 50}", T(0), i % 10 == 0 ? "Service" : "Goods",
+                OneCSampleClient.Barcode(i))));
+        for (var i = 0; i < prices; i++) items.Add(("prices", OneCSampleClient.Price($"{p}it-{i}", p + "pt", 1000m + i, T(0))));
+        for (var i = 0; i < stock; i++) items.Add(("stock", OneCSampleClient.Stock($"{p}it-{i}", p + "wh", i % 100 + 0.5m, T(0))));
+        return await SendLargeAsync(items, "large-catalog-" + _run, packageSize, ct);
+    }
+
+    private async Task<LargeResult> SendLargeAsync(List<(string Entity, object Item)> items, string batch0, int packageSize, CancellationToken ct)
+    {
+        var records = items.Count;
         var packages = items.GroupBy(x => x.Entity)
             .SelectMany(g => g.Chunk(packageSize).Select((chunk, n) => (Entity: g.Key, Sequence: n + 1, Items: chunk.Select(c => c.Item).ToList())))
             .ToList();
         byte[] Body(string batch, (string Entity, int Sequence, List<object> Items) x) =>
             JsonSerializer.SerializeToUtf8Bytes(client.Envelope(x.Entity, $"{batch}-{x.Entity}", x.Sequence, x.Items));
-        var first = packages.Select(x => Body("large-" + _run, x)).ToList();
-        var again = packages.Select(x => Body("large-again-" + _run, x)).ToList();
+        var first = packages.Select(x => Body(batch0, x)).ToList();
+        var again = packages.Select(x => Body(batch0 + "-again", x)).ToList();
 
         int accepted = 0, rejected = 0, duplicates = 0, unchanged = 0;
         var watch = Stopwatch.StartNew();

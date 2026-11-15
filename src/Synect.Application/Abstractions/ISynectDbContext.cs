@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Synect.Domain.Access;
 using Synect.Domain.Accounting;
+using Synect.Domain.Catalog;
 using Synect.Domain.Analytics;
 using Synect.Domain.Attention;
 using Synect.Domain.Banking;
@@ -60,6 +61,14 @@ public interface ISynectDbContext
     DbSet<IngestBatch> IngestBatches { get; }
     DbSet<IngestKey> IngestKeys { get; }
     DbSet<IngestFullSyncItem> IngestFullSyncItems { get; }
+    DbSet<CatalogItem> CatalogItems { get; }
+    DbSet<CatalogCategory> CatalogCategories { get; }
+    DbSet<CatalogPriceType> CatalogPriceTypes { get; }
+    DbSet<CatalogWarehouse> CatalogWarehouses { get; }
+    DbSet<CatalogPrice> CatalogPrices { get; }
+    DbSet<CatalogStock> CatalogStock { get; }
+    DbSet<IngestFreshness> IngestFreshness { get; }
+    DbSet<IngestRemovedRow> IngestRemovedRows { get; }
 
     DatabaseFacade Database { get; }
     ChangeTracker ChangeTracker { get; }

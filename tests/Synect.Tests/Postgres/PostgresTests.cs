@@ -26,6 +26,9 @@ public class PostgresTests(PostgresFixture fixture) : IClassFixture<PostgresFixt
         "accounting_document_lines", "accounting_bank_documents", "accounting_bank_document_settlements",
         "accounting_payment_orders", "accounting_settlement_balances", "accounting_bank_account_balances",
         "ingest_batches", "ingest_full_sync_items",
+        // Stage 8a, catalog part: catalog of the Mailo bot, freshness per data group, journal of removed rows.
+        "catalog_items", "catalog_categories", "catalog_price_types", "catalog_prices", "catalog_warehouses", "catalog_stock",
+        "ingest_freshness", "ingest_removed_rows",
     ];
 
     private void RequirePostgres() => Assert.SkipUnless(fixture.Available, PostgresFixture.SkipReason);

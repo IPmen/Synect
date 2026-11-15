@@ -17,8 +17,11 @@ public sealed record OrganizationConnection(
     public bool NeedsAttention => Status != ConnectionStatus.Active || LastSuccessfulSyncAt is null
                                   || OnboardingStatus == OnboardingStatus.NeedsAttention;
 
-    /// <summary>The source's own staleness threshold (1C: Ingest:StaleAfter); null for sources that use the reader's threshold.</summary>
+    /// <summary>The source's own staleness threshold (1C: Ingest:AccountingStaleAfter); null for sources that use the reader's threshold.</summary>
     public TimeSpan? StaleAfter { get; init; }
+
+    /// <summary>1C only: freshness of the accounting and the catalog data separately (ingest_freshness).</summary>
+    public IReadOnlyList<Ingest.IngestGroupFreshness>? DataGroups { get; init; }
 }
 
 /// <param name="NewBySeverity">New attention items (including snoozed ones whose time is over) per severity.</param>
@@ -49,6 +52,9 @@ public sealed class PortfolioQueries(AnalyticsContext ctx, IOptions<AccountsOpti
             var t = ctx.TenantId;
             var now = time.GetUtcNow();
             var connections = await ctx.Db.Connections.AsNoTracking().OrderBy(c => c.Name).ToListAsync(token);
+            var groups = connections.Any(c => c.AdapterKind == AdapterKind.Accounting1C)
+                ? await ctx.Db.IngestFreshness.AsNoTracking().ToListAsync(token)
+                : [];
             var complete = await ctx.QueryAsync<CompleteRow>(new Sql()
                 .Raw("select distinct on (r.connection_id) r.connection_id, r.is_complete from sync_runs r where r.tenant_id = ").P(t)
                 .Raw(" and r.result = 'Succeeded' order by r.connection_id, r.finished_at desc"), token);
@@ -83,7 +89,11 @@ public sealed class PortfolioQueries(AnalyticsContext ctx, IOptions<AccountsOpti
                 c.StatusChangedAt, c.LastSuccessfulSyncAt, completeBy.TryGetValue(c.Id, out var done) ? done : null,
                 c.OnboardingStatus, c.OnboardingNote)
             {
-                StaleAfter = c.AdapterKind == AdapterKind.Accounting1C ? ingest.Value.StaleAfter : null,
+                StaleAfter = c.AdapterKind == AdapterKind.Accounting1C ? ingest.Value.AccountingStaleAfterOrDefault : null,
+                DataGroups = c.AdapterKind == AdapterKind.Accounting1C
+                    ? Ingest.IngestFreshnessGroups.Evaluate(groups.Where(g => g.ConnectionId == c.Id).ToDictionary(g => g.DataGroup, g => g.LastAcceptedAt),
+                        ingest.Value, now)
+                    : null,
             }).ToList();
             return new OrganizationSummary(list, newBy, openCritical, unmatched, awaiting, days);
         }, ct);

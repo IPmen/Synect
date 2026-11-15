@@ -54,6 +54,12 @@ public class IngestBatch : TenantEntity
     /// <summary>Records marked deleted because a completed full export did not contain them.</summary>
     public int MarkedDeleted { get; set; }
 
+    /// <summary>
+    /// Rows of current-state tables (catalog_prices, catalog_stock) removed because a completed full export did not contain
+    /// them; each one is listed in ingest_removed_rows.
+    /// </summary>
+    public int RemovedRows { get; set; }
+
     public IngestBatchStatus Status { get; set; }
 
     /// <summary>Error code and our own message (never item content).</summary>
@@ -107,4 +113,41 @@ public class IngestFullSyncItem : ITenantOwned
     public string Entity { get; set; } = string.Empty;
     public string ItemKey { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>The two kinds of 1C data, received at different rates and judged fresh by different thresholds.</summary>
+public enum IngestDataGroup
+{
+    /// <summary>Accounting data (counterparties, contracts, documents, bank documents, balances): about once an hour.</summary>
+    Accounting = 1,
+
+    /// <summary>Catalog for the Mailo bot (items, categories, prices, warehouses, stock): changes every minute, full daily.</summary>
+    Catalog = 2,
+}
+
+/// <summary>
+/// Time of the last accepted package of one data group of a 1C connection (ingest_freshness), so that frequent catalog
+/// packages never make stale accounting data look fresh. One row per (organization, connection, group).
+/// </summary>
+public class IngestFreshness : ITenantOwned
+{
+    public Guid TenantId { get; set; }
+    public Guid ConnectionId { get; set; }
+    public IngestDataGroup DataGroup { get; set; }
+    public DateTimeOffset LastAcceptedAt { get; set; }
+}
+
+/// <summary>
+/// A row removed from a current-state table (catalog_prices, catalog_stock) because a completed full export did not contain
+/// it (ingest_removed_rows). Identifiers only (the key of the row: refs joined with U+001F), never the content.
+/// </summary>
+public class IngestRemovedRow : ITenantOwned
+{
+    public Guid TenantId { get; set; }
+    public Guid Id { get; set; }
+    public Guid IngestBatchId { get; set; }
+    public string FullSyncId { get; set; } = string.Empty;
+    public string Entity { get; set; } = string.Empty;
+    public string ItemKey { get; set; } = string.Empty;
+    public DateTimeOffset RemovedAt { get; set; }
 }

@@ -23,11 +23,12 @@ public sealed record IngestItemResult(int Index, string? Ref, string Status, str
 public sealed record IngestResponse(int HttpStatus, object Body);
 
 /// <summary>
-/// Receives one package of the 1C extension for the organization of the ingest key (stage 8a). The caller sets the tenant
+/// Receives one package of the 1C extension for the organization of the ingest key (stage 8a: accounting and catalog). The caller sets the tenant
 /// context from the key. In one transaction per package (serialized per organization with an advisory lock): the journal
 /// row, every item (accepted / unchanged / rejected, one refused item never stops the others), the raw layer, full export
 /// bookkeeping and the freshness of the 1C connection. A system error rolls the package back and is journaled as Failed.
-/// Logs carry counters and identifiers only, never item content.
+/// Logs carry counters and identifiers only, never item content. Receiving a package recalculates nothing (no reconciliation,
+/// analytics or attention rules): catalog packages come every minute, and accounting data has no reader that needs it yet.
 /// </summary>
 public sealed class IngestService(
     ISynectDbContext db,
@@ -80,8 +81,8 @@ public sealed class IngestService(
                     "Ingest {Entity} package {BatchId}#{Sequence} for tenant {TenantId}: {Status} in {ElapsedMs} ms",
                     envelope.Entity.Name, envelope.BatchId, envelope.Sequence, key.TenantId, response.Status, started.ElapsedMilliseconds);
                 if (response.Counts is { } c)
-                    logger.LogInformation("Ingest package {BatchId}#{Sequence} counts: total {Total}, accepted {Accepted}, unchanged {Unchanged}, rejected {Rejected}, marked deleted {MarkedDeleted}",
-                        envelope.BatchId, envelope.Sequence, c.Total, c.Accepted, c.Unchanged, c.Rejected, c.MarkedDeleted);
+                    logger.LogInformation("Ingest package {BatchId}#{Sequence} counts: total {Total}, accepted {Accepted}, unchanged {Unchanged}, rejected {Rejected}, marked deleted {MarkedDeleted}, removed rows {RemovedRows}",
+                        envelope.BatchId, envelope.Sequence, c.Total, c.Accepted, c.Unchanged, c.Rejected, c.MarkedDeleted, c.RemovedRows);
                 return response.Response;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -96,7 +97,7 @@ public sealed class IngestService(
         }
     }
 
-    private sealed record Counts(int Total, int Accepted, int Unchanged, int Rejected, int MarkedDeleted);
+    private sealed record Counts(int Total, int Accepted, int Unchanged, int Rejected, int MarkedDeleted, int RemovedRows);
 
     private sealed record Outcome(IngestResponse Response, string Status, Counts? Counts);
 
@@ -235,9 +236,18 @@ public sealed class IngestService(
             fullSync = await CompleteFullSyncAsync(spec, key.TenantId, batch, env, now, ct);
         }
 
-        // A package with at least one item that was not refused shows that the 1C source is alive.
+        // A package with at least one item that was not refused shows that the 1C source is alive. Freshness is also kept
+        // per data group, so that catalog packages every minute never make stale accounting data look fresh.
         if (accepted + unchanged > 0 || parsed.Count == 0)
+        {
             connection.MarkSyncSucceeded(now);
+            await db.Database.ExecuteSqlAsync($"""
+                INSERT INTO ingest_freshness (tenant_id, connection_id, data_group, last_accepted_at)
+                VALUES ({key.TenantId}, {connection.Id}, {spec.Group.ToString()}, {now.ToUniversalTime()})
+                ON CONFLICT (tenant_id, connection_id, data_group) DO UPDATE SET last_accepted_at = excluded.last_accepted_at
+                WHERE ingest_freshness.last_accepted_at < excluded.last_accepted_at
+                """, ct);
+        }
         batch.FinishedAt = time.GetUtcNow();
         await db.SaveChangesAsync(ct);
         Lap("finish");
@@ -258,20 +268,23 @@ public sealed class IngestService(
             unchanged,
             rejected,
             marked_deleted = batch.MarkedDeleted,
+            removed = batch.RemovedRows,
             full_sync = fullSync,
             items = results.Select(r => new { index = r.Index, @ref = r.Ref, status = r.Status, code = r.Code, message = r.Message }),
         };
-        return new Outcome(new IngestResponse(200, bodyObject), status, new Counts(parsed.Count, accepted, unchanged, rejected, batch.MarkedDeleted));
+        return new Outcome(new IngestResponse(200, bodyObject), status,
+            new Counts(parsed.Count, accepted, unchanged, rejected, batch.MarkedDeleted, batch.RemovedRows));
     }
 
     /// <summary>
-    /// On the package with is_last_batch: deletions are marked only when every sequence 1..N of this export and entity was
-    /// processed (a truncated or partly lost export marks nothing and says which sequences are missing).
+    /// On the package with is_last_batch: deletions are marked (current-state tables: rows removed) only when every sequence
+    /// 1..N of this export and entity was processed (a truncated or partly lost export changes nothing and says which
+    /// sequences are missing). Only records absent from this full_sync_id are affected.
     /// </summary>
     private async Task<object> CompleteFullSyncAsync(IngestEntitySpec spec, Guid tenantId, IngestBatch batch, IngestEnvelope env, DateTimeOffset now, CancellationToken ct)
     {
         if (!env.IsLastBatch)
-            return new { full_sync_id = env.FullSyncId, completed = false, reason = "waiting_for_last_batch", marked_deleted = 0 };
+            return new { full_sync_id = env.FullSyncId, completed = false, reason = "waiting_for_last_batch", marked_deleted = 0, removed = 0 };
 
         var processed = await db.IngestBatches.AsNoTracking()
             .Where(b => b.FullSyncId == env.FullSyncId && b.Entity == spec.Name
@@ -283,12 +296,17 @@ public sealed class IngestService(
             return new
             {
                 full_sync_id = env.FullSyncId, completed = false, reason = "missing_sequences", missing_sequences = missing, marked_deleted = 0,
+                removed = 0,
             };
 
         var startedAt = processed.Min(p => p.ReceivedAt);
-        var marked = await writer.CompleteFullSyncAsync(spec, tenantId, batch.Id, env.FullSyncId!, startedAt, now, O.FullSyncRetention, ct);
-        batch.MarkedDeleted = marked;
-        return new { full_sync_id = env.FullSyncId, completed = true, reason = (string?)null, marked_deleted = marked };
+        var count = await writer.CompleteFullSyncAsync(spec, tenantId, batch.Id, env.FullSyncId!, startedAt, now, O.FullSyncRetention, ct);
+        if (spec.CurrentState) batch.RemovedRows = count;
+        else batch.MarkedDeleted = count;
+        return new
+        {
+            full_sync_id = env.FullSyncId, completed = true, reason = (string?)null, marked_deleted = batch.MarkedDeleted, removed = batch.RemovedRows,
+        };
     }
 
     private static object Duplicate(IngestBatch b)
@@ -308,6 +326,7 @@ public sealed class IngestService(
             unchanged = b.Unchanged,
             rejected = b.Rejected,
             marked_deleted = b.MarkedDeleted,
+            removed = b.RemovedRows,
             rejected_items = errors,
             message = "This package was already processed (same batch_id, sequence and content); nothing was changed. The counts are those of the first processing.",
         };
@@ -331,7 +350,7 @@ public sealed class IngestService(
         batch.EnvelopeExtra = env.ExtraJson;
         batch.Error = null;
         batch.ItemErrors = null;
-        batch.ItemsTotal = batch.Accepted = batch.Unchanged = batch.Rejected = batch.MarkedDeleted = 0;
+        batch.ItemsTotal = batch.Accepted = batch.Unchanged = batch.Rejected = batch.MarkedDeleted = batch.RemovedRows = 0;
     }
 
     /// <summary>A refused envelope is journaled when batch_id and sequence could be read (a processed row is never replaced).</summary>

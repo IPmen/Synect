@@ -61,7 +61,8 @@ using Synect.Infrastructure.Persistence;
 //   revoke-ingest-key --tenant <name|id> --key <key id|key prefix>
 //   list-ingest-keys --tenant <name|id>             id, prefix, connection, created/last used/revoked (never the key)
 //   list-ingest-batches --tenant <name|id> [--limit 50]   received 1C packages (journal, counters only)
-//   send-1c-sample --tenant <name|id> --scenario basic|messy|large|mirror|golden [--url http://localhost:5299] [--key ik_...]
+//   send-1c-sample --tenant <name|id> --scenario basic|messy|catalog-minute|large|mirror|golden [--url http://localhost:5299] [--key ik_...]
+//                  catalog-minute: [--seconds 60] [--interval 5] [--positions 50]; large: [--records 20000] [--package 500]
 //                  fake 1C extension over HTTP against a running Api (without --key a temporary key is created and revoked)
 //                  mirror [--plant] [--date yyyy-MM-dd]: 1C data built from the tenant's own bank operations and Didox documents
 //                  golden: the same for the reconciliation golden set with planted differences and the expected answers

@@ -3375,3 +3375,568 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE ingest_batches ADD removed_rows integer NOT NULL DEFAULT 0;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE TABLE catalog_categories (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        parent_ref character varying(64),
+        name text NOT NULL,
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        ref character varying(64) NOT NULL,
+        CONSTRAINT pk_catalog_categories PRIMARY KEY (tenant_id, id),
+        CONSTRAINT ak_catalog_categories_tenant_id_ref UNIQUE (tenant_id, ref),
+        CONSTRAINT fk_catalog_categories_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE TABLE catalog_items (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        item_type character varying(16),
+        code character varying(64),
+        article character varying(64),
+        name text NOT NULL,
+        full_name text,
+        search_name character varying(4000) NOT NULL,
+        category_ref character varying(64),
+        unit character varying(256),
+        barcodes text[] NOT NULL,
+        vat_rate numeric(9,4),
+        is_archived boolean NOT NULL DEFAULT FALSE,
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        ref character varying(64) NOT NULL,
+        CONSTRAINT pk_catalog_items PRIMARY KEY (tenant_id, id),
+        CONSTRAINT ak_catalog_items_tenant_id_ref UNIQUE (tenant_id, ref),
+        CONSTRAINT fk_catalog_items_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE TABLE catalog_price_types (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        name text NOT NULL,
+        currency character varying(3) NOT NULL,
+        is_default boolean NOT NULL DEFAULT FALSE,
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        ref character varying(64) NOT NULL,
+        CONSTRAINT pk_catalog_price_types PRIMARY KEY (tenant_id, id),
+        CONSTRAINT ak_catalog_price_types_tenant_id_ref UNIQUE (tenant_id, ref),
+        CONSTRAINT fk_catalog_price_types_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE TABLE catalog_prices (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        item_ref character varying(64) NOT NULL,
+        price_type_ref character varying(64) NOT NULL,
+        price_minor bigint NOT NULL,
+        currency character varying(3) NOT NULL,
+        effective_from date,
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        CONSTRAINT pk_catalog_prices PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_catalog_prices_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE TABLE catalog_stock (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        item_ref character varying(64) NOT NULL,
+        warehouse_ref character varying(64) NOT NULL,
+        quantity numeric(28,6) NOT NULL,
+        reserved numeric(28,6),
+        as_of timestamp with time zone NOT NULL,
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        CONSTRAINT pk_catalog_stock PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_catalog_stock_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE TABLE catalog_warehouses (
+        id uuid NOT NULL,
+        tenant_id uuid NOT NULL,
+        name text NOT NULL,
+        is_deleted boolean NOT NULL DEFAULT FALSE,
+        modified_at timestamp with time zone NOT NULL,
+        content_hash character(64) NOT NULL,
+        extra jsonb NOT NULL DEFAULT '{}',
+        schema_version integer NOT NULL,
+        last_batch_id uuid NOT NULL,
+        first_seen_at timestamp with time zone NOT NULL,
+        last_seen_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        ref character varying(64) NOT NULL,
+        CONSTRAINT pk_catalog_warehouses PRIMARY KEY (tenant_id, id),
+        CONSTRAINT ak_catalog_warehouses_tenant_id_ref UNIQUE (tenant_id, ref),
+        CONSTRAINT fk_catalog_warehouses_tenants_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE TABLE ingest_freshness (
+        tenant_id uuid NOT NULL,
+        connection_id uuid NOT NULL,
+        data_group character varying(16) NOT NULL,
+        last_accepted_at timestamp with time zone NOT NULL,
+        CONSTRAINT pk_ingest_freshness PRIMARY KEY (tenant_id, connection_id, data_group),
+        CONSTRAINT fk_ingest_freshness_connections_tenant_id_connection_id FOREIGN KEY (tenant_id, connection_id) REFERENCES connections (tenant_id, id) ON DELETE CASCADE
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE TABLE ingest_removed_rows (
+        tenant_id uuid NOT NULL,
+        id uuid NOT NULL,
+        ingest_batch_id uuid NOT NULL,
+        full_sync_id character varying(64) NOT NULL,
+        entity character varying(32) NOT NULL,
+        item_key character varying(400) NOT NULL,
+        removed_at timestamp with time zone NOT NULL,
+        CONSTRAINT pk_ingest_removed_rows PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_ingest_removed_rows_ingest_batches_tenant_id_ingest_batch_id FOREIGN KEY (tenant_id, ingest_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE INDEX ix_catalog_categories_tenant_id_parent_ref ON catalog_categories (tenant_id, parent_ref);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE INDEX ix_catalog_items_tenant_id_article ON catalog_items (tenant_id, article);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE INDEX ix_catalog_items_tenant_id_category_ref ON catalog_items (tenant_id, category_ref);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE INDEX ix_catalog_items_tenant_id_code ON catalog_items (tenant_id, code);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE UNIQUE INDEX ix_catalog_prices_tenant_id_item_ref_price_type_ref ON catalog_prices (tenant_id, item_ref, price_type_ref);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE UNIQUE INDEX ix_catalog_stock_tenant_id_item_ref_warehouse_ref ON catalog_stock (tenant_id, item_ref, warehouse_ref);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE INDEX ix_ingest_removed_rows_tenant_id_entity_item_key ON ingest_removed_rows (tenant_id, entity, item_key);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE INDEX ix_ingest_removed_rows_tenant_id_ingest_batch_id ON ingest_removed_rows (tenant_id, ingest_batch_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_items ADD CONSTRAINT fk_catalog_items_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_categories ADD CONSTRAINT fk_catalog_categories_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_price_types ADD CONSTRAINT fk_catalog_price_types_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_prices ADD CONSTRAINT fk_catalog_prices_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_warehouses ADD CONSTRAINT fk_catalog_warehouses_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_stock ADD CONSTRAINT fk_catalog_stock_ingest_batches FOREIGN KEY (tenant_id, last_batch_id) REFERENCES ingest_batches (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_items ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_items FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE POLICY tenant_isolation ON catalog_items USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_categories ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_categories FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE POLICY tenant_isolation ON catalog_categories USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_price_types ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_price_types FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE POLICY tenant_isolation ON catalog_price_types USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_prices ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_prices FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE POLICY tenant_isolation ON catalog_prices USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_warehouses ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_warehouses FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE POLICY tenant_isolation ON catalog_warehouses USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_stock ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_stock FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE POLICY tenant_isolation ON catalog_stock USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE ingest_freshness ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE ingest_freshness FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE POLICY tenant_isolation ON ingest_freshness USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE ingest_removed_rows ENABLE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE ingest_removed_rows FORCE ROW LEVEL SECURITY;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE POLICY tenant_isolation ON ingest_removed_rows USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_items ADD CONSTRAINT ck_catalog_items_ref CHECK (length(ref) BETWEEN 1 AND 64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_categories ADD CONSTRAINT ck_catalog_categories_ref CHECK (length(ref) BETWEEN 1 AND 64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_price_types ADD CONSTRAINT ck_catalog_price_types_ref CHECK (length(ref) BETWEEN 1 AND 64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_warehouses ADD CONSTRAINT ck_catalog_warehouses_ref CHECK (length(ref) BETWEEN 1 AND 64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_prices ADD CONSTRAINT ck_catalog_prices_refs CHECK (length(item_ref) BETWEEN 1 AND 64 AND length(price_type_ref) BETWEEN 1 AND 64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_stock ADD CONSTRAINT ck_catalog_stock_refs CHECK (length(item_ref) BETWEEN 1 AND 64 AND length(warehouse_ref) BETWEEN 1 AND 64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE catalog_items ADD CONSTRAINT ck_catalog_items_item_type CHECK (item_type IS NULL OR item_type IN ('Goods', 'Service'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE ingest_freshness ADD CONSTRAINT ck_ingest_freshness_data_group CHECK (data_group IN ('Accounting', 'Catalog'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    ALTER TABLE ingest_batches ADD CONSTRAINT ck_ingest_batches_removed_rows CHECK (removed_rows >= 0);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE INDEX ix_catalog_items_tenant_id_barcodes ON catalog_items USING gin (tenant_id, barcodes);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    CREATE INDEX ix_catalog_items_tenant_id_search_name_trgm ON catalog_items USING gin (tenant_id, search_name gin_trgm_ops);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    INSERT INTO ingest_freshness (tenant_id, connection_id, data_group, last_accepted_at)
+    SELECT b.tenant_id, b.connection_id, 'Accounting', max(b.received_at)
+    FROM ingest_batches b
+    WHERE b.status IN ('Processed', 'ProcessedWithErrors') AND (b.accepted + b.unchanged > 0 OR b.items_total = 0)
+    GROUP BY b.tenant_id, b.connection_id
+    ON CONFLICT DO NOTHING;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261115115327_CatalogIngest') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261115115327_CatalogIngest', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+

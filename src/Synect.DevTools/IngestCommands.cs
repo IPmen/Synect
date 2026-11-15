@@ -61,10 +61,10 @@ public sealed class IngestCommands(IServiceProvider services)
             var db = sp.GetRequiredService<ISynectDbContext>();
             return await db.InTransactionAsync(ct => db.IngestBatches.AsNoTracking().OrderByDescending(b => b.ReceivedAt).Take(limit).ToListAsync(ct), CancellationToken.None);
         });
-        Console.WriteLine($"{"received (UTC)",-20} {"entity",-22} {"mode",-6} {"batch_id#seq",-44} {"status",-20} {"total",6} {"acc",6} {"unch",6} {"rej",6} {"del",5}  error");
+        Console.WriteLine($"{"received (UTC)",-20} {"entity",-22} {"mode",-6} {"batch_id#seq",-44} {"status",-20} {"total",6} {"acc",6} {"unch",6} {"rej",6} {"del",5} {"rem",5}  error");
         foreach (var b in rows)
             Console.WriteLine($"{b.ReceivedAt:yyyy-MM-dd HH:mm:ss} {b.Entity,-22} {b.Mode,-6} {Cut(b.BatchId + "#" + b.Sequence, 44),-44} {b.Status,-20} " +
-                              $"{b.ItemsTotal,6} {b.Accepted,6} {b.Unchanged,6} {b.Rejected,6} {b.MarkedDeleted,5}  {Cut(b.Error ?? "", 80)}" +
+                              $"{b.ItemsTotal,6} {b.Accepted,6} {b.Unchanged,6} {b.Rejected,6} {b.MarkedDeleted,5} {b.RemovedRows,5}  {Cut(b.Error ?? "", 80)}" +
                               (b.Attempts > 1 ? $" (received {b.Attempts} times)" : ""));
         if (rows.Count == 0) Console.WriteLine("No packages received.");
         return 0;
@@ -73,14 +73,14 @@ public sealed class IngestCommands(IServiceProvider services)
     private static string Cut(string s, int n) => s.Length <= n ? s : s[..(n - 1)] + "…";
 
     /// <summary>
-    /// send-1c-sample --tenant X --scenario basic|messy|large [--url http://localhost:5299] [--key ik_...]. Without --key a
+    /// send-1c-sample --tenant X --scenario basic|messy|catalog-minute|large [--url http://localhost:5299] [--key ik_...]. Without --key a
     /// temporary ingest key is created (never printed) and revoked at the end.
     /// </summary>
     public async Task<int> SendSampleAsync(Guid tenantId, CliArgs options)
     {
         var scenario = (options.Get("scenario") ?? "basic").ToLowerInvariant();
-        if (scenario is not ("basic" or "messy" or "large" or "mirror" or "golden"))
-            throw new ArgumentException("--scenario must be basic, messy, large, mirror or golden");
+        if (scenario is not ("basic" or "messy" or "catalog-minute" or "large" or "mirror" or "golden"))
+            throw new ArgumentException("--scenario must be basic, messy, catalog-minute, large, mirror or golden");
         var url = options.Get("url") ?? "http://localhost:5299";
         string? tin;
         await using (var scope = services.CreateAsyncScope())
@@ -101,13 +101,31 @@ public sealed class IngestCommands(IServiceProvider services)
             Console.WriteLine($"send-1c-sample {scenario} -> {url}{OneCSampleClient.Route} (tenant {tenantId}, TIN {tin})");
             if (scenario == "large")
             {
-                var r = await scenarios.LargeAsync(options.Int("records", 20_000), options.Int("package", 500));
-                Console.WriteLine($"| Step | Records | Packages | Time, s | Result |");
-                Console.WriteLine($"|---|---|---|---|---|");
-                Console.WriteLine($"| First receipt | {r.Records} | {r.Packages} | {S(r.First)} | accepted {r.Accepted}, rejected {r.Rejected} |");
-                Console.WriteLine($"| Same packages again (same batch_id) | {r.Records} | {r.Packages} | {S(r.Duplicates)} | duplicate answers {r.DuplicateAnswers} |");
-                Console.WriteLine($"| Same records, new batch_id | {r.Records} | {r.Packages} | {S(r.Unchanged)} | unchanged {r.UnchangedItems} |");
-                return r.Rejected == 0 && r.Accepted == r.Records && r.UnchangedItems == r.Records ? 0 : 1;
+                // The sender itself is limited by Ingest:RateLimit:PackagesPerMinute of the receiver (it waits on 429).
+                var records = options.Int("records", 20_000);
+                var package = options.Int("package", 500);
+                var accounting = await scenarios.LargeAsync(records, package);
+                var catalog = await scenarios.LargeCatalogAsync(records, package);
+                Console.WriteLine($"| Data | Step | Records | Packages | Time, s | Result |");
+                Console.WriteLine($"|---|---|---|---|---|---|");
+                var ok = true;
+                foreach (var (name, r) in new[] { ("accounting", accounting), ("catalog", catalog) })
+                {
+                    Console.WriteLine($"| {name} | First receipt | {r.Records} | {r.Packages} | {S(r.First)} | accepted {r.Accepted}, rejected {r.Rejected} |");
+                    Console.WriteLine($"| {name} | Same packages again (same batch_id) | {r.Records} | {r.Packages} | {S(r.Duplicates)} | duplicate answers {r.DuplicateAnswers} |");
+                    Console.WriteLine($"| {name} | Same records, new batch_id | {r.Records} | {r.Packages} | {S(r.Unchanged)} | unchanged {r.UnchangedItems} |");
+                    ok &= r.Rejected == 0 && r.Accepted == r.Records && r.UnchangedItems == r.Records;
+                }
+                return ok ? 0 : 1;
+            }
+            if (scenario == "catalog-minute")
+            {
+                var r = await scenarios.CatalogMinuteAsync(TimeSpan.FromSeconds(options.Int("seconds", 60)), TimeSpan.FromSeconds(options.Int("interval", 5)),
+                    options.Int("positions", 50));
+                Console.WriteLine($"Catalog changes: {r.Packages} packages of {options.Int("positions", 50)} positions (prices and stock), {r.Items} items: " +
+                                  $"accepted {r.Accepted}, unchanged {r.Unchanged}, rejected {r.Rejected}.");
+                Console.WriteLine($"Time per package: p50 {r.P50.TotalMilliseconds:0} ms, p95 {r.P95.TotalMilliseconds:0} ms, max {r.Max.TotalMilliseconds:0} ms.");
+                return r.Rejected == 0 ? 0 : 1;
             }
             if (scenario is "mirror" or "golden") return await SendMirrorAsync(tenantId, new OneCSampleClient(http, key, tin), scenario, options);
             if (scenario == "basic") await scenarios.BasicAsync();

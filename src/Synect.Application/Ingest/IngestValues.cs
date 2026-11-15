@@ -34,6 +34,7 @@ public static class IngestCodes
     public const string TextTooLong = "text_too_long";
     public const string InvalidLines = "invalid_lines";
     public const string DuplicateLineNo = "duplicate_line_no";
+    public const string InvalidBarcode = "invalid_barcode";
 
     // Not errors: why an item was left unchanged.
     public const string SameContent = "same_content";
@@ -247,6 +248,54 @@ public static partial class IngestValues
             "payment" or "outgoing" or "out" or "debit" or "списание" => BankDocumentDirection.Payment,
             _ => throw new IngestValueException(IngestCodes.InvalidValue, $"Field '{field}' must be Receipt or Payment."),
         };
+
+    public const int MaxBarcodeLength = 64;
+    public const int MaxBarcodes = 100;
+
+    /// <summary>
+    /// Barcodes of a catalog item: an array of strings (or numbers) of digits, or one such string. Order kept, duplicates
+    /// dropped; anything that is not 1-64 digits refuses the item (a barcode is how the bot finds goods, a wrong one must
+    /// not be stored silently).
+    /// </summary>
+    public static string[] Barcodes(JsonElement e, string field)
+    {
+        var values = new List<string>();
+        if (e.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var x in e.EnumerateArray())
+                if (!IsMissing(x)) values.Add(Barcode(x, field));
+        }
+        else
+        {
+            values.Add(Barcode(e, field));
+        }
+        var distinct = values.Distinct(StringComparer.Ordinal).ToArray();
+        if (distinct.Length > MaxBarcodes)
+            throw new IngestValueException(IngestCodes.InvalidBarcode, $"Field '{field}' has more than {MaxBarcodes} barcodes.");
+        return distinct;
+    }
+
+    private static string Barcode(JsonElement e, string field)
+    {
+        if (e.ValueKind is not (JsonValueKind.String or JsonValueKind.Number))
+            throw new IngestValueException(IngestCodes.InvalidBarcode, $"Field '{field}' must be an array of strings of digits.");
+        var value = (e.ValueKind == JsonValueKind.String ? e.GetString()! : e.GetRawText()).Trim();
+        if (value.Length is 0 or > MaxBarcodeLength || !value.All(char.IsAsciiDigit))
+            throw new IngestValueException(IngestCodes.InvalidBarcode, $"Field '{field}' must contain only strings of 1 to {MaxBarcodeLength} digits.");
+        return value;
+    }
+
+    /// <summary>Goods / Service (Russian and Uzbek spellings too); null for any other text, which is kept in extra.</summary>
+    public static string? ItemType(JsonElement e)
+    {
+        if (e.ValueKind != JsonValueKind.String) return null;
+        return e.GetString()!.Trim().ToLowerInvariant() switch
+        {
+            "goods" or "good" or "product" or "item" or "товар" or "товары" or "tovar" => nameof(Domain.Catalog.CatalogItemType.Goods),
+            "service" or "services" or "услуга" or "услуги" or "xizmat" or "хизмат" => nameof(Domain.Catalog.CatalogItemType.Service),
+            _ => null,
+        };
+    }
 
     /// <summary>
     /// PostgreSQL refuses NUL characters and lone surrogates in text and jsonb; such an item is refused alone (instead of

@@ -1,3 +1,5 @@
+using Synect.Domain.Accounting;
+
 namespace Synect.Application.Ingest;
 
 /// <summary>Value kinds of the export contract fields and how they are checked (<see cref="IngestValues"/>).</summary>
@@ -47,6 +49,25 @@ public enum IngestFieldType
 
     /// <summary>Receipt / Payment.</summary>
     Direction,
+
+    /// <summary>Barcodes: an array of strings of digits (a single string is one barcode); stored as text[], duplicates dropped.</summary>
+    Barcodes,
+
+    /// <summary>Goods / Service; any other text is stored as NULL and kept in extra, never refused.</summary>
+    ItemType,
+}
+
+/// <summary>What an optional field gets when the item does not carry it.</summary>
+public enum IngestFieldDefault
+{
+    /// <summary>NULL (or, for currencies, Ingest:DefaultCurrency).</summary>
+    None,
+
+    /// <summary>false (flags such as is_archived, is_default).</summary>
+    False,
+
+    /// <summary>exported_at of the package (the stock time of catalog_stock).</summary>
+    ExportedAt,
 }
 
 /// <summary>
@@ -57,6 +78,9 @@ public enum IngestFieldType
 /// </summary>
 public sealed record IngestField(string Name, string Column, IngestFieldType Type, bool Required, params string[] Aliases)
 {
+    /// <summary>Value of the column when the item does not carry the field.</summary>
+    public IngestFieldDefault Default { get; init; }
+
     /// <summary>PostgreSQL type of the column, used in jsonb_to_recordset.</summary>
     public string PgType => Type switch
     {
@@ -66,6 +90,7 @@ public sealed record IngestField(string Name, string Column, IngestFieldType Typ
         IngestFieldType.Decimal or IngestFieldType.Rate => "numeric",
         IngestFieldType.Int => "integer",
         IngestFieldType.Bool => "boolean",
+        IngestFieldType.Barcodes => "text[]",
         _ => "text",
     };
 }
@@ -85,12 +110,31 @@ public sealed class IngestEntitySpec
     public required IReadOnlyList<IngestField> Fields { get; init; }
     public IngestChildSpec? Children { get; init; }
 
+    /// <summary>Accounting or catalog: which freshness the entity's packages refresh (ingest_freshness).</summary>
+    public IngestDataGroup Group { get; init; } = IngestDataGroup.Accounting;
+
+    /// <summary>
+    /// A current-state table keyed by two refs (catalog_prices, catalog_stock): a completed full export REMOVES the rows it
+    /// did not contain (logged in ingest_removed_rows) instead of marking them deleted, and a deletion may carry only the key.
+    /// </summary>
+    public bool CurrentState { get; init; }
+
+    /// <summary>Column filled by Synect with the search key of the "name" field (catalog_items.search_name); null for none.</summary>
+    public string? SearchColumn { get; init; }
+
+    /// <summary>The key includes the balance date: a full export covers only the dates it contained.</summary>
+    public bool KeyedByDate => KeyFields.Contains("as_of_date");
+
     /// <summary>Object type in raw_objects: "1c.{entity}" (rejected items: "1c.{entity}.rejected").</summary>
     public string RawObjectType => "1c." + Name;
 
     public bool HasRef => KeyFields is ["ref"];
 
     public IReadOnlyList<IngestField> Keys => KeyFields.Select(k => Fields.Single(f => f.Name == k)).ToList();
+
+    /// <summary>Columns the writer fills from an item: the data fields plus the search column computed by Synect.</summary>
+    public IReadOnlyList<(string Column, string PgType)> WriteColumns =>
+        [.. DataFields.Select(f => (f.Column, f.PgType)), .. SearchColumn is null ? [] : new[] { (SearchColumn, "text") }];
 
     /// <summary>Fields stored in their own columns (everything except the common columns handled by the writer).</summary>
     public IReadOnlyList<IngestField> DataFields =>
@@ -261,6 +305,66 @@ public static class IngestSchema
                 Money("balance", true, "closing_balance"),
                 Money("turnover_debit", false),
                 Money("turnover_credit", false)),
+        },
+
+        // ---- Catalog for the Mailo bot: changes every minute, a full export once a day. Field names are not confirmed on
+        // a real configuration (Розница, Управление торговлей, Бухгалтерия): aliases cover the usual 1C spellings.
+        new()
+        {
+            Name = "items", Table = "catalog_items", KeyFields = ["ref"], Group = IngestDataGroup.Catalog, SearchColumn = "search_name",
+            Fields = Common(
+                F("item_type", IngestFieldType.ItemType, false, "type", "kind", "nomenclature_type"),
+                F("code", IngestFieldType.Code, false, "item_code"),
+                F("article", IngestFieldType.Code, false, "sku", "vendor_code", "artikul"),
+                F("name", IngestFieldType.Text, true, "description", "title"),
+                F("full_name", IngestFieldType.Text, false, "name_full", "print_name"),
+                F("category_ref", IngestFieldType.Ref, false, "parent_ref", "group_ref", "category"),
+                F("unit", IngestFieldType.ShortText, false, "unit_name", "measure", "base_unit"),
+                F("barcodes", IngestFieldType.Barcodes, false, "barcode", "ean", "shtrihkod", "shtrikhkody"),
+                F("vat_rate", IngestFieldType.Rate, false, "vat_percent", "vat"),
+                F("is_archived", IngestFieldType.Bool, false, "archived", "not_used") with { Default = IngestFieldDefault.False }),
+        },
+        new()
+        {
+            Name = "categories", Table = "catalog_categories", KeyFields = ["ref"], Group = IngestDataGroup.Catalog,
+            Fields = Common(
+                F("parent_ref", IngestFieldType.Ref, false, "parent", "group_ref"),
+                F("name", IngestFieldType.Text, true, "description", "title")),
+        },
+        new()
+        {
+            Name = "price_types", Table = "catalog_price_types", KeyFields = ["ref"], Group = IngestDataGroup.Catalog,
+            Fields = Common(
+                F("name", IngestFieldType.Text, true, "description", "title"),
+                F("currency", IngestFieldType.Currency, false, "currency_code"),
+                F("is_default", IngestFieldType.Bool, false, "default", "is_retail") with { Default = IngestFieldDefault.False }),
+        },
+        new()
+        {
+            Name = "prices", Table = "catalog_prices", KeyFields = ["item_ref", "price_type_ref"], Group = IngestDataGroup.Catalog,
+            CurrentState = true,
+            Fields = Balance(
+                F("item_ref", IngestFieldType.Ref, true, "nomenclature_ref", "product_ref"),
+                F("price_type_ref", IngestFieldType.Ref, true, "price_kind_ref"),
+                Money("price", true, "amount", "value"),
+                F("currency", IngestFieldType.Currency, false, "currency_code"),
+                F("effective_from", IngestFieldType.Date, false, "period", "date", "valid_from")),
+        },
+        new()
+        {
+            Name = "warehouses", Table = "catalog_warehouses", KeyFields = ["ref"], Group = IngestDataGroup.Catalog,
+            Fields = Common(F("name", IngestFieldType.Text, true, "description", "title")),
+        },
+        new()
+        {
+            Name = "stock", Table = "catalog_stock", KeyFields = ["item_ref", "warehouse_ref"], Group = IngestDataGroup.Catalog,
+            CurrentState = true,
+            Fields = Balance(
+                F("item_ref", IngestFieldType.Ref, true, "nomenclature_ref", "product_ref"),
+                F("warehouse_ref", IngestFieldType.Ref, true, "store_ref", "warehouse"),
+                F("quantity", IngestFieldType.Decimal, true, "qty", "balance", "on_hand"),
+                F("reserved", IngestFieldType.Decimal, false, "reserve", "reserved_qty"),
+                F("as_of", IngestFieldType.Timestamp, false, "as_of_time", "period", "stock_at") with { Default = IngestFieldDefault.ExportedAt }),
         },
     ];
 

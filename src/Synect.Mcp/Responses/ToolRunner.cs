@@ -8,6 +8,7 @@ using Synect.Application.Access;
 using Synect.Application.Analytics;
 using Synect.Application.Attention;
 using Synect.Application.Freshness;
+using Synect.Application.Ingest;
 using Synect.Domain.Sync;
 
 namespace Synect.Mcp.Responses;
@@ -237,8 +238,19 @@ public sealed class ToolRunner(
             LastLoadComplete = s.LastSuccessfulRunIsComplete,
             LastRunResult = s.LastRunResult,
             LastRunFinishedAt = s.LastRunFinishedAt,
+            DataGroups = s.DataGroups is { } groups ? DataGroups(groups, freshness.GeneratedAt) : null,
         }).ToList(),
     };
+
+    /// <summary>1C: freshness of the accounting and the catalog data, each by its own threshold.</summary>
+    public object DataGroups(IReadOnlyList<IngestGroupFreshness> groups, DateTimeOffset now) => groups.Select(g => new
+    {
+        g.Group,
+        g.LastAcceptedAt,
+        HoursSinceLastPackage = g.LastAcceptedAt is { } at ? Math.Round((now - at).TotalHours, 2) : (double?)null,
+        StaleAfterHours = g.StaleAfter.TotalHours,
+        g.State,
+    }).ToList();
 
     public static DataFreshness FreshnessOf(IReadOnlyList<SourceFreshness> sources, TimeProvider time) => new(time.GetUtcNow(), sources);
 
@@ -271,7 +283,14 @@ public sealed class ToolRunner(
             var name = $"{s.Kind} source {s.SourceCode}";
             if (s.Status != ConnectionStatus.Active)
                 yield return $"The {name} connection is {s.Status}: its data is not being refreshed.";
-            if (s.LastSuccessfulSyncAt is null)
+            if (s.DataGroups is { } groups && s.LastSuccessfulSyncAt is not null)
+            {
+                // 1C: each data group by its own threshold; a group the organization does not send is not reported.
+                foreach (var g in groups.Where(g => g.State == IngestGroupFreshness.Stale))
+                    yield return $"The {g.Group} data of the {name} was last received at {g.LastAcceptedAt:yyyy-MM-dd HH:mm} UTC, " +
+                                 $"more than {FormatHours(g.StaleAfter)} ago.";
+            }
+            else if (s.LastSuccessfulSyncAt is null)
                 yield return $"The {name} has never been loaded successfully; answers have no data from it.";
             else if (freshness.GeneratedAt - s.LastSuccessfulSyncAt.Value > (s.StaleAfter ?? Options.StaleAfter))
                 yield return $"The {name} was last loaded at {s.LastSuccessfulSyncAt:yyyy-MM-dd HH:mm} UTC, more than {(s.StaleAfter ?? Options.StaleAfter).TotalHours:0} hours ago.";
@@ -279,6 +298,8 @@ public sealed class ToolRunner(
                 yield return $"The last load of the {name} was incomplete (e.g. the bank day is not closed); recent figures may still change.";
         }
     }
+
+    private static string FormatHours(TimeSpan t) => t.TotalHours >= 1 ? $"{t.TotalHours:0.#} hours" : $"{t.TotalMinutes:0} minutes";
 
     private static CallToolResult Build(object envelope, bool isError, bool omitNullAttention = false)
     {

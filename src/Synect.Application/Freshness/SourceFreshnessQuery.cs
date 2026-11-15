@@ -23,13 +23,19 @@ public sealed record SourceFreshness(
     DateTimeOffset? LastRunFinishedAt)
 {
     /// <summary>
-    /// The source's own staleness threshold, when it has one: for 1C (pushed packages) Ingest:StaleAfter; null for the other
-    /// sources (readers apply their usual threshold, e.g. Mcp:StaleAfter).
+    /// The source's own staleness threshold, when it has one: for 1C (pushed packages) the accounting threshold
+    /// (Ingest:AccountingStaleAfter); null for the other sources (readers apply their usual threshold, e.g. Mcp:StaleAfter).
     /// </summary>
     public TimeSpan? StaleAfter { get; init; }
 
-    /// <summary>For sources with their own threshold: never received, or the last accepted package is older than it.</summary>
+    /// <summary>
+    /// For sources with their own threshold (1C): a data group it receives is stale, or it never received anything
+    /// (<see cref="IngestFreshnessGroups.IsStale"/>).
+    /// </summary>
     public bool? IsStale { get; init; }
+
+    /// <summary>1C only: freshness of the accounting and the catalog data separately; null for the other sources.</summary>
+    public IReadOnlyList<IngestGroupFreshness>? DataGroups { get; init; }
 }
 
 public interface ISourceFreshnessQuery
@@ -40,7 +46,8 @@ public interface ISourceFreshnessQuery
 
 /// <remarks>
 /// A 1C connection (<see cref="AdapterKind.Accounting1C"/>) has no sync runs: its last successful load is the time of the
-/// last accepted package, and it is stale after Ingest:StaleAfter (48 h by default).
+/// last accepted package of any kind, and its freshness is judged per data group (ingest_freshness): accounting after
+/// Ingest:AccountingStaleAfter (48 h), catalog after Ingest:CatalogStaleAfter (60 min).
 /// </remarks>
 public sealed class SourceFreshnessQuery(ISynectDbContext db, ITenantContext tenant, IOptions<IngestOptions> ingest, TimeProvider time) : ISourceFreshnessQuery
 {
@@ -52,6 +59,10 @@ public sealed class SourceFreshnessQuery(ISynectDbContext db, ITenantContext ten
         return db.InTransactionAsync<IReadOnlyList<SourceFreshness>>(async token =>
         {
             var connections = await db.Connections.AsNoTracking().OrderBy(c => c.Name).ToListAsync(token);
+            var groups = connections.Any(c => c.AdapterKind == AdapterKind.Accounting1C)
+                ? await db.IngestFreshness.AsNoTracking().ToListAsync(token)
+                : [];
+            var now = time.GetUtcNow();
             var result = new List<SourceFreshness>(connections.Count);
             foreach (var c in connections)
             {
@@ -70,11 +81,13 @@ public sealed class SourceFreshnessQuery(ISynectDbContext db, ITenantContext ten
                     c.LastSuccessfulSyncAt, lastSuccess?.IsComplete, lastRun?.Result, lastRun?.FinishedAt);
                 if (c.AdapterKind == AdapterKind.Accounting1C)
                 {
-                    var staleAfter = ingest.Value.StaleAfter;
+                    var dataGroups = IngestFreshnessGroups.Evaluate(
+                        groups.Where(g => g.ConnectionId == c.Id).ToDictionary(g => g.DataGroup, g => g.LastAcceptedAt), ingest.Value, now);
                     freshness = freshness with
                     {
-                        StaleAfter = staleAfter,
-                        IsStale = c.LastSuccessfulSyncAt is not { } last || time.GetUtcNow() - last > staleAfter,
+                        StaleAfter = ingest.Value.AccountingStaleAfterOrDefault,
+                        IsStale = IngestFreshnessGroups.IsStale(dataGroups),
+                        DataGroups = dataGroups,
                     };
                 }
                 result.Add(freshness);

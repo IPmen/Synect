@@ -627,8 +627,9 @@ strings of at most 64 characters. Every record table also has `is_deleted`, `mod
 **Connection.** `AdapterKind.Accounting1C` (source code `1c`), created with the first ingest key. It is never planned or
 queued (`request_data_refresh` answers `NotLoadable`). `last_successful_sync_at` is the time of the last package with at
 least one accepted or unchanged item; a `Disabled` connection refuses packages (`403 connection_disabled`).
-`ISourceFreshnessQuery` returns it with `StaleAfter` = `Ingest:StaleAfter` (48 h) and `IsStale`; `get_data_freshness` and
-`get_connections_overview` show it (`stale`, `stale_after_hours`). No attention rule covers 1C at this stage (the existing
+`ISourceFreshnessQuery` returns it with `StaleAfter` = the accounting threshold, `IsStale` and `DataGroups` (freshness of
+accounting and catalog data separately, see "1C catalog" below); `get_data_freshness` and `get_connections_overview` show
+it (`stale`, `stale_after_hours`, `data_groups`). No attention rule covers 1C at this stage (the existing
 `connection.stale_data` skips it).
 
 **Ingest keys.** `ik_synect_` + 32 random bytes (base64url); only the SHA-256 is stored, with a 16-character prefix. The
@@ -650,14 +651,15 @@ optional `Content-Encoding: gzip`.
 ```
 
 Entities: `counterparties`, `contracts`, `bank_accounts`, `documents` (with `lines`), `bank_documents` (with
-`settlements`), `payment_orders`, `settlement_balances`, `bank_account_balances`. `mode` is `full` or `delta`; a full
+`settlements`), `payment_orders`, `settlement_balances`, `bank_account_balances`, and for the catalog `items`,
+`categories`, `price_types`, `prices`, `warehouses`, `stock`. `mode` is `full` or `delta`; a full
 export also carries `full_sync_id` and, on its last package, `is_last_batch: true`.
 
 | Case | Answer |
 |---|---|
 | Missing, malformed, unknown or revoked key; key of a disabled organization | `401`, `WWW-Authenticate: Bearer`, empty body |
 | More than `Ingest:RateLimit:FailedAuthPerMinutePerIp` (20) failed authentications from an IP | `429` with `Retry-After` until the window ends |
-| More than `Ingest:RateLimit:PackagesPerMinute` (60) packages of a key | `429` with `Retry-After` |
+| More than `Ingest:RateLimit:PackagesPerMinute` (120) packages of a key | `429` with `Retry-After` |
 | `organization_tin` differs from the TIN of the key's organization (or it has none) | `403 organization_mismatch`, nothing about other organizations |
 | Other Content-Type / Content-Encoding | `415` |
 | More than `Ingest:MaxItems` (500) items or `Ingest:MaxBytes` (2 MB, counted after decompression) | `413 too_many_items` / `payload_too_large` |
@@ -699,6 +701,83 @@ PostgreSQL 18, Debug build, three runs): first receipt 10.4 s (goal 10 s, about 
 PostgreSQL writes: 20 000 records, 26 000 child rows and 20 000 raw objects), the same packages again 0.15-0.19 s
 (duplicates), the same records under new batch ids 1.4-1.6 s (all unchanged). `Ingest:RateLimit:PackagesPerMinute` must
 be raised for this run (the sender waits for `Retry-After` otherwise).
+
+## 1C catalog for the Mailo bot (stage 8a, catalog part)
+
+The second kind of 1C data: goods and services, prices, warehouses and stock for the Mailo Telegram bot. Changes come every
+minute, a full export once a day. The same receiver, keys, journal, validation, idempotency and raw layer as the
+accounting data above; only the tables and the full-export rule of current-state tables differ. Not in this stage: the
+1C extension, a REST API for Mailo, MCP tools and attention rules for the catalog. Synect never writes to 1C.
+
+**Tables** (migration `CatalogIngest`; row-level security forced, `tenant_id` first in every index, the common record
+columns of the accounting tables; no foreign keys between 1C records: a price or stock row may arrive before its item, a
+item before its category, links are resolved by ref).
+
+| Table | Key | Fields (M = required) |
+|---|---|---|
+| `catalog_items` | ref | name (M), item_type Goods / Service, code, article, full_name, category_ref, unit, barcodes `text[]`, vat_rate, is_archived (false when absent); `search_name` computed by Synect |
+| `catalog_categories` | ref | name (M), parent_ref |
+| `catalog_price_types` | ref | name (M), currency (UZS when absent), is_default |
+| `catalog_prices` | item_ref, price_type_ref | price (M, minor units), currency, effective_from; current state |
+| `catalog_warehouses` | ref | name (M) |
+| `catalog_stock` | item_ref, warehouse_ref | quantity (M, `numeric(28,6)`, may be negative), reserved, as_of (the package's `exported_at` when absent); current state |
+| `ingest_freshness` | (organization, connection, data_group) | time of the last accepted package of `Accounting` or `Catalog` |
+| `ingest_removed_rows` | id | rows of `catalog_prices` / `catalog_stock` removed by a completed full export: package, full_sync_id, entity, row key, time; never the content |
+
+Search indexes for a future catalog search: `(tenant_id, code)`, `(tenant_id, article)`, `(tenant_id, category_ref)`,
+GIN `(tenant_id, barcodes)` (any of several barcodes), GIN trigram `(tenant_id, search_name)`. `search_name` is the name
+through the counterparty normalizer without removing legal forms (`CounterpartyNameNormalizer.NormalizeText`): lower
+case, Cyrillic (Russian and Uzbek) to Latin, signs removed, so «Сок "Яблочный"» and "sok yablochnyy" meet. Prices and
+stock are found by item through their unique keys (item_ref first).
+
+**Values.** Barcodes: an array of strings (or numbers) of 1-64 digits, or one such string; anything else refuses the item
+(`invalid_barcode`). An `item_type` Synect does not know ("Комплект") is stored as NULL and kept in `extra`, like a VAT
+rate that is not a number. Prices follow the money rule (decimal sum, fractions of a tiyin refused per item).
+
+**Full exports of current-state tables.** For `prices` and `stock` a completed full export (the package with
+`is_last_batch`, every sequence 1..N of that `full_sync_id` processed) DELETES the rows of the organization that were not
+in THIS export and were not received since it started: these tables hold the current state, a kept row would be read as a
+price or a stock. Each removed row is written to `ingest_removed_rows` (key and package only); the answer and
+`ingest_batches.removed_rows` give the count (`removed`). Without `is_last_batch`, with a missing sequence, or for keys of
+another `full_sync_id`, nothing is removed. A deletion inside a delta (`is_deleted: true` with only `item_ref` and
+`price_type_ref` / `warehouse_ref`) only marks the row, as everywhere else. Items, categories, price types and warehouses
+missing from a completed full export are marked `is_deleted`, never removed.
+
+**Freshness per data group.** Every entity belongs to a group (`IngestEntitySpec.Group`). A package with at least one
+accepted or unchanged item updates `ingest_freshness` of its group (and, as before, the connection's
+`last_successful_sync_at`). `ISourceFreshnessQuery` and the portfolio rows give `data_groups` per 1C connection: for each
+group `last_accepted_at`, the threshold and `state` = `fresh`, `stale` or `never_received`. Accounting is stale after
+`Ingest:AccountingStaleAfter` (48 h), catalog after `Ingest:CatalogStaleAfter` (60 min). The connection is stale when a
+group it receives is stale, or when it never received anything; a group the organization does not send (no catalog
+without the bot) does not make it stale. So catalog packages every minute never hide stale accounting data. The migration
+fills the accounting group from the journal. Freshness notes of MCP answers name the stale group.
+
+`Ingest:AccountingStaleAfter` replaces `Ingest:StaleAfter` of stage 8a; the former name is still read when the new one is
+not set (new name, then former name, then 48 h). That is why the accounting threshold is not written in `appsettings.json`:
+a value there under the new name would override a former `Ingest:StaleAfter` set in user-secrets, the environment or
+`appsettings.{Environment}.json`.
+
+**No recalculation.** Receiving a package (catalog or accounting) runs no reconciliation, analytics or attention rule and
+queues nothing: `IngestService` depends on none of them (a test checks both the constructor and the tables).
+
+**Rate limits.** `Ingest:RateLimit:PackagesPerMinute` is 120 per ingest key (catalog changes every minute plus the hourly
+accounting export, several packages per entity). It counts packages of an already valid key only. Guessing keys is limited
+separately and first: `Ingest:RateLimit:FailedAuthPerMinutePerIp` stays 20 failed authentications per IP and window, after
+which the IP gets 429 even with a valid key (tested with the default values).
+
+**Sample sender.** `send-1c-sample --scenario basic` also sends categories, price types, warehouses, items (goods with
+barcodes, a service), prices and stock; `messy` adds a price before its item, a wrong barcode, an unknown item type and
+field, a fractional price, and a truncated and a complete full stock export. `catalog-minute [--seconds 60] [--interval 5]
+[--positions 50]` sends a delta of 50 price changes and one of 50 stock changes every 5 seconds for a minute and prints p50
+/ p95 / max per package. `large` sends 20 000 accounting records and then 20 000 catalog records (10 000 items, 5 000
+prices, 5 000 stock rows) in packages of 500, each again (duplicates) and under new batch ids (unchanged).
+
+Measured on the development machine (local PostgreSQL 18, Debug build, Api run with
+`Ingest:RateLimit:PackagesPerMinute` raised, two runs): catalog first receipt of 20 000 records 8.1-8.4 s (goal 10 s), the
+same packages again 0.12-0.14 s (goal 2 s), the same records under new batch ids 1.0-1.1 s; a catalog delta of 50
+positions p50 14 ms, p95 20 ms, max 21 ms (goal p95 0.3 s, 24 packages in a minute). The accounting part of the same run:
+10.3-11.6 s for 20 000 records (above the 10 s goal, as in stage 8a: documents carry 2 lines and bank documents a
+settlement, 46 000 rows in all), 0.14-0.15 s duplicates, 1.3-1.9 s unchanged.
 
 ## 1C questions and comparison with the bank and Didox (stage 8b)
 
@@ -855,7 +934,7 @@ dotnet run --project src/Synect.DevTools -- create-ingest-key --tenant "Demo cli
 dotnet run --project src/Synect.DevTools -- list-ingest-keys --tenant "Demo client 1"
 dotnet run --project src/Synect.DevTools -- revoke-ingest-key --tenant "Demo client 1" --key <key id or prefix>
 dotnet run --project src/Synect.DevTools -- list-ingest-batches --tenant "Demo client 1" [--limit 50]
-dotnet run --project src/Synect.DevTools -- send-1c-sample --tenant "Demo client 1" --scenario basic|messy|large
+dotnet run --project src/Synect.DevTools -- send-1c-sample --tenant "Demo client 1" --scenario basic|messy|catalog-minute|large
 dotnet run --project src/Synect.DevTools -- send-1c-sample --tenant "Demo client 1" --scenario mirror [--plant]
 dotnet run --project src/Synect.DevTools -- send-1c-sample --tenant "Reconciliation golden set" --scenario golden
 dotnet run --project src/Synect.DevTools -- normalize-currency --all
@@ -998,9 +1077,10 @@ timeout, so a genuinely slow query still fails.
 | `Attention:FileStaleAfter` | 7 days | `connection.stale_data` threshold of file import connections. **Assumption.** |
 | `Ingest:MaxItems` / `MaxBytes` | 500 / 2 MB | Largest 1C package (bytes after decompression), else 413. |
 | `Ingest:SupportedSchemaVersions` | 1 | Accepted contract versions (an array); others get 400. |
-| `Ingest:RateLimit:PackagesPerMinute` | 60 | Packages per ingest key per window (1 min), then 429. |
+| `Ingest:RateLimit:PackagesPerMinute` | 120 | Packages per ingest key per window (1 min), then 429. Valid keys only; guessing is limited per IP. |
 | `Ingest:RateLimit:FailedAuthPerMinutePerIp` | 20 | Failed ingest authentications per IP per window, then 429. |
-| `Ingest:StaleAfter` | 48 h | The 1C source is stale when its last accepted package is older. |
+| `Ingest:AccountingStaleAfter` | 48 h | 1C accounting data is stale when its last accepted package is older. Not in appsettings.json on purpose; the former name `Ingest:StaleAfter` is read when this one is not set. |
+| `Ingest:CatalogStaleAfter` | 60 min | The 1C catalog (Mailo bot) is stale when its last accepted package is older. |
 | `Ingest:DefaultCurrency` | UZS | Currency of an item without one. **Assumption.** |
 | `Ingest:SourceUtcOffset` | 05:00 | Offset of 1C date-times sent without one. **Assumption.** |
 | `Ingest:MaxTextLength` | 4000 | Longest free text of an item (names, purpose, comment). |

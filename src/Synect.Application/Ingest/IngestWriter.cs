@@ -61,7 +61,7 @@ public sealed class IngestWriter(ISynectDbContext db)
         IReadOnlyList<ParsedItem> items, CancellationToken ct)
     {
         if (items.Count == 0) return 0;
-        var fields = spec.DataFields;
+        var fields = spec.WriteColumns;
         var rows = Rows(items.Select(i =>
         {
             var row = new Dictionary<string, object?>(StringComparer.Ordinal) { ["id"] = Guid.CreateVersion7() };
@@ -72,10 +72,11 @@ public sealed class IngestWriter(ISynectDbContext db)
             row["extra"] = new RawJson(i.ExtraJson);
             return row;
         }));
-        var columns = string.Join(", ", fields.Select(Col));
-        var selected = string.Join(", ", fields.Select(f => "x." + f.Column));
+        var keyColumns = spec.Keys.Select(Col).ToHashSet(StringComparer.Ordinal);
+        var columns = string.Join(", ", fields.Select(f => f.Column));
+        var selected = string.Join(", ", fields.Select(f => f.PgType == "text[]" ? $"coalesce(x.{f.Column}, ARRAY[]::text[])" : "x." + f.Column));
         var record = string.Join(", ", fields.Select(f => $"{f.Column} {f.PgType}"));
-        var updates = string.Join(", ", fields.Where(f => !spec.KeyFields.Contains(f.Name)).Select(f => $"{f.Column} = excluded.{f.Column}"));
+        var updates = string.Join(", ", fields.Where(f => !keyColumns.Contains(f.Column)).Select(f => $"{f.Column} = excluded.{f.Column}"));
         var conflict = string.Join(", ", spec.Keys.Select(Col));
         var sql = $$"""
             INSERT INTO {{spec.Table}} AS t (id, tenant_id, {{columns}}, is_deleted, modified_at, content_hash, extra, schema_version,
@@ -92,20 +93,23 @@ public sealed class IngestWriter(ISynectDbContext db)
         return await db.Database.ExecuteSqlRawAsync(sql, [tenant, schemaVersion, batch, now.ToUniversalTime(), rows], ct);
     }
 
-    /// <summary>Deletion notices (only a ref): marks known records deleted, keeping their other fields.</summary>
+    /// <summary>Deletion notices (only a ref, or the key of a current-state row): marks known records deleted, keeping their other fields.</summary>
     public async Task<int> MarkDeletedAsync(IngestEntitySpec spec, Guid tenant, Guid batch, int schemaVersion, DateTimeOffset now,
         IReadOnlyList<ParsedItem> items, CancellationToken ct)
     {
         if (items.Count == 0) return 0;
-        var rows = Rows(items.Select(i => new Dictionary<string, object?>(StringComparer.Ordinal)
+        var rows = Rows(items.Select(i =>
         {
-            ["ref"] = i.Key, ["modified_at"] = i.ModifiedAt, ["content_hash"] = i.ContentHash,
+            var row = spec.Keys.ToDictionary(k => k.Column, k => i.Values.GetValueOrDefault(k.Column), StringComparer.Ordinal);
+            row["modified_at"] = i.ModifiedAt;
+            row["content_hash"] = i.ContentHash;
+            return (IReadOnlyDictionary<string, object?>)row;
         }));
         var sql = $$"""
             UPDATE {{spec.Table}} t SET is_deleted = true, modified_at = x.modified_at, content_hash = x.content_hash,
                 schema_version = {1}, last_batch_id = {2}, last_seen_at = {3}, updated_at = {3}
-            FROM jsonb_to_recordset({4}::jsonb) AS x(ref text, modified_at timestamptz, content_hash text)
-            WHERE t.tenant_id = {0} AND t.ref = x.ref AND t.modified_at <= x.modified_at
+            FROM jsonb_to_recordset({4}::jsonb) AS x({{KeyRecord(spec)}}, modified_at timestamptz, content_hash text)
+            WHERE t.tenant_id = {0} AND {{KeyJoin(spec, "t", "x")}} AND t.modified_at <= x.modified_at
             """;
         return await db.Database.ExecuteSqlRawAsync(sql, [tenant, schemaVersion, batch, now.ToUniversalTime(), rows], ct);
     }
@@ -199,7 +203,8 @@ public sealed class IngestWriter(ISynectDbContext db)
     public async Task<int> CompleteFullSyncAsync(IngestEntitySpec spec, Guid tenant, Guid batch, string fullSyncId, DateTimeOffset startedAt,
         DateTimeOffset now, TimeSpan retention, CancellationToken ct)
     {
-        var dates = spec.HasRef ? "" : $$"""
+        if (spec.CurrentState) return await RemoveMissingRowsAsync(spec, tenant, batch, fullSyncId, startedAt, now, retention, ct);
+        var dates = !spec.KeyedByDate ? "" : $$"""
              AND t.as_of_date IN (SELECT DISTINCT left(s.item_key, 10)::date FROM ingest_full_sync_items s
                                   WHERE s.tenant_id = {0} AND s.full_sync_id = {1} AND s.entity = {2})
             """;
@@ -210,11 +215,39 @@ public sealed class IngestWriter(ISynectDbContext db)
                               WHERE s.tenant_id = {0} AND s.full_sync_id = {1} AND s.entity = {2} AND s.item_key = {{KeyExpression(spec, "t")}})
             """;
         var marked = await db.Database.ExecuteSqlRawAsync(sql, [tenant, fullSyncId, spec.Name, now.ToUniversalTime(), batch, startedAt.ToUniversalTime()], ct);
-        await db.Database.ExecuteSqlRawAsync(
-            "DELETE FROM ingest_full_sync_items WHERE tenant_id = {0} AND ((full_sync_id = {1} AND entity = {2}) OR created_at < {3})",
-            [tenant, fullSyncId, spec.Name, (now - retention).ToUniversalTime()], ct);
+        await ForgetFullSyncAsync(spec, tenant, fullSyncId, now, retention, ct);
         return marked;
     }
+
+    /// <summary>
+    /// Completes a full export of a current-state table (catalog_prices, catalog_stock): rows that were not in it and were not
+    /// received since the export started are DELETED (the table holds the current state only; a kept row would be read as a
+    /// price or stock), and each removed row is logged in ingest_removed_rows with its key and the package, never its
+    /// content. Called only from the package with is_last_batch, for rows absent from THIS full_sync_id.
+    /// </summary>
+    private async Task<int> RemoveMissingRowsAsync(IngestEntitySpec spec, Guid tenant, Guid batch, string fullSyncId, DateTimeOffset startedAt,
+        DateTimeOffset now, TimeSpan retention, CancellationToken ct)
+    {
+        var sql = $$"""
+            WITH removed AS (
+                DELETE FROM {{spec.Table}} t
+                WHERE t.tenant_id = {0} AND t.last_seen_at < {5}
+                  AND NOT EXISTS (SELECT 1 FROM ingest_full_sync_items s
+                                  WHERE s.tenant_id = {0} AND s.full_sync_id = {1} AND s.entity = {2} AND s.item_key = {{KeyExpression(spec, "t")}})
+                RETURNING {{KeyExpression(spec, "t")}} AS item_key)
+            INSERT INTO ingest_removed_rows (tenant_id, id, ingest_batch_id, full_sync_id, entity, item_key, removed_at)
+            SELECT {0}, gen_random_uuid(), {4}, {1}, {2}, r.item_key, {3} FROM removed r
+            """;
+        var removed = await db.Database.ExecuteSqlRawAsync(sql, [tenant, fullSyncId, spec.Name, now.ToUniversalTime(), batch, startedAt.ToUniversalTime()], ct);
+        await ForgetFullSyncAsync(spec, tenant, fullSyncId, now, retention, ct);
+        return removed;
+    }
+
+    /// <summary>Removes the key list of a completed export and those of abandoned exports older than <paramref name="retention"/>.</summary>
+    private Task ForgetFullSyncAsync(IngestEntitySpec spec, Guid tenant, string fullSyncId, DateTimeOffset now, TimeSpan retention, CancellationToken ct) =>
+        db.Database.ExecuteSqlRawAsync(
+            "DELETE FROM ingest_full_sync_items WHERE tenant_id = {0} AND ((full_sync_id = {1} AND entity = {2}) OR created_at < {3})",
+            [tenant, fullSyncId, spec.Name, (now - retention).ToUniversalTime()], ct);
 
     /// <summary>A JSON value written as is (jsonb columns).</summary>
     private sealed record RawJson(string Json);
@@ -236,6 +269,11 @@ public sealed class IngestWriter(ISynectDbContext db)
                     {
                         case null: w.WriteNullValue(); break;
                         case string s: w.WriteStringValue(s); break;
+                        case string[] list:
+                            w.WriteStartArray();
+                            foreach (var item in list) w.WriteStringValue(item);
+                            w.WriteEndArray();
+                            break;
                         case bool b: w.WriteBooleanValue(b); break;
                         case long l: w.WriteNumberValue(l); break;
                         case int n: w.WriteNumberValue(n); break;

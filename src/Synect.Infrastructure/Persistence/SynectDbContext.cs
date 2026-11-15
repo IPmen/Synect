@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Synect.Application.Abstractions;
 using Synect.Domain.Access;
 using Synect.Domain.Accounting;
+using Synect.Domain.Catalog;
 using Synect.Domain.Accounts;
 using Synect.Domain.Analytics;
 using Synect.Domain.Attention;
@@ -65,6 +66,14 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
     public DbSet<IngestBatch> IngestBatches => Set<IngestBatch>();
     public DbSet<IngestKey> IngestKeys => Set<IngestKey>();
     public DbSet<IngestFullSyncItem> IngestFullSyncItems => Set<IngestFullSyncItem>();
+    public DbSet<CatalogItem> CatalogItems => Set<CatalogItem>();
+    public DbSet<CatalogCategory> CatalogCategories => Set<CatalogCategory>();
+    public DbSet<CatalogPriceType> CatalogPriceTypes => Set<CatalogPriceType>();
+    public DbSet<CatalogWarehouse> CatalogWarehouses => Set<CatalogWarehouse>();
+    public DbSet<CatalogPrice> CatalogPrices => Set<CatalogPrice>();
+    public DbSet<CatalogStock> CatalogStock => Set<CatalogStock>();
+    public DbSet<IngestFreshness> IngestFreshness => Set<IngestFreshness>();
+    public DbSet<IngestRemovedRow> IngestRemovedRows => Set<IngestRemovedRow>();
 
     // Account tables (stage 6.5). The application role has no access to them (no grants, row-level security without a
     // policy); only the owner (DevTools administration) and the SECURITY DEFINER functions read them.
@@ -112,6 +121,14 @@ public sealed class SynectDbContext(DbContextOptions<SynectDbContext> options, I
         modelBuilder.Entity<IngestBatch>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<IngestKey>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         modelBuilder.Entity<IngestFullSyncItem>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<CatalogItem>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<CatalogCategory>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<CatalogPriceType>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<CatalogWarehouse>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<CatalogPrice>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<CatalogStock>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<IngestFreshness>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<IngestRemovedRow>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
