@@ -246,7 +246,12 @@ public class AccountDatabaseTests(PostgresFixture fixture) : IClassFixture<Postg
         {
             var bank = await fixture.Host.CreateConnectionAsync(tenant, AdapterKind.Bank);
             await fixture.Host.SyncBankAsync(tenant, bank);
+            // Didox documents leave rows in the append-only status history, which the deletion must still remove.
+            var edo = await fixture.Host.CreateConnectionAsync(tenant, AdapterKind.Edo);
+            await fixture.Host.SyncEdoAsync(tenant, edo);
         }
+        Assert.True(await fixture.ScalarAsync<long>($"SELECT count(*) FROM edo_document_status_logs WHERE tenant_id = '{victim.TenantId}'") > 0);
+        var keepLogs = await fixture.ScalarAsync<long>($"SELECT count(*) FROM edo_document_status_logs WHERE tenant_id = '{keep.TenantId}'");
         var key = await fixture.Host.InTenantAsync(victim.TenantId,
             sp => sp.GetRequiredService<ApiKeyService>().CreateAsync("victim key", [ApiKey.ScopeRead], CancellationToken.None));
         var keepRows = await fixture.ScalarAsync<long>($"SELECT count(*) FROM raw_objects WHERE tenant_id = '{keep.TenantId}'");
@@ -262,6 +267,14 @@ public class AccountDatabaseTests(PostgresFixture fixture) : IClassFixture<Postg
         Assert.Contains(deleted.Rows, r => r.Table == "bank_transactions" && r.Rows > 0);
         Assert.Contains(deleted.Rows, r => r.Table == "api_keys" && r.Rows == 1);
         Assert.Contains(deleted.Rows, r => r.Table == "account_tenants" && r.Rows == 1);
+        Assert.Contains(deleted.Rows, r => r.Table == "edo_document_status_logs" && r.Rows > 0);
+        // The history stays append-only for everything else: the trigger is enabled again after the deletion.
+        Assert.Equal("O", await fixture.ScalarAsync<string>(
+            "SELECT tgenabled::text FROM pg_trigger WHERE tgname = 'trg_edo_document_status_logs_append_only'"));
+        var stillAppendOnly = await Assert.ThrowsAsync<PostgresException>(() => Postgres.PostgresFixture.ExecAsync(
+            fixture.AdminDbConnectionString, $"DELETE FROM edo_document_status_logs WHERE tenant_id = '{keep.TenantId}'"));
+        Assert.Contains("append-only", stillAppendOnly.MessageText);
+        Assert.Equal(keepLogs, await fixture.ScalarAsync<long>($"SELECT count(*) FROM edo_document_status_logs WHERE tenant_id = '{keep.TenantId}'"));
 
         // Nothing of the tenant is left in any table with a tenant_id ...
         var leftovers = await fixture.ScalarAsync<string>("""

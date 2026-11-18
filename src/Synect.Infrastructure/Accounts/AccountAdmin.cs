@@ -318,6 +318,10 @@ public sealed class AccountAdmin(SynectDbContext owner, string ownerConnectionSt
 
         var order = await DeletionOrderAsync(connection, tx, ct);
         var counts = new List<(string, int)>();
+        // The EDO status history is append-only for everybody (trigger). Deleting a whole tenant is the one exception:
+        // the owner switches the trigger off inside this transaction only and on again before the commit; on any error
+        // the rollback restores it as well (DDL is transactional in PostgreSQL).
+        await ExecAsync(connection, tx, $"ALTER TABLE edo_document_status_logs DISABLE TRIGGER {AppendOnlyTrigger}", ct);
         foreach (var table in order)
         {
             await using var delete = new NpgsqlCommand($"DELETE FROM \"{table}\" WHERE tenant_id = @t", connection, tx);
@@ -325,6 +329,7 @@ public sealed class AccountAdmin(SynectDbContext owner, string ownerConnectionSt
             var rows = await delete.ExecuteNonQueryAsync(ct);
             if (rows > 0) counts.Add((table, rows));
         }
+        await ExecAsync(connection, tx, $"ALTER TABLE edo_document_status_logs ENABLE TRIGGER {AppendOnlyTrigger}", ct);
         await using (var deleteTenant = new NpgsqlCommand("DELETE FROM tenants WHERE id = @t", connection, tx))
         {
             deleteTenant.Parameters.AddWithValue("t", tenant.Id);
@@ -332,6 +337,14 @@ public sealed class AccountAdmin(SynectDbContext owner, string ownerConnectionSt
         }
         await tx.CommitAsync(ct);
         return new DeletedTenant(tenant.Id, tenant.Name, counts);
+    }
+
+    private const string AppendOnlyTrigger = "trg_edo_document_status_logs_append_only";
+
+    private static async Task ExecAsync(NpgsqlConnection connection, NpgsqlTransaction tx, string sql, CancellationToken ct)
+    {
+        await using var command = new NpgsqlCommand(sql, connection, tx);
+        await command.ExecuteNonQueryAsync(ct);
     }
 
     /// <summary>Tables with a tenant_id column, every referencing table before the table it references.</summary>
