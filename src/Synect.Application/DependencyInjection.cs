@@ -60,6 +60,7 @@ public static class DependencyInjection
         // Queue and scheduler.
         services.AddSingleton<SyncScheduleCalculator>();
         services.AddSingleton<TenantScopeRunner>();
+        services.AddSingleton<SyncShutdown>();
         services.AddSingleton<SyncDispatcher>();
         services.AddScoped<SyncJobQueue>();
         services.AddScoped<SyncRequestService>();

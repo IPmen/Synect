@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Synect backup
+
+[Timer]
+# 22:30 UTC = 03:30 in Tashkent, after the nightly loads (01:00-05:00 local start window).
+OnCalendar=*-*-* 22:30:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -31,6 +31,15 @@ public sealed class SyncQueueOptions
     /// <summary>Minimum time between two "refresh now" requests for the same connection.</summary>
     public TimeSpan ManualRequestMinInterval { get; set; } = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// Graceful stop: how long running loads may continue to finish before they are cancelled and returned to the
+    /// queue. Must stay below Hosting:ShutdownTimeout (60 s) with room for returning the jobs.
+    /// </summary>
+    public TimeSpan ShutdownDrainTimeout { get; set; } = TimeSpan.FromSeconds(45);
+
+    /// <summary>How often a worker that did not get the single-instance lock (another worker runs) tries again.</summary>
+    public TimeSpan InstanceLockRetryInterval { get; set; } = TimeSpan.FromSeconds(15);
+
     public int MaxConcurrentFor(string provider) =>
         MaxConcurrentPerSource.TryGetValue(provider, out var limit) ? limit : DefaultMaxConcurrentPerSource;
 }

@@ -20,15 +20,19 @@ internal static class SyncRunFinalizer
     /// <summary>
     /// Records a failed run and feeds the circuit breaker. Pending (unsaved) changes of the failed step
     /// are discarded; steps that were already committed stay, which is safe because every step is idempotent.
+    /// A load interrupted by a stop of the worker (<paramref name="interruptedByShutdown"/>) is recorded as an
+    /// interrupted run but is not a failure of the connection: its job goes back to the queue.
     /// </summary>
     public static async Task<SyncOutcome> FailAsync(
-        ISynectDbContext db, Guid runId, Guid connectionId, Exception error, int recordCount, DateTimeOffset now, int failureThreshold)
+        ISynectDbContext db, Guid runId, Guid connectionId, Exception error, int recordCount, DateTimeOffset now, int failureThreshold,
+        bool interruptedByShutdown = false)
     {
         db.ChangeTracker.Clear();
         var authFailure = error is AdapterAuthenticationException;
         var message = error switch
         {
             AdapterAuthenticationException => "Authentication failed: " + error.Message,
+            OperationCanceledException when interruptedByShutdown => "Interrupted: the worker is stopping",
             OperationCanceledException => "Cancelled or timed out",
             _ => error.Message,
         };
@@ -37,8 +41,11 @@ internal static class SyncRunFinalizer
         {
             var run = await db.SyncRuns.SingleAsync(r => r.Id == runId, ct);
             run.Fail(now, message, recordCount);
-            var connection = await db.Connections.SingleAsync(c => c.Id == connectionId, ct);
-            connection.RecordSyncFailure(message, authFailure, failureThreshold, now);
+            if (!interruptedByShutdown)
+            {
+                var connection = await db.Connections.SingleAsync(c => c.Id == connectionId, ct);
+                connection.RecordSyncFailure(message, authFailure, failureThreshold, now);
+            }
             await db.SaveChangesAsync(ct);
             return new SyncOutcome(run.Id, run.Result, false, recordCount, run.Error);
         }, CancellationToken.None);

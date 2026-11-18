@@ -88,6 +88,22 @@ public class SyncJob : TenantEntity
         if (NotBefore > now) NotBefore = now;
     }
 
+    /// <summary>
+    /// A Running job interrupted by a stop of the worker goes back to the queue unchanged in kind and priority,
+    /// so that the next worker process runs it again. The interrupted run stays recorded through <paramref name="syncRunId"/>.
+    /// </summary>
+    public void ReturnToQueue(DateTimeOffset at, Guid? syncRunId, string reason)
+    {
+        if (Status != SyncJobStatus.Running) return;
+        Status = SyncJobStatus.Queued;
+        StartedAt = null;
+        HeartbeatAt = null;
+        FinishedAt = null;
+        NotBefore = at;
+        SyncRunId = syncRunId ?? SyncRunId;
+        Error = reason;
+    }
+
     public void Finish(SyncJobStatus status, DateTimeOffset at, Guid? syncRunId, string? error)
     {
         Status = status;

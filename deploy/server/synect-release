@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Synect releases on the server (run as root).
+#
+#   synect-release deploy <archive.tar.gz>   unpack to /opt/synect/releases/<release>, migrate (owner role,
+#                                            lock_timeout 5 s), switch current, restart Worker then Api, check /ready;
+#                                            if /ready fails within READY_TIMEOUT, switch back and restart again
+#   synect-release rollback [<release>]      switch current to the previous release (or the one named), restart, check
+#   synect-release status                    current / previous release, services, /ready, /version
+#   synect-release list                      releases on disk
+#   synect-release prune --keep N [--yes]    lists (and with --yes deletes) old releases; never current or previous
+#
+# The database is never migrated down: a rollback runs the older code on the newer schema, which works because
+# migrations are backward compatible (expand now, contract in a later release). See docs/deployment.md.
+set -euo pipefail
+
+ROOT=/opt/synect
+RELEASES=$ROOT/releases
+API_URL=${SYNECT_API_URL:-http://127.0.0.1:5299}
+READY_TIMEOUT=${READY_TIMEOUT:-90}
+
+log() { echo "[$(date -u +%H:%M:%S)] $*"; }
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "run as root"
+
+current() { readlink -f "$ROOT/current" 2>/dev/null || true; }
+previous() { readlink -f "$ROOT/previous" 2>/dev/null || true; }
+
+# Atomic switch of a symbolic link (rename over the old link).
+point() { # point <link> <target>
+  ln -sfn "$2" "$1.new"
+  mv -Tf "$1.new" "$1"
+}
+
+wait_ready() {
+  local deadline=$(( $(date +%s) + READY_TIMEOUT )) body
+  while (( $(date +%s) < deadline )); do
+    if body=$(curl -fsS --max-time 5 "$API_URL/ready" 2>/dev/null); then
+      log "/ready: $body"
+      return 0
+    fi
+    sleep 2
+  done
+  log "/ready did not answer 200 within ${READY_TIMEOUT}s: $(curl -sS --max-time 5 "$API_URL/ready" 2>&1 || true)"
+  return 1
+}
+
+restart_services() {
+  # Worker first: it drains its running loads (up to 45 s) and returns the rest to the queue.
+  log "restart synect-worker"
+  systemctl restart synect-worker
+  log "restart synect-api"
+  systemctl restart synect-api
+}
+
+switch_to() { # switch_to <release dir>
+  local from; from=$(current)
+  point "$ROOT/current" "$1"
+  if [[ -n "$from" && "$from" != "$1" ]]; then point "$ROOT/previous" "$from"; fi
+  log "current -> $(basename "$1")${from:+ (previous: $(basename "$from"))}"
+}
+
+cmd_deploy() {
+  local archive=${1:?archive.tar.gz}
+  [[ -f "$archive" ]] || die "no such file: $archive"
+  local name; name=$(tar -tzf "$archive" | head -1 | cut -d/ -f1)
+  [[ "$name" =~ ^synect-[0-9]{8}-[0-9]{6}-[0-9a-f]+(-dirty)?$ ]] || die "unexpected archive layout: $name"
+  local dir=$RELEASES/$name
+  [[ -e "$dir" ]] && die "$dir already exists"
+
+  log "unpack $name"
+  mkdir -p "$RELEASES"
+  tar -C "$RELEASES" -xzf "$archive"
+  chown -R root:root "$dir"
+  chmod -R u=rwX,go=rX "$dir"
+  chmod 755 "$dir/api/Synect.Api" "$dir/worker/Synect.Worker" "$dir/devtools/Synect.DevTools"
+
+  log "migrate (as synect_owner, lock_timeout 5 s)"
+  SYNECT_RELEASE_DIR="$dir" /usr/local/sbin/synect-devtools --owner migrate || die "migration failed; current release unchanged"
+
+  local before; before=$(current)
+  switch_to "$dir"
+  restart_services
+  if wait_ready; then
+    log "deployed $name"
+    return 0
+  fi
+
+  if [[ -n "$before" ]]; then
+    log "switching back to $(basename "$before")"
+    point "$ROOT/current" "$before"
+    restart_services
+    wait_ready || true
+  fi
+  die "deployment of $name failed (/ready); see journalctl -u synect-api -u synect-worker"
+}
+
+cmd_rollback() {
+  local target cur; cur=$(current)
+  if [[ -n "${1:-}" ]]; then target=$RELEASES/$1; else target=$(previous); fi
+  [[ -n "$target" && -d "$target" ]] || die "no release to roll back to"
+  [[ "$target" != "$cur" ]] || die "$(basename "$target") is already current"
+  switch_to "$target"
+  restart_services
+  wait_ready || die "rolled back to $(basename "$target"), but /ready fails"
+  log "rolled back to $(basename "$target")"
+}
+
+cmd_status() {
+  echo "current:  $(basename "$(current)" 2>/dev/null)"
+  echo "previous: $(basename "$(previous)" 2>/dev/null)"
+  for s in synect-api synect-worker; do echo "$s: $(systemctl is-active $s)"; done
+  echo "ready:    $(curl -sS --max-time 5 "$API_URL/ready" 2>&1 || true)"
+  echo "version:  $(curl -sS --max-time 5 "$API_URL/version" 2>&1 || true)"
+}
+
+cmd_list() {
+  local cur prev; cur=$(current); prev=$(previous)
+  for d in $(ls -1d "$RELEASES"/synect-* 2>/dev/null | sort); do
+    local mark=""
+    [[ "$d" == "$cur" ]] && mark=" <- current"
+    [[ "$d" == "$prev" ]] && mark=" <- previous"
+    echo "$(basename "$d")  $(du -sh "$d" | cut -f1)$mark"
+  done
+}
+
+cmd_prune() {
+  local keep=5 yes=false
+  while [[ $# -gt 0 ]]; do
+    case $1 in --keep) keep=$2; shift 2;; --yes) yes=true; shift;; *) die "unknown option $1";; esac
+  done
+  local cur prev; cur=$(current); prev=$(previous)
+  mapfile -t all < <(ls -1d "$RELEASES"/synect-* 2>/dev/null | sort -r)
+  local i=0
+  for d in "${all[@]}"; do
+    i=$((i+1))
+    [[ $i -le $keep || "$d" == "$cur" || "$d" == "$prev" ]] && continue
+    if $yes; then log "delete $(basename "$d")"; rm -rf --one-file-system "$d"; else echo "would delete $(basename "$d")"; fi
+  done
+  $yes || echo "(dry run; add --yes to delete)"
+}
+
+case "${1:-}" in
+  deploy) shift; cmd_deploy "$@";;
+  rollback) shift; cmd_rollback "$@";;
+  status) cmd_status;;
+  list) cmd_list;;
+  prune) shift; cmd_prune "$@";;
+  *) sed -n '2,13p' "$0"; exit 2;;
+esac

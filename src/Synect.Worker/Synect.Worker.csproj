@@ -6,6 +6,10 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
   <ItemGroup>
+    <!-- journald log format and Type=notify under systemd; inactive elsewhere. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Synect.Infrastructure\Synect.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

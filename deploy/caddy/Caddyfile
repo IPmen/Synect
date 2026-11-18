@@ -1,0 +1,74 @@
+# /etc/caddy/Caddyfile - reverse proxy in front of synect-api (127.0.0.1:5299).
+#
+# THE ONE LINE TO CHANGE is the `import` at the very bottom:
+#   now (no domain):   import synect_by_ip
+#                      plain HTTP on the server IP, only /health and /ready are published, everything else 404.
+#   with a domain:     import synect_with_domain synect.example.com
+#                      automatic HTTPS (Let's Encrypt), HTTP -> HTTPS redirect, /mcp and /ingest/1c/v1/* published too.
+# Then: caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+#
+# /version, /mcp without a domain and every other path stay closed (404); they are reachable through an SSH tunnel:
+#   ssh -L 5299:127.0.0.1:5299 root@<server>   ->   http://127.0.0.1:5299/...
+
+{
+	# Admin API on the loopback only (used by `systemctl reload caddy`).
+	admin localhost:2019
+}
+
+# Public paths and the access log, shared by both modes.
+(synect_common) {
+	@health path /health /ready
+	handle @health {
+		reverse_proxy 127.0.0.1:5299
+	}
+
+	log {
+		output file /var/log/caddy/synect-access.log {
+			roll_size 50MiB
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format filter {
+			wrap json
+			fields {
+				# Never log credentials (Caddy also redacts them by default; this keeps it explicit).
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+				request>headers>Proxy-Authorization delete
+				resp_headers>Set-Cookie delete
+			}
+		}
+	}
+}
+
+# No domain yet: plain HTTP on any address of the server, no automatic HTTPS.
+(synect_by_ip) {
+	http:// {
+		import synect_common
+		handle {
+			respond 404
+		}
+	}
+}
+
+# With a domain (argument): HTTPS with an automatic certificate; MCP and the 1C receiver are published.
+(synect_with_domain) {
+	{args[0]} {
+		import synect_common
+		encode zstd gzip
+		handle /mcp {
+			reverse_proxy 127.0.0.1:5299
+		}
+		handle /ingest/1c/v1/* {
+			request_body {
+				max_size 4MB
+			}
+			reverse_proxy 127.0.0.1:5299
+		}
+		handle {
+			respond 404
+		}
+	}
+}
+
+import synect_by_ip

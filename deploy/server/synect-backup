@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Daily backup (synect-backup.timer): compressed pg_dump of the synect database and a copy of the Data Protection keys
+# (without the keys, the stored bank / Didox passwords in connection_secrets cannot be decrypted).
+# Kept in /var/backups/synect for RETENTION_DAYS (14). Run as root.
+#
+#   synect-backup                  make a backup now
+#   synect-backup --list           list backups
+set -euo pipefail
+umask 077
+
+DIR=/var/backups/synect
+KEYS=/var/lib/synect/keys
+DB=synect
+RETENTION_DAYS=${RETENTION_DAYS:-14}
+
+mkdir -p "$DIR"
+chmod 700 "$DIR"
+
+if [[ "${1:-}" == "--list" ]]; then ls -lh "$DIR"; exit 0; fi
+
+stamp=$(date -u +%Y%m%d-%H%M%S)
+dump="$DIR/synect-db-$stamp.dump"
+keys="$DIR/synect-keys-$stamp.tar.gz"
+
+# Custom format: compressed, restorable with pg_restore (also table by table). Runs as the postgres superuser
+# through the local socket (peer authentication): no password anywhere.
+runuser -u postgres -- pg_dump --format=custom --compress=6 --no-owner --dbname="$DB" > "$dump.partial"
+mv "$dump.partial" "$dump"
+
+tar -C "$(dirname "$KEYS")" -czf "$keys.partial" "$(basename "$KEYS")"
+mv "$keys.partial" "$keys"
+
+( cd "$DIR" && sha256sum "$(basename "$dump")" "$(basename "$keys")" > "synect-$stamp.sha256" )
+
+# Retention: only this script's own files, older than RETENTION_DAYS.
+find "$DIR" -maxdepth 1 -type f \( -name 'synect-db-*.dump' -o -name 'synect-keys-*.tar.gz' -o -name 'synect-*.sha256' \) \
+  -mtime +"$((RETENTION_DAYS - 1))" -print -delete | sed 's/^/expired: /'
+
+echo "backup $stamp: $(du -h "$dump" | cut -f1) database, $(du -h "$keys" | cut -f1) keys"

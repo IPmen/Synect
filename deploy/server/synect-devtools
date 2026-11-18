@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Runs Synect.DevTools of the current release (or of $SYNECT_RELEASE_DIR) as the service user `synect`, with the
+# same environment files and Data Protection keys as the services, in a transient systemd unit. The connection
+# strings are read by systemd from the environment files and never pass through this shell.
+#
+#   synect-devtools <command> [options]            as synect_app (application role, row-level security)
+#   synect-devtools --owner <command> [options]    also with /etc/synect/owner.env (schema owner): migrate and the
+#                                                  account administration commands (create-account, add-organization, ...)
+#
+# Examples: synect-devtools --owner migrate --status
+#           synect-devtools seed-demo --tenants 1
+set -euo pipefail
+[[ $EUID -eq 0 ]] || { echo "run as root" >&2; exit 1; }
+
+env_files=(-p EnvironmentFile=/etc/synect/synect.env)
+if [[ "${1:-}" == "--owner" ]]; then
+  env_files+=(-p EnvironmentFile=/etc/synect/owner.env)
+  shift
+fi
+
+release=${SYNECT_RELEASE_DIR:-$(readlink -f /opt/synect/current)}
+exe="$release/devtools/Synect.DevTools"
+[[ -x "$exe" ]] || { echo "no DevTools in $release" >&2; exit 1; }
+
+# A terminal gets a pty (password prompts without echo); scripts get plain pipes.
+if [[ -t 0 && -t 1 ]]; then io=--pty; else io=--pipe; fi
+
+exec systemd-run --quiet --wait --collect $io \
+  --uid=synect --gid=synect \
+  "${env_files[@]}" \
+  -p WorkingDirectory="$release/devtools" \
+  -p UMask=0077 \
+  -p NoNewPrivileges=yes -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes \
+  -p ReadWritePaths=/var/lib/synect \
+  -E HOME=/var/lib/synect \
+  -E DOTNET_ENVIRONMENT=Production \
+  -E Secrets__KeysPath=/var/lib/synect/keys \
+  -E DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+  "$exe" "$@"

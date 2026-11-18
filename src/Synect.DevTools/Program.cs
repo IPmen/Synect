@@ -56,6 +56,9 @@ using Synect.Infrastructure.Persistence;
 //   set-credentials --tenant <name|id> --connection <id|name> --login <login> [--test] [--password-stdin]   replaces the access (new version)
 //   test-connection --tenant <name|id> --connection <id|name>   tests the stored access; on success Active and first load queued
 //   list-connections --tenant <name|id>           connections, masked login, secret version (never the password)
+// Deployment (runs as the schema owner, ConnectionStrings:SynectOwner; Api and Worker never migrate at startup):
+//   migrate [--lock-timeout 5]                    applies pending migrations; every session has lock_timeout (seconds)
+//   migrate --status                              applied / pending migrations of this build; exit code 2 when not compatible
 // 1C ingest (stage 8a):
 //   create-ingest-key --tenant <name|id> [--name ...]   creates the 1C connection if needed, prints the ingest key ONCE
 //   revoke-ingest-key --tenant <name|id> --key <key id|key prefix>
@@ -224,10 +227,12 @@ try
             return await services.GetRequiredService<IngestCommands>().ListBatchesAsync(await Tenant(), options);
         case "send-1c-sample":
             return await services.GetRequiredService<IngestCommands>().SendSampleAsync(await Tenant(), options);
+        case "migrate":
+            return await MigrateCommand.RunAsync(builder.Configuration, options);
         case "test-db-leftovers":
             return await TestDbLeftovers.RunAsync(builder.Configuration, options.Get("drop") == "true");
         default:
-            Console.WriteLine("Commands: seed-demo, seed-load, rebuild-totals, rebuild-counterparty-aliases, list-queries, query <name>, bench, explain, " +
+            Console.WriteLine("Commands: migrate, seed-demo, seed-load, rebuild-totals, rebuild-counterparty-aliases, list-queries, query <name>, bench, explain, " +
                               "create-api-key, revoke-api-key, list-api-keys, test-db-leftovers, reconcile, rebuild-reconciliation, reconcile-eval, " +
                               "reconcile-bench, normalize-currency, attention, attention-eval, attention-bench, create-file-connection, " +
                               "import-statement, list-imports, anonymize-statement, statement-bench, delete-tenant, create-account, add-organization, " +

@@ -47,6 +47,7 @@ public static class DependencyInjection
                 .AddInterceptors(sp.GetRequiredService<TenantSessionInterceptor>());
         });
         services.AddScoped<ISynectDbContext>(sp => sp.GetRequiredService<SynectDbContext>());
+        services.AddScoped<SchemaCompatibility>();
         services.AddScoped<IApiKeyResolver, PostgresApiKeyResolver>();
         services.AddSingleton<IAccountToolAuditWriter, PostgresAccountToolAuditWriter>();
         services.AddScoped<Synect.Application.Ingest.IIngestKeyResolver, PostgresIngestKeyResolver>();

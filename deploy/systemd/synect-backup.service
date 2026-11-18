@@ -1,0 +1,10 @@
+[Unit]
+Description=Synect backup (pg_dump and Data Protection keys to /var/backups/synect)
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/synect-backup
+Nice=10
+IOSchedulingClass=idle

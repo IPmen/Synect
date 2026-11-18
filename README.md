@@ -16,6 +16,15 @@ on import; REST and MCP tools read only this database and never call external sy
 | `Synect.DevTools` | Development only: demo/load data, `query`, `bench`, `explain`, API keys, reconciliation (`reconcile`, `rebuild-reconciliation`, `reconcile-eval`, `reconcile-bench`), attention (`attention`, `attention-eval`, `attention-bench`), statement files (`create-file-connection`, `import-statement`, `list-imports`, `anonymize-statement`, `statement-bench`), `normalize-currency`, test database cleanup (not referenced by Api or Worker) |
 | `Synect.Tests` | xUnit v3 tests (SQLite temporary file + local PostgreSQL); synthetic statement files in `Fixtures/Statements` |
 
+## Deployment
+
+Server deployment (self-contained linux-x64 build, systemd units, Caddy, migrations as a separate step, backups,
+rollback): [docs/deployment.md](docs/deployment.md) and the `deploy/` folder. Api and Worker never apply migrations at
+startup; `/ready` answers 200 only when the database is reachable and the schema is compatible with the build, and
+`dotnet run --project src/Synect.DevTools -- migrate [--status]` applies (or reports) migrations as the owner role
+(`lock_timeout` 5 s). A single Worker per database is enforced with a PostgreSQL advisory lock; on a stop it takes no
+new jobs and returns loads still running after 45 s to the queue.
+
 ## Local database (no Docker)
 
 1. Create roles and the database (as a superuser): `psql -U postgres -f db/create-roles.sql`, then set passwords with `\password`.

@@ -20,8 +20,11 @@ public sealed class SyncDispatcher(
     IAdapterRegistry registry,
     IOptions<SyncQueueOptions> options,
     TimeProvider time,
+    SyncShutdown shutdown,
     ILogger<SyncDispatcher> logger)
 {
+    public const string ReturnedToQueueReason = "Interrupted by a stop of the worker; returned to the queue.";
+
     private sealed record Candidate(Guid TenantId, Guid JobId, Guid ConnectionId, int Priority, DateTimeOffset EnqueuedAt,
         string SourceCode, ConnectionStatus ConnectionStatus);
 
@@ -67,6 +70,8 @@ public sealed class SyncDispatcher(
         var started = 0;
         foreach (var candidate in candidates.OrderBy(c => c.Priority).ThenBy(c => c.EnqueuedAt).ThenBy(c => c.JobId))
         {
+            // Graceful stop: nothing new is taken, the queued jobs wait for the next worker process.
+            if (shutdown.IsStopping) break;
             if (candidate.ConnectionStatus != ConnectionStatus.Active)
             {
                 await FinishJobAsync(candidate, SyncJobStatus.Cancelled, null, "Connection is not active.");
@@ -99,7 +104,8 @@ public sealed class SyncDispatcher(
             }
             if (!claimed) continue;
 
-            _ = Task.Run(() => ExecuteAsync(candidate, provider, stoppingToken), CancellationToken.None);
+            // Jobs observe the shutdown token, not the tick token: a stop lets them finish (see DrainAsync).
+            _ = Task.Run(() => ExecuteAsync(candidate, provider), CancellationToken.None);
             started++;
         }
         return started;
@@ -109,6 +115,30 @@ public sealed class SyncDispatcher(
     public Task WaitForIdleAsync()
     {
         lock (_gate) return _idle.Task;
+    }
+
+    /// <summary>
+    /// Graceful stop: claims no new jobs, waits up to <paramref name="drainTimeout"/> for the running ones to finish,
+    /// then cancels the rest, which go back to Queued. Returns the number of jobs returned to the queue's care
+    /// (still running when the drain time was over).
+    /// </summary>
+    public async Task<int> DrainAsync(TimeSpan drainTimeout, CancellationToken hardStop = default)
+    {
+        shutdown.BeginStop();
+        var idle = WaitForIdleAsync();
+        var running = RunningCount;
+        if (running > 0) logger.LogInformation("Worker is stopping: waiting up to {Drain} for {Count} running job(s)", drainTimeout, running);
+        try { await idle.WaitAsync(drainTimeout, time, hardStop); }
+        catch (TimeoutException) { }
+        catch (OperationCanceledException) { }
+        if (idle.IsCompleted) return 0;
+
+        var interrupted = RunningCount;
+        logger.LogWarning("Worker is stopping: cancelling {Count} job(s) still running; they return to the queue", interrupted);
+        shutdown.CancelJobs();
+        try { await idle.WaitAsync(hardStop); }
+        catch (OperationCanceledException) { logger.LogWarning("Worker stopped before every cancelled job was returned to the queue"); }
+        return interrupted;
     }
 
     private bool TryReserve(Candidate c, string provider, out bool globalLimitReached)
@@ -158,8 +188,9 @@ public sealed class SyncDispatcher(
         return rows == 1;
     }
 
-    private async Task ExecuteAsync(Candidate c, string provider, CancellationToken stoppingToken)
+    private async Task ExecuteAsync(Candidate c, string provider)
     {
+        var stoppingToken = shutdown.JobsToken;
         using var heartbeatStop = new CancellationTokenSource();
         var heartbeat = HeartbeatLoopAsync(c, heartbeatStop.Token);
         try
@@ -173,6 +204,13 @@ public sealed class SyncDispatcher(
                 await StopAsync(heartbeatStop, heartbeat);
                 await FinishJobAsync(c, outcome.Result == SyncRunResult.Succeeded ? SyncJobStatus.Succeeded : SyncJobStatus.Failed,
                     outcome.SyncRunId, outcome.Error);
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested && shutdown.JobsCancelled)
+            {
+                logger.LogWarning("Job {JobId} for connection {ConnectionId} interrupted by the stop of the worker; returned to the queue",
+                    c.JobId, c.ConnectionId);
+                await StopAsync(heartbeatStop, heartbeat);
+                await ReturnToQueueAsync(c);
             }
             catch (OperationCanceledException) when (timeout.IsCancellationRequested)
             {
@@ -227,6 +265,31 @@ public sealed class SyncDispatcher(
     {
         if (!stop.IsCancellationRequested) await stop.CancelAsync();
         await heartbeat;
+    }
+
+    private async Task ReturnToQueueAsync(Candidate c)
+    {
+        try
+        {
+            await tenants.InTenantAsync(c.TenantId, async (sp, ct) =>
+            {
+                var db = sp.GetRequiredService<ISynectDbContext>();
+                await db.InTransactionAsync(async t =>
+                {
+                    var job = await db.SyncJobs.SingleAsync(j => j.Id == c.JobId, t);
+                    var runId = await db.SyncRuns.Where(r => r.ConnectionId == c.ConnectionId && r.StartedAt >= job.StartedAt)
+                        .OrderByDescending(r => r.StartedAt).Select(r => (Guid?)r.Id).FirstOrDefaultAsync(t);
+                    job.ReturnToQueue(time.GetUtcNow(), runId, ReturnedToQueueReason);
+                    await db.SaveChangesAsync(t);
+                }, ct);
+                return true;
+            }, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // At the next start the worker marks Running jobs as failed (RecoverAfterRestartAsync).
+            logger.LogError("Could not return job {JobId} to the queue: {ErrorType}", c.JobId, ex.GetType().Name);
+        }
     }
 
     private async Task FinishJobAsync(Candidate c, SyncJobStatus status, Guid? runId, string? error)

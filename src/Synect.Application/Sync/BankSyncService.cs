@@ -39,6 +39,7 @@ public sealed class BankSyncService(
     TimeProvider time,
     IOptions<BankSyncOptions> bankOptions,
     IOptions<CircuitBreakerOptions> breakerOptions,
+    Synect.Application.Queue.SyncShutdown shutdown,
     ILogger<BankSyncService> logger)
 {
     /// <summary>
@@ -155,7 +156,8 @@ public sealed class BankSyncService(
             logger.LogWarning("Bank sync failed: connection {ConnectionId}, error type {ErrorType}",
                 connection.Id, ex.GetType().Name);
             var outcome = await SyncRunFinalizer.FailAsync(db, run.Id, connection.Id, ex, records, time.GetUtcNow(),
-                breakerOptions.Value.FailureThreshold);
+                breakerOptions.Value.FailureThreshold,
+                interruptedByShutdown: ex is OperationCanceledException && shutdown.JobsCancelled);
             if (ex is OperationCanceledException) throw;
             await attention.AfterLoadAsync(AdapterKind.Bank, succeeded: false, CancellationToken.None);
             return outcome;
