@@ -1,6 +1,5 @@
 [Unit]
 Description=Synect sync worker (queue of loads from banks and Didox)
-Documentation=file:///opt/synect/current/docs/deployment.md
 After=network-online.target postgresql.service
 Wants=network-online.target postgresql.service
 
@@ -35,7 +34,7 @@ ProtectKernelLogs=yes
 ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
-ProtectProc=invisible
+# ProtectProc=invisible would hide /proc/1 and .NET would not detect systemd (no READY=1 for Type=notify, no journald format).
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=yes
 RestrictRealtime=yes

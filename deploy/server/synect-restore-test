@@ -17,7 +17,7 @@ if [[ "${1:-}" == "--drop" ]]; then
   echo "dropped $TMPDB"; exit 0
 fi
 
-dump=${1:-$(ls -t "$DIR"/synect-db-*.dump | head -1)}
+dump=${1:-$(ls -t "$DIR"/synect-db-*.dump | awk 'NR == 1')}
 stamp=$(basename "$dump" .dump); stamp=${stamp#synect-db-}
 echo "dump: $dump"
 ( cd "$DIR" && sha256sum -c "synect-$stamp.sha256" )

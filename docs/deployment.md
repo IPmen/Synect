@@ -21,7 +21,13 @@ No secret is in the repository: connection strings live only in `/etc/synect/*.e
 | `/var/log/caddy/synect-access.log` | access log of Caddy (JSON, no Authorization / Cookie headers) |
 
 Api and Worker log to journald (`journalctl -u synect-api -u synect-worker`). Logs carry error types and ids, never
-connection strings, passwords, API keys or request headers.
+connection strings, passwords, API keys or request headers. Data Protection logs a warning at the first start ("No XML
+encryptor configured"): on Linux the key files are protected by file permissions only (`/var/lib/synect/keys`, 700,
+user `synect`), plus the backup directory (700, root).
+
+Demo data: run `seed-demo` with the Worker stopped (`systemctl stop synect-worker`). A running Worker starts the first
+load of new connections at once with its own default fake data, so the demo data becomes a mix (seen on the pilot
+server: 13 Didox documents instead of about 400).
 
 ## Services
 
@@ -61,6 +67,11 @@ On the developer machine (Git Bash), from the repository root of a committed sta
 deploy/build.sh                       # artifacts/synect-<UTC date>-<commit>.tar.gz (dotnet publish -c Release, self-contained linux-x64)
 deploy/deploy.sh root@2.29.216.38     # uploads the newest archive and the server scripts, runs synect-release deploy
 ```
+
+On Windows the SSH key usually sits in the Windows OpenSSH agent, which the Git Bash `ssh` does not see; then run
+`SSH=/c/Windows/System32/OpenSSH/ssh.exe SCP=/c/Windows/System32/OpenSSH/scp.exe deploy/deploy.sh root@2.29.216.38`.
+Units, the Caddyfile and `synect.conf` are not changed by `deploy.sh`; copy them by hand when they change
+(`scp deploy/systemd/*.service root@...:/etc/systemd/system/`, then `systemctl daemon-reload`).
 
 `synect-release deploy` on the server:
 

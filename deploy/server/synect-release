@@ -23,8 +23,10 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "run as root"
 
-current() { readlink -f "$ROOT/current" 2>/dev/null || true; }
-previous() { readlink -f "$ROOT/previous" 2>/dev/null || true; }
+# Resolved target of a link, empty when the link does not exist (readlink -f alone would return the path itself).
+link_target() { if [[ -L "$1" ]]; then readlink -f "$1"; fi; }
+current() { link_target "$ROOT/current"; }
+previous() { link_target "$ROOT/previous"; }
 
 # Atomic switch of a symbolic link (rename over the old link).
 point() { # point <link> <target>
@@ -63,7 +65,8 @@ switch_to() { # switch_to <release dir>
 cmd_deploy() {
   local archive=${1:?archive.tar.gz}
   [[ -f "$archive" ]] || die "no such file: $archive"
-  local name; name=$(tar -tzf "$archive" | head -1 | cut -d/ -f1)
+  # awk reads the whole listing: `| head -1` would kill tar with SIGPIPE, which pipefail turns into a silent exit.
+  local name; name=$(tar -tzf "$archive" | awk -F/ 'NR == 1 { print $1 }')
   [[ "$name" =~ ^synect-[0-9]{8}-[0-9]{6}-[0-9a-f]+(-dirty)?$ ]] || die "unexpected archive layout: $name"
   local dir=$RELEASES/$name
   [[ -e "$dir" ]] && die "$dir already exists"
@@ -107,8 +110,9 @@ cmd_rollback() {
 }
 
 cmd_status() {
-  echo "current:  $(basename "$(current)" 2>/dev/null)"
-  echo "previous: $(basename "$(previous)" 2>/dev/null)"
+  local cur prev; cur=$(current); prev=$(previous)
+  echo "current:  ${cur:+$(basename "$cur")}"
+  echo "previous: ${prev:+$(basename "$prev")}"
   for s in synect-api synect-worker; do echo "$s: $(systemctl is-active $s)"; done
   echo "ready:    $(curl -sS --max-time 5 "$API_URL/ready" 2>&1 || true)"
   echo "version:  $(curl -sS --max-time 5 "$API_URL/version" 2>&1 || true)"
