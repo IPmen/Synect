@@ -93,13 +93,22 @@ public static partial class IngestValues
         return value;
     }
 
-    public static string Tin(JsonElement e, string field)
+    public static string Tin(JsonElement e, string field, bool extraLengths = false)
     {
         var value = Scalar(e, field).Trim();
-        if (value.Length is not (9 or 14) || !value.All(char.IsAsciiDigit))
-            throw new IngestValueException(IngestCodes.InvalidTin, $"Field '{field}' must be a TIN of 9 or 14 digits.");
+        if (!IsTin(value, extraLengths))
+            throw new IngestValueException(IngestCodes.InvalidTin, $"Field '{field}' must be a TIN of {TinLengths(extraLengths)} digits.");
         return value;
     }
+
+    /// <summary>
+    /// 9 or 14 ASCII digits; with <paramref name="extraLengths"/> (Ingest:AllowAnyTinLengthInDevelopment in Development)
+    /// also 10 or 12.
+    /// </summary>
+    public static bool IsTin(string value, bool extraLengths = false) =>
+        (value.Length is 9 or 14 || (extraLengths && value.Length is 10 or 12)) && value.All(char.IsAsciiDigit);
+
+    public static string TinLengths(bool extraLengths) => extraLengths ? "9, 10, 12 or 14" : "9 or 14";
 
     /// <summary>The date part of an ISO 8601 date or date-time; null for the empty 1C date (year 1).</summary>
     public static DateOnly? Date(JsonElement e, string field)
