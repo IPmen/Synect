@@ -29,11 +29,16 @@ public static class IngestEndpoint
     {
         // The Ingest section itself is bound with the other options (AddSynectInfrastructure).
         services.AddSingleton<IngestHttpLimiter>();
+        services.AddSingleton<IPostConfigureOptions<IngestOptions>, IngestTinLengthPolicy>();
         return services;
     }
 
-    public static IEndpointConventionBuilder MapSynectIngest(this IEndpointRouteBuilder endpoints) =>
-        endpoints.MapPost(Route, HandleAsync).DisableAntiforgery();
+    public static IEndpointConventionBuilder MapSynectIngest(this IEndpointRouteBuilder endpoints)
+    {
+        // Resolved at startup so that the warning about Ingest:AllowAnyTinLengthInDevelopment comes before the first package.
+        _ = endpoints.ServiceProvider.GetRequiredService<IOptions<IngestOptions>>().Value;
+        return endpoints.MapPost(Route, HandleAsync).DisableAntiforgery();
+    }
 
     private static async Task HandleAsync(HttpContext context)
     {
@@ -220,5 +225,27 @@ public sealed class IngestHttpLimiter(IOptions<IngestOptions> options, TimeProvi
             }
         }
         return entry;
+    }
+}
+
+/// <summary>
+/// Ingest:AllowAnyTinLengthInDevelopment takes effect only in the Development environment; anywhere else (Production
+/// above all) it is ignored and a warning is logged.
+/// </summary>
+public sealed class IngestTinLengthPolicy(IHostEnvironment environment, ILogger<IngestTinLengthPolicy> logger) : IPostConfigureOptions<IngestOptions>
+{
+    public void PostConfigure(string? name, IngestOptions options)
+    {
+        if (!options.AllowAnyTinLengthInDevelopment) return;
+        if (environment.IsDevelopment())
+        {
+            options.AcceptExtraTinLengths();
+            logger.LogWarning("Ingest:AllowAnyTinLengthInDevelopment is on: organization_tin, counterparty_tin and tin of counterparties also accept 10 and 12 digits (Development only)");
+        }
+        else
+        {
+            logger.LogWarning("Ingest:AllowAnyTinLengthInDevelopment is set but ignored in the {Environment} environment: TINs must have 9 or 14 digits",
+                environment.EnvironmentName);
+        }
     }
 }

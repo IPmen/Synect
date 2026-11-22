@@ -101,8 +101,8 @@ public static class IngestEnvelopeParser
             var tin = fields.TryGetValue("organizationtin", out var t) && t.ValueKind is JsonValueKind.String or JsonValueKind.Number
                 ? (t.ValueKind == JsonValueKind.String ? t.GetString()! : t.GetRawText()).Trim()
                 : throw Bad(IngestEnvelopeCodes.InvalidEnvelope, "'organization_tin' is required.");
-            if (tin.Length is not (9 or 14) || !tin.All(char.IsAsciiDigit))
-                throw Bad(IngestEnvelopeCodes.InvalidEnvelope, "'organization_tin' must be 9 or 14 digits.");
+            if (!IngestValues.IsTin(tin, options.ExtraTinLengthsAccepted))
+                throw Bad(IngestEnvelopeCodes.InvalidEnvelope, $"'organization_tin' must be {IngestValues.TinLengths(options.ExtraTinLengthsAccepted)} digits.");
             // The organization comes from the key; the package only confirms it. Nothing about other organizations is said.
             if (tenantTin is null || !string.Equals(tenantTin.Trim(), tin, StringComparison.Ordinal))
                 throw new IngestEnvelopeException(403, IngestEnvelopeCodes.OrganizationMismatch,

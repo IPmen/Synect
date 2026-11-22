@@ -1094,6 +1094,7 @@ timeout, so a genuinely slow query still fails.
 | `Ingest:SourceUtcOffset` | 05:00 | Offset of 1C date-times sent without one. **Assumption.** |
 | `Ingest:MaxTextLength` | 4000 | Longest free text of an item (names, purpose, comment). |
 | `Ingest:FullSyncRetention` | 7 days | Key lists of full exports that never finished are removed after this. |
+| `Ingest:AllowAnyTinLengthInDevelopment` | false (true in `appsettings.Development.json`) | Development only: `organization_tin`, `counterparty_tin` and `tin` of `counterparties` also accept 10 and 12 digits. Ignored in any other environment, Production included, with a warning in the log. |
 | `Accounting:PaymentDateWindowDays` | 3 | Bank payment and 1C bank document are one payment within this many days. **Assumption.** |
 | `Accounting:DocumentDateWindowDays` | 5 | Didox and 1C documents without a common number, same amount and INN. **Assumption.** |
 | `Accounting:MaxCompareRows` | 50 000 | Most records a side of a comparison reads; a longer period must be narrowed. |

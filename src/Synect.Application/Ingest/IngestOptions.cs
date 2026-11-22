@@ -62,6 +62,23 @@ public sealed class IngestOptions
     public TimeSpan FullSyncRetention { get; set; } = TimeSpan.FromDays(7);
 
     public IngestRateLimitOptions RateLimit { get; set; } = new();
+
+    /// <summary>
+    /// Ingest:AllowAnyTinLengthInDevelopment (false): in the Development environment only, organization_tin,
+    /// counterparty_tin and tin of the counterparties entity also accept 10 and 12 digits besides 9 and 14 (test 1C bases with foreign INNs). Ignored in every
+    /// other environment, Production included, with a warning in the log. The receiver reads
+    /// <see cref="ExtraTinLengthsAccepted"/>, which the host sets after checking the environment.
+    /// </summary>
+    public bool AllowAnyTinLengthInDevelopment { get; set; }
+
+    /// <summary>
+    /// True when the host has enabled the extra TIN lengths (Development and <see cref="AllowAnyTinLengthInDevelopment"/>).
+    /// Not bound from configuration (private setter): only <see cref="AcceptExtraTinLengths"/> turns it on.
+    /// </summary>
+    public bool ExtraTinLengthsAccepted { get; private set; }
+
+    /// <summary>Called by the host once the environment is known to be Development.</summary>
+    public void AcceptExtraTinLengths() => ExtraTinLengthsAccepted = true;
 }
 
 /// <summary>Ingest:RateLimit (in memory, per process).</summary>

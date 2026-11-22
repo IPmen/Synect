@@ -194,7 +194,8 @@ public sealed class IngestItemParser
             IngestFieldType.Text => IngestValues.Text(value, f.Name, _options.MaxTextLength),
             IngestFieldType.ShortText => IngestValues.Text(value, f.Name, IngestValues.ShortTextLength),
             IngestFieldType.Code => IngestValues.Code(value, f.Name) is { Length: > 0 } c ? c : null,
-            IngestFieldType.Tin => IngestValues.Tin(value, f.Name),
+            // tin (counterparties) and counterparty_tin: 10 and 12 digits too under Ingest:AllowAnyTinLengthInDevelopment.
+            IngestFieldType.Tin => IngestValues.Tin(value, f.Name, _options.ExtraTinLengthsAccepted),
             IngestFieldType.Date => IngestValues.Date(value, f.Name),
             IngestFieldType.Timestamp => IngestValues.Timestamp(value, f.Name, _options.SourceUtcOffset),
             IngestFieldType.Money => IngestValues.Money(value, f.Name),
