@@ -111,13 +111,30 @@ public class IngestDevTinTests
         Assert.DoesNotContain(logs.Lines, l => l.Contains("AllowAnyTinLengthInDevelopment", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public void The_counterparties_entity_tin_keeps_9_or_14_digits_in_development()
+    private static ParsedItem Counterparty(IngestOptions options, string tin) =>
+        new IngestItemParser(IngestSchema.Find("counterparties")!, options)
+            .Parse(0, J($$"""{"ref":"c-1","name":"A","tin":"{{tin}}"}"""), Exported);
+
+    [Theory]
+    [InlineData("Development", true, "3010000011", true)]
+    [InlineData("Development", true, "301000001122", true)]
+    [InlineData("Development", true, "301000001", true)]
+    [InlineData("Development", true, "30100000112", false)]
+    [InlineData("Development", false, "3010000011", false)]
+    [InlineData("Development", false, "301000001122", false)]
+    [InlineData("Production", true, "3010000011", false)]
+    [InlineData("Production", true, "301000001122", false)]
+    [InlineData("Production", true, "301000001", true)]
+    public void The_counterparties_entity_tin_follows_the_same_rule(string environment, bool allow, string tin, bool valid)
     {
-        var (options, _) = Build(Environments.Development, allow: true);
-        var item = new IngestItemParser(IngestSchema.Find("counterparties")!, options)
-            .Parse(0, J("""{"ref":"c-1","name":"A","tin":"3010000011"}"""), Exported);
-        Assert.Equal(IngestCodes.InvalidTin, item.ErrorCode);
+        var (options, _) = Build(environment, allow);
+        var item = Counterparty(options, tin);
+        if (valid)
+        {
+            Assert.True(item.IsValid, item.ErrorMessage);
+            Assert.Equal(tin, item.Values["tin"]);
+        }
+        else Assert.Equal(IngestCodes.InvalidTin, item.ErrorCode);
     }
 
     [Fact]

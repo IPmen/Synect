@@ -64,8 +64,8 @@ public sealed class IngestOptions
     public IngestRateLimitOptions RateLimit { get; set; } = new();
 
     /// <summary>
-    /// Ingest:AllowAnyTinLengthInDevelopment (false): in the Development environment only, organization_tin and
-    /// counterparty_tin also accept 10 and 12 digits besides 9 and 14 (test 1C bases with foreign INNs). Ignored in every
+    /// Ingest:AllowAnyTinLengthInDevelopment (false): in the Development environment only, organization_tin,
+    /// counterparty_tin and tin of the counterparties entity also accept 10 and 12 digits besides 9 and 14 (test 1C bases with foreign INNs). Ignored in every
     /// other environment, Production included, with a warning in the log. The receiver reads
     /// <see cref="ExtraTinLengthsAccepted"/>, which the host sets after checking the environment.
     /// </summary>

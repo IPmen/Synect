@@ -240,7 +240,7 @@ public sealed class IngestTinLengthPolicy(IHostEnvironment environment, ILogger<
         if (environment.IsDevelopment())
         {
             options.AcceptExtraTinLengths();
-            logger.LogWarning("Ingest:AllowAnyTinLengthInDevelopment is on: organization_tin and counterparty_tin also accept 10 and 12 digits (Development only)");
+            logger.LogWarning("Ingest:AllowAnyTinLengthInDevelopment is on: organization_tin, counterparty_tin and tin of counterparties also accept 10 and 12 digits (Development only)");
         }
         else
         {
