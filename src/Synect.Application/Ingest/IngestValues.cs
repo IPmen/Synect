@@ -40,6 +40,9 @@ public static class IngestCodes
     public const string SameContent = "same_content";
     public const string OlderThanStored = "older_than_stored";
     public const string UnknownRefDeleted = "unknown_ref_deleted";
+
+    // Not an error: an accepted item that lifted the deletion mark of a full export (same content received again).
+    public const string Restored = "restored";
 }
 
 /// <summary>Parsing and checking of single values of the export contract (see <see cref="IngestFieldType"/>).</summary>

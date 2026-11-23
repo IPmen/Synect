@@ -685,7 +685,8 @@ stored x100 with fractions of a tiyin refused, currency as a letter code, ISO nu
 at most 64 characters, required fields. Item codes: `empty_ref`, `ref_too_long`, `missing_field`, `invalid_tin`,
 `invalid_date`, `invalid_timestamp`, `invalid_amount`, `fractional_minor_units`, `amount_out_of_range`,
 `invalid_currency`, `invalid_number`, `invalid_boolean`, `invalid_value`, `text_too_long`, `invalid_text`,
-`invalid_lines`, `duplicate_line_no`; unchanged items carry `same_content`, `older_than_stored` or `unknown_ref_deleted`.
+`invalid_lines`, `duplicate_line_no`; unchanged items carry `same_content`, `older_than_stored` or `unknown_ref_deleted`;
+an accepted item may carry `restored` (see full exports).
 An item with `is_deleted: true` and only its ref marks a known record deleted and keeps its other fields. Lines and
 settlements are replaced when the item carries the field (an empty array removes them; no field keeps them). The last
 refused version of an item with a readable key is kept in the raw layer as `1c.<entity>.rejected`, so that it can be
@@ -698,7 +699,25 @@ under the same `batch_id` and `sequence`.
 the package with `is_last_batch`, if every sequence 1..N of that `full_sync_id` and entity was processed, records of the
 entity that were not in the export and were not received since it started are marked `is_deleted` (balances: only on the
 dates the export covered). Without `is_last_batch`, or with a missing sequence, nothing is marked and the answer says so
-(`full_sync.reason`: `waiting_for_last_batch`, `missing_sequences`).
+(`full_sync.reason`: `waiting_for_last_batch`, `missing_sequences`). Marking keeps the record's content hash and
+`modified_at`; when exactly the same item is received again (same hash) and its `modified_at` is not older than the stored
+one, the mark is lifted and the item is `accepted` with code `restored`. An explicit deletion from 1C (an item with
+`is_deleted: true`, or a deletion notice with only the ref) stores the hash of the deletion item, so it is never "restored":
+a later item without the deletion is an ordinary change (applied when its `modified_at` is not older than the stored one).
+
+**Known limitations of full exports (Известные ограничения полной выгрузки 1С).**
+- One 1C connection per organization: `IngestKeyService.EnsureConnectionAsync` reuses the first `Accounting1C` connection,
+  every ingest key is bound to it.
+- Records are identified by (`tenant_id`, `ref`) only; the record tables have no `connection_id`.
+- Therefore a full export from a second 1C database of the same organization would mark deleted every record of the first
+  one (the marking condition is organization + entity + absent from the export), and records with the same ref would
+  overwrite each other.
+- When several 1C databases per organization are needed, the schema has to change. Variant A: a `connection_id` column in
+  every `accounting_*` and `catalog_*` record table (filled from `ingest_batches` through `last_batch_id`), written by the
+  receiver and added to the full-export marking condition, plus a way to create an ingest key for a new connection;
+  identity stays (`tenant_id`, `ref`), so a ref seen from another database moves to that connection. Variant B: identity
+  (`tenant_id`, `connection_id`, `ref`), with the foreign keys of lines and settlements and every 1C query and comparison
+  changed accordingly.
 
 **Sample sender and timings.** `send-1c-sample --tenant X --scenario basic|messy|large [--url http://localhost:5299]`
 is a fake 1C extension that sends synthetic packages over HTTP to a running Api (without `--key` it creates a temporary

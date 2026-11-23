@@ -179,6 +179,19 @@ public sealed class IngestService(
             }
             if (current is not null && current.ContentHash == item.ContentHash)
             {
+                // The same content as a record that is marked deleted only by a completed full export (that marking keeps the
+                // content hash): the object exists in 1C after all, so the mark is lifted and the item is applied again.
+                // An older version is never applied (the stored modified_at is not newer than the item's).
+                if (current.IsDeleted && !item.IsDeleted && item.ModifiedAt >= current.ModifiedAt)
+                {
+                    results[item.Index] = new IngestItemResult(item.Index, item.DisplayKey, IngestItemResult.Accepted, IngestCodes.Restored,
+                        "The record was marked deleted by a full export and was received again; the deletion mark was lifted.");
+                    apply.Remove(key0);
+                    notices.Remove(key0);
+                    apply[key0] = item;
+                    stored[key0] = new StoredRecord { Key = key0, ModifiedAt = item.ModifiedAt, ContentHash = item.ContentHash, IsDeleted = false };
+                    continue;
+                }
                 results[item.Index] = new IngestItemResult(item.Index, item.DisplayKey, IngestItemResult.Unchanged, IngestCodes.SameContent);
                 touch.Add(item);
                 continue;

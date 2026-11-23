@@ -227,6 +227,98 @@ public class IngestDataTests(IngestFixture f) : IClassFixture<IngestFixture>
     }
 
     [Fact]
+    public async Task A_record_marked_deleted_by_a_full_export_is_restored_when_the_same_item_comes_again()
+    {
+        RequirePostgres();
+        var org = await f.NewOrganizationAsync("Ingest restore");
+        var client = f.Client(org);
+        await client.SendAsync(client.Envelope("counterparties", "rs-0", 1, new object[] { Cp("r1", at: 10), Cp("r2", at: 10) }));
+
+        // A full export without r1 marks it deleted; its content hash stays.
+        var full = await client.SendAsync(client.Envelope("counterparties", "rs-1", 1, new object[] { Cp("r2", at: 10) }, "full", "RS-1", true));
+        Assert.Equal(1, full.Int("marked_deleted"));
+        Assert.Equal("true", await f.ValueAsync("accounting_counterparties", org.TenantId, "ref = 'r1'", "is_deleted"));
+
+        // Exactly the same item again: accepted with code restored, the mark is lifted.
+        var again = await client.SendAsync(client.Envelope("counterparties", "rs-2", 1, new object[] { Cp("r1", at: 10) }));
+        Assert.Equal([("accepted", "restored")], Items(again));
+        Assert.Equal("accepted", again.Get("status"));
+        Assert.Equal("false", await f.ValueAsync("accounting_counterparties", org.TenantId, "ref = 'r1'", "is_deleted"));
+        Assert.Equal("Name", await f.ValueAsync("accounting_counterparties", org.TenantId, "ref = 'r1'", "name"));
+
+        // Once restored, the same item is simply unchanged.
+        var third = await client.SendAsync(client.Envelope("counterparties", "rs-3", 1, new object[] { Cp("r1", at: 10) }));
+        Assert.Equal([("unchanged", "same_content")], Items(third));
+    }
+
+    [Fact]
+    public async Task Restoring_never_applies_an_older_version()
+    {
+        RequirePostgres();
+        var org = await f.NewOrganizationAsync("Ingest restore older");
+        var client = f.Client(org);
+        // Without modified_at the change time is exported_at of the package, so the same content can come with an older time.
+        var noTime = Cp("o1");
+        noTime.Remove("modified_at");
+        await client.SendAsync(client.Envelope("counterparties", "ro-0", 1, new object[] { noTime, Cp("o2") }, exportedAt: T(30)));
+        await client.SendAsync(client.Envelope("counterparties", "ro-1", 1, new object[] { Cp("o2") }, "full", "RO-1", true));
+        Assert.Equal("true", await f.ValueAsync("accounting_counterparties", org.TenantId, "ref = 'o1'", "is_deleted"));
+
+        // Same content, older time: not applied, the mark stays.
+        var older = await client.SendAsync(client.Envelope("counterparties", "ro-2", 1, new object[] { noTime }, exportedAt: T(20)));
+        Assert.Equal([("unchanged", "same_content")], Items(older));
+        Assert.Equal("true", await f.ValueAsync("accounting_counterparties", org.TenantId, "ref = 'o1'", "is_deleted"));
+
+        // Same content, not older: restored.
+        var newer = await client.SendAsync(client.Envelope("counterparties", "ro-3", 1, new object[] { noTime }, exportedAt: T(40)));
+        Assert.Equal([("accepted", "restored")], Items(newer));
+        Assert.Equal("false", await f.ValueAsync("accounting_counterparties", org.TenantId, "ref = 'o1'", "is_deleted"));
+
+        // Changed content with an older modified_at than stored: not applied either.
+        var stale = await client.SendAsync(client.Envelope("counterparties", "ro-4", 1, new object[] { Cp("o1", name: "Old name", at: 0) }));
+        Assert.Equal([("unchanged", "older_than_stored")], Items(stale));
+        Assert.Equal("Name", await f.ValueAsync("accounting_counterparties", org.TenantId, "ref = 'o1'", "name"));
+    }
+
+    /// <summary>
+    /// Documents the CURRENT behaviour after an explicit deletion from 1C (not a restore case: a deletion stores the hash of
+    /// the deletion item, which contains is_deleted = true, so an item without the deletion never has the same hash).
+    /// </summary>
+    [Fact]
+    public async Task After_an_explicit_deletion_the_same_fields_without_the_deletion_are_an_ordinary_change()
+    {
+        RequirePostgres();
+        var org = await f.NewOrganizationAsync("Ingest deletion then same");
+        var client = f.Client(org);
+        await client.SendAsync(client.Envelope("counterparties", "dx-0", 1, new object[] { Cp("d1", at: 10), Cp("d2", at: 10) }));
+
+        // d1: full item with is_deleted = true; d2: deletion notice (ref only).
+        var deleted = Cp("d1", at: 20);
+        deleted["is_deleted"] = true;
+        var deletion = await client.SendAsync(client.Envelope("counterparties", "dx-1", 1, new object[]
+        {
+            deleted,
+            new Dictionary<string, object?> { ["ref"] = "d2", ["is_deleted"] = true, ["modified_at"] = "2026-11-01T09:20:00" },
+        }));
+        Assert.Equal([("accepted", null), ("accepted", null)], Items(deletion));
+
+        // The same fields without the deletion at the SAME modified_at: a different hash, not older -> applied as a change,
+        // the record is not deleted any more (code null, not "restored").
+        var same = await client.SendAsync(client.Envelope("counterparties", "dx-2", 1, new object[] { Cp("d1", at: 20), Cp("d2", at: 20) }));
+        Assert.Equal([("accepted", null), ("accepted", null)], Items(same));
+        Assert.Equal("false", await f.ValueAsync("accounting_counterparties", org.TenantId, "ref = 'd1'", "is_deleted"));
+        Assert.Equal("false", await f.ValueAsync("accounting_counterparties", org.TenantId, "ref = 'd2'", "is_deleted"));
+
+        // The version from before the deletion (older modified_at) is not applied.
+        var deletedAgain = Cp("d1", at: 30);
+        deletedAgain["is_deleted"] = true;
+        await client.SendAsync(client.Envelope("counterparties", "dx-3", 1, new object[] { deletedAgain }));
+        var before = await client.SendAsync(client.Envelope("counterparties", "dx-4", 1, new object[] { Cp("d1", at: 10) }));
+        Assert.Equal([("unchanged", "older_than_stored")], Items(before));
+        Assert.Equal("true", await f.ValueAsync("accounting_counterparties", org.TenantId, "ref = 'd1'", "is_deleted"));
+    }
+
+    [Fact]
     public async Task Full_export_of_balances_marks_only_rows_of_the_dates_it_covers()
     {
         RequirePostgres();
