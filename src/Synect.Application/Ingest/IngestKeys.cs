@@ -66,8 +66,11 @@ public sealed class IngestKeyService(ISynectDbContext db, ITenantContext tenant,
         {
             RequireTenant();
             var existing = await db.Connections.AsNoTracking()
-                .Where(c => c.AdapterKind == AdapterKind.Accounting1C).OrderBy(c => c.CreatedAt).FirstOrDefaultAsync(token);
+                .Where(c => c.AdapterKind == AdapterKind.Accounting1C && c.SourceCode != Connection.OneCFreshODataSourceCode)
+                .OrderBy(c => c.Status == ConnectionStatus.Disabled).ThenBy(c => c.CreatedAt).FirstOrDefaultAsync(token);
             if (existing is not null) return new Accounting1CConnectionInfo(existing.Id, existing.Name, false);
+            // An active 1C:Fresh OData connection is the source of 1C data: the extension gets no connection next to it.
+            await Synect.Application.Sync.OneCConnectionRule.EnsureNoOtherActiveAsync(db, null, token);
             var connection = new Connection
             {
                 Name = DefaultConnectionName,

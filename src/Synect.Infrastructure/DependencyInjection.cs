@@ -74,6 +74,20 @@ public static class DependencyInjection
         services.Configure<Synect.Application.Accounts.AccountsOptions>(configuration.GetSection("Accounts"));
         services.Configure<Synect.Application.Ingest.IngestOptions>(configuration.GetSection("Ingest"));
         services.Configure<Synect.Application.Accounting1C.AccountingOptions>(configuration.GetSection("Accounting"));
+        services.Configure<Synect.Application.OData.ODataOptions>(configuration.GetSection("OData"));
+        return services;
+    }
+
+    /// <summary>
+    /// OData:AllowHttpLocalhostInDevelopment takes effect only when the host runs in Development; anywhere else it is
+    /// ignored (base_url stays HTTPS on an allowed host, internal addresses stay refused). Called by each host.
+    /// </summary>
+    public static IServiceCollection AddODataEnvironment(this IServiceCollection services, bool isDevelopment)
+    {
+        services.PostConfigure<Synect.Application.OData.ODataOptions>(o =>
+        {
+            if (o.AllowHttpLocalhostInDevelopment && isDevelopment) o.AllowLocalDevelopment();
+        });
         return services;
     }
 
@@ -138,6 +152,10 @@ public static class DependencyInjection
         // The real Didox adapter (source code "didox"): used only by connections created with that source code.
         services.AddSingleton(_ => DidoxHttp.CreateDefault());
         services.AddSingleton<IEdoAdapter, DidoxEdoAdapter>();
+        // 1C:Fresh over OData (source code "1c_fresh_odata"): read-only client, transport with SSRF protection.
+        services.AddSingleton(sp => Adapters.OData.ODataTransport.CreateDefault(sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Synect.Application.OData.ODataOptions>>()));
+        services.AddSingleton<Synect.Application.OData.IODataClientFactory, Adapters.OData.ODataHttpClientFactory>();
+        services.AddScoped<Adapters.OData.ODataConnectionService>();
         services.AddScoped<ConnectionCredentialsService>();
         return services;
     }

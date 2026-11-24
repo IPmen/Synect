@@ -1237,7 +1237,7 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(64)")
                         .HasColumnName("full_sync_id");
 
-                    b.Property<Guid>("IngestKeyId")
+                    b.Property<Guid?>("IngestKeyId")
                         .HasColumnType("uuid")
                         .HasColumnName("ingest_key_id");
 
@@ -2285,7 +2285,6 @@ namespace Synect.Infrastructure.Persistence.Migrations
 
                     b.PrimitiveCollection<string[]>("Barcodes")
                         .IsRequired()
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("text[]")
                         .HasColumnName("barcodes");
 
@@ -3509,6 +3508,11 @@ namespace Synect.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "SourceCode")
                         .HasDatabaseName("ix_connections_tenant_id_source_code");
 
+                    b.HasIndex(new[] { "TenantId" }, "ux_connections_one_active_1c")
+                        .IsUnique()
+                        .HasDatabaseName("ux_connections_one_active_1c")
+                        .HasFilter("adapter_kind = 'Accounting1C' AND status <> 'Disabled'");
+
                     b.ToTable("connections", (string)null);
                 });
 
@@ -3884,7 +3888,6 @@ namespace Synect.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("TenantId", "IngestKeyId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
                         .HasConstraintName("fk_ingest_batches_ingest_keys_tenant_id_ingest_key_id");
                 });
 

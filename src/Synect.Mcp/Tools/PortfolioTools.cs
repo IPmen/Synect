@@ -113,7 +113,9 @@ public sealed class PortfolioTools(ToolRunner runner, McpCaller caller, Organiza
 
     [McpServerTool(Name = GetConnectionsOverview, Title = "Connections of all organizations", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("State of every source (bank, Didox, statement file import, 1C — for 1C the last load is its last accepted package) of every organization of the API key: status (active, needs_attention, disabled), " +
-                 "reason, time of the last successful load, whether that load was complete, and the manual onboarding mark (onboarding_status: not_started, " +
+                 "reason, connection_kind (onec_extension, onec_fresh_odata, didox, kapital_bank, file_import), transport (push: the source sends data; pull: Synect loads it), " +
+                 "host_label of 1C (desktop, clobus, other), time of the last successful load and of the last attempt, whether data is stale, whether credentials are set " +
+                 "(never their value) and the ingest key prefix, whether the last load was complete, and the manual onboarding mark (onboarding_status: not_started, " +
                  "waiting_for_access, connected, needs_attention, with a note such as «заявление в банк подано»). only_needing_attention = true keeps only sources " +
                  "that are not active, were never loaded or are marked as needing attention. Examples: «Какие подключения не работают?», «У кого не загружается " +
                  "банк?», «Где ждём доступ от банка?», «Qaysi ulanishlar ishlamayapti?», «Bank ko'chirmasi kimda yuklanmayapti?», «Қайси уланишлар ишламаяпти?»." +
@@ -249,10 +251,18 @@ public sealed class PortfolioTools(ToolRunner runner, McpCaller caller, Organiza
         ConnectionName = TextSafety.Untrusted(c.Name, runner.Options.UntrustedTextMaxLength),
         Source = c.SourceCode,
         c.Kind,
+        c.ConnectionKind,
+        c.Transport,
+        c.HostLabel,
         ConnectionStatus = c.Status,
         StatusReason = TextSafety.Untrusted(c.StatusReason, runner.Options.UntrustedTextMaxLength),
         c.StatusChangedAt,
         LastSuccessfulLoadAt = c.LastSuccessfulSyncAt,
+        LastSuccessAt = c.LastSuccessfulSyncAt,
+        c.LastAttemptAt,
+        // Secrets are never shown: only whether credentials are stored and the prefix of the ingest key.
+        CredentialsSet = c.Transport == ConnectionKinds.TransportPull ? c.CredentialsSet : (bool?)null,
+        c.IngestKeyPrefix,
         HoursSinceLastLoad = c.LastSuccessfulSyncAt is { } at ? Math.Round((now - at).TotalHours, 1) : (double?)null,
         Stale = c.DataGroups is { } groups
             ? IngestFreshnessGroups.IsStale(groups)

@@ -16,7 +16,9 @@ public sealed class SyncPlanner(ISynectDbContext db, SyncJobQueue queue, SyncSch
         var now = time.GetUtcNow();
         var queued = 0;
         var connections = await db.Connections
-            .Where(c => c.Status == ConnectionStatus.Active && (c.AdapterKind == AdapterKind.Bank || c.AdapterKind == AdapterKind.Edo))
+            // Pull connections only: banks, Didox and 1C:Fresh over OData. Pushed data (1C extension, file imports) is never planned.
+            .Where(c => c.Status == ConnectionStatus.Active && (c.AdapterKind == AdapterKind.Bank || c.AdapterKind == AdapterKind.Edo
+                        || (c.AdapterKind == AdapterKind.Accounting1C && c.SourceCode == Connection.OneCFreshODataSourceCode)))
             .ToListAsync(token);
 
         foreach (var connection in connections)
@@ -28,7 +30,7 @@ public sealed class SyncPlanner(ISynectDbContext db, SyncJobQueue queue, SyncSch
                 continue;
             }
 
-            if (schedule.CurrentSlot(connection.Id, connection.AdapterKind, now) is not { } slot) continue;
+            if (schedule.CurrentSlot(connection.Id, connection.AdapterKind, now, connection.IsOneCOData) is not { } slot) continue;
 
             // The slot is covered by a job created for it, or by any job enqueued after it started (e.g. manual).
             var covered = await db.SyncJobs.AnyAsync(j => j.ConnectionId == connection.Id

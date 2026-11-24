@@ -7,6 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Synect.Application.Resilience;
 using Synect.DevTools;
+using Synect.Domain.Sync;
 using Synect.Infrastructure;
 using Synect.Infrastructure.Persistence;
 
@@ -56,6 +57,13 @@ using Synect.Infrastructure.Persistence;
 //   set-credentials --tenant <name|id> --connection <id|name> --login <login> [--test] [--password-stdin]   replaces the access (new version)
 //   test-connection --tenant <name|id> --connection <id|name>   tests the stored access; on success Active and first load queued
 //   list-connections --tenant <name|id>           connections, masked login, secret version (never the password)
+//   disable-connection --tenant <name|id> --connection <id|name> [--reason ...]   data kept; the way to change the 1C source
+// 1C connections (one active per organization: onec_extension OR onec_fresh_odata); the OData password only in SYNECT_ODATA_PASSWORD:
+//   create-connection --tenant <name|id> --kind onec_extension   push connection of the 1C extension (keys: create-ingest-key)
+//   create-connection --tenant <name|id> --kind onec_fresh_odata --url <https://clobus.uz/a/...> --user <OData user> [--profile clobus-bp-uz]
+//                     [--organization-key <guid>] [--name ...] [--test]   1C:Fresh (Clobus) over the standard OData interface, pull
+//   sync-odata --tenant <name|id> --connection <id|name> [--mode auto|full|delta] [--dry-run]   loads now (dry run: reads, compares, writes nothing)
+//   probe-odata --url <...> --user <...> [--profile ...] [--out docs/odata-probe-<date>.md]   $metadata, counts, fields and types, filters, paging; no host or values
 // Deployment (runs as the schema owner, ConnectionStrings:SynectOwner; Api and Worker never migrate at startup):
 //   migrate [--lock-timeout 5]                    applies pending migrations; every session has lock_timeout (seconds)
 //   migrate --status                              applied / pending migrations of this build; exit code 2 when not compatible
@@ -84,6 +92,7 @@ if (command == "attention-eval") builder.Services.AddSingleton<TimeProvider>(new
 
 var capture = new CommandCapture();
 builder.Services.AddSynectInfrastructure(builder.Configuration);
+builder.Services.AddODataEnvironment(builder.Environment.IsEnvironment("Development"));
 builder.Services.ConfigureDbContext<SynectDbContext>(o => o.AddInterceptors(capture));
 builder.Services.AddSingleton(capture);
 // Loading demo data must not be throttled like production calls to real sources.
@@ -100,6 +109,7 @@ builder.Services.AddSingleton<StatementCommands>();
 builder.Services.AddSingleton<AccountCommands>();
 builder.Services.AddSingleton<IngestCommands>();
 builder.Services.AddSingleton<ConnectionCommands>();
+builder.Services.AddSingleton<ODataCommands>();
 
 using var host = builder.Build();
 var services = host.Services;
@@ -209,8 +219,18 @@ try
             break;
         case "list-sources":
             return services.GetRequiredService<ConnectionCommands>().ListSources();
+        case "create-connection" when options.Get("kind") == ConnectionKinds.OneCFreshOData:
+            return await services.GetRequiredService<ODataCommands>().CreateODataAsync(await Tenant(), options);
+        case "create-connection" when options.Get("kind") == ConnectionKinds.OneCExtension:
+            return await services.GetRequiredService<ODataCommands>().CreateExtensionAsync(await Tenant());
         case "create-connection":
             return await services.GetRequiredService<ConnectionCommands>().CreateAsync(await Tenant(), options);
+        case "disable-connection":
+            return await services.GetRequiredService<ODataCommands>().DisableAsync(await Tenant(), options);
+        case "sync-odata":
+            return await services.GetRequiredService<ODataCommands>().SyncAsync(await Tenant(), options);
+        case "probe-odata":
+            return await services.GetRequiredService<ODataCommands>().ProbeAsync(options);
         case "set-credentials":
             return await services.GetRequiredService<ConnectionCommands>().SetAsync(await Tenant(), options);
         case "test-connection":
@@ -236,7 +256,7 @@ try
                               "create-api-key, revoke-api-key, list-api-keys, test-db-leftovers, reconcile, rebuild-reconciliation, reconcile-eval, " +
                               "reconcile-bench, normalize-currency, attention, attention-eval, attention-bench, create-file-connection, " +
                               "import-statement, list-imports, anonymize-statement, statement-bench, delete-tenant, create-account, add-organization, " +
-                              "list-accounts, disable-organization, create-account-key, set-onboarding, import-organizations, seed-account, account-bench, list-sources, create-connection, set-credentials, test-connection, list-connections, create-ingest-key, revoke-ingest-key, list-ingest-keys, list-ingest-batches, send-1c-sample. See Program.cs.");
+                              "list-accounts, disable-organization, create-account-key, set-onboarding, import-organizations, seed-account, account-bench, list-sources, create-connection, set-credentials, test-connection, list-connections, disable-connection, sync-odata, probe-odata, create-ingest-key, revoke-ingest-key, list-ingest-keys, list-ingest-batches, send-1c-sample. See Program.cs.");
             break;
     }
 }

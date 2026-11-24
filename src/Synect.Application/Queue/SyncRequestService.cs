@@ -50,6 +50,7 @@ public sealed class SyncRequestService(
     IAdapterRegistry registry,
     ICredentialProvider credentials,
     AdapterCallPolicy policy,
+    OData.ODataSyncService odata,
     TimeProvider time,
     IOptions<SyncQueueOptions> options,
     ILogger<SyncRequestService> logger)
@@ -61,7 +62,9 @@ public sealed class SyncRequestService(
             var connection = await LoadAsync(connectionId, token);
             if (!connection.IsSyncable)
                 return new SyncRequestResult(SyncRequestStatus.NotLoadable,
-                    Reason: "Data of this connection comes from imported bank statement files; import a newer statement to refresh it.");
+                    Reason: connection.IsOneC
+                        ? "Data of this connection is sent by the 1C extension; use «Отправить сейчас» in 1C to refresh it."
+                        : "Data of this connection comes from imported bank statement files; import a newer statement to refresh it.");
             if (connection.Status != ConnectionStatus.Active)
                 return new SyncRequestResult(SyncRequestStatus.ConnectionNotActive, Reason: connection.StatusReason);
 
@@ -113,6 +116,7 @@ public sealed class SyncRequestService(
             {
                 AdapterKind.Bank => await TestAsync(registry.GetBank(connection.SourceCode), context, ct),
                 AdapterKind.Edo => await TestAsync(registry.GetEdo(connection.SourceCode), context, ct),
+                AdapterKind.Accounting1C when connection.IsOneCOData => await odata.TestAsync(connection.Id, ct),
                 _ => ConnectionTestResult.Failed($"Adapter kind {connection.AdapterKind} is not supported yet."),
             };
         }

@@ -16,6 +16,7 @@ builder.Services.Configure<HostOptions>(o =>
 // EnvironmentFile in Production). Migrations are never applied here: see `Synect.DevTools migrate`.
 // Infrastructure is referenced here only to register dependencies; MCP tools see Application services only.
 builder.Services.AddSynectInfrastructure(builder.Configuration);
+builder.Services.AddODataEnvironment(builder.Environment.IsEnvironment("Development"));
 builder.Services.AddSynectMcp(builder.Configuration);
 // Receiver of the 1C extension (stage 8a): its own ingest keys, never MCP keys.
 builder.Services.AddSynectIngest();

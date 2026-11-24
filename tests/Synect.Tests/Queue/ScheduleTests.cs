@@ -54,7 +54,9 @@ public class ScheduleTests
 
         Assert.Null(Calculator.CurrentSlot(id, AdapterKind.Bank, slot.Start.AddSeconds(-1)));
         Assert.Equal(slot.Start, Calculator.CurrentSlot(id, AdapterKind.Bank, slot.Start)!.Start);
-        Assert.Equal(slot.Start, Calculator.CurrentSlot(id, AdapterKind.Bank, Local(4, 59))!.Start);
+        // The last second of the window (04:59:59), not 04:59:00: the jittered start of a random id can fall after 04:59:00
+        // (floor(4 h × jitter) > 3 h 59 min for about 0.4% of ids), which made this check fail now and then.
+        Assert.Equal(slot.Start, Calculator.CurrentSlot(id, AdapterKind.Bank, Local(5).AddSeconds(-1))!.Start);
         Assert.Null(Calculator.CurrentSlot(id, AdapterKind.Bank, Local(5)));
         Assert.Null(Calculator.CurrentSlot(id, AdapterKind.Bank, Local(12)));
     }
