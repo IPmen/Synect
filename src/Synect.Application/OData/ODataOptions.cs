@@ -41,8 +41,26 @@ public sealed class ODataOptions
     /// <summary>Delta of documents: documents dated within this many days back are compared by DataVersion (45).</summary>
     public int DeltaWindowDays { get; set; } = 45;
 
-    /// <summary>A load is a full one when the last completed full load of the connection is older than this (24 h).</summary>
+    /// <summary>
+    /// Auto mode, per entity: a full export is due when its last COMPLETED full export is at least FullSyncInterval minus
+    /// <see cref="FullSyncTolerance"/> old (24 h).
+    /// </summary>
     public TimeSpan FullSyncInterval { get; set; } = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// Slack of <see cref="FullSyncInterval"/> (2 h): a daily slot starts at the same time every day, while the previous export
+    /// was recorded when it ended; without the slack the full export slips by one slot a day (or to every other day).
+    /// </summary>
+    public TimeSpan FullSyncTolerance { get; set; } = TimeSpan.FromHours(2);
+
+    /// <summary>
+    /// After a full export of an entity that did not complete (incomplete key list, held back by the mass-deletion guard, an
+    /// error), the next full attempt of that entity waits at least this long (12 h); deltas run meanwhile.
+    /// </summary>
+    public TimeSpan FullRetryAfter { get; set; } = TimeSpan.FromHours(12);
+
+    /// <summary>Attention rule connection.full_sync_overdue: no completed full export of an entity for this many days (3).</summary>
+    public int FullSyncOverdueDays { get; set; } = 3;
 
     /// <summary>Daytime delta loads every N hours between Sync:Schedule:DaytimeStart and DaytimeEnd (2; 0 = nightly only).</summary>
     public int DaytimeRefreshHours { get; set; } = 2;

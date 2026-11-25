@@ -14,6 +14,7 @@ public static class AttentionRuleCodes
     public const string ConnectionNeedsAttention = "connection.needs_attention";
     public const string ConnectionStaleData = "connection.stale_data";
     public const string ConnectionIncompleteLoad = "connection.incomplete_load";
+    public const string ConnectionFullSyncOverdue = "connection.full_sync_overdue";
     public const string BankBalanceMismatch = "bank.balance_mismatch";
     public const string BankFailedOperations = "bank.failed_operations";
     public const string BankIdleAccounts = "bank.idle_accounts";
@@ -36,7 +37,7 @@ internal sealed record Finding(
 /// <summary>What the rules read: the database of the current tenant (RLS), the evaluation time and the thresholds.</summary>
 internal sealed record RuleContext(
     ISynectDbContext Db, Guid TenantId, DateTimeOffset Now, DateOnly Today, AttentionOptions Options,
-    ReconciliationOptions Reconciliation, AnalyticsOptions Analytics)
+    ReconciliationOptions Reconciliation, AnalyticsOptions Analytics, OData.ODataOptions? OData = null)
 {
     public Task<List<T>> QueryAsync<T>(Sql sql, CancellationToken ct) => Db.Database.SqlQuery<T>(sql.Build()).ToListAsync(ct);
     public DateOnly LookbackFrom => Today.AddDays(-Options.LookbackDays);
@@ -85,6 +86,12 @@ internal static class AttentionRuleSet
                           "Nothing was marked deleted for those entities."
                         : "The last successful Didox load did not read every page; some documents may be missing."),
             (_, l) => ($"{Count(l.Count, "connection")} with incomplete loads", "")),
+        new(AttentionRuleCodes.ConnectionFullSyncOverdue, AttentionCategory.Connection, AttentionSeverity.High, false, FullSyncOverdueAsync,
+            (_, f) => ($"No completed full export of {f.Entry["entity"]} from 1C:Fresh (OData) for more than {f.Entry["overdue_days"]} days",
+                "Records deleted in 1C are marked deleted in Synect only by a completed full export; until one completes, deleted records " +
+                "still count. last_outcome and last_failure say why the last attempt did not complete (incomplete key list, held back " +
+                "by the mass-deletion guard, error). Deltas keep loading new and changed records meanwhile."),
+            (_, l) => ($"{(l.Count == 1 ? "1 1C entity" : $"{l.Count} 1C entities")} without a recent full export", "")),
 
         new(AttentionRuleCodes.BankBalanceMismatch, AttentionCategory.Bank, AttentionSeverity.High, false, BalanceMismatchAsync,
             (c, f) => ($"Possible discrepancy in day balances of account {f.Entry["account"]}: {Count((int)f.Entry["day_count"]!, "day")}",
@@ -185,6 +192,33 @@ internal static class AttentionRuleSet
                 entry["threshold_hours"] = Threshold(x).TotalHours;
                 return new Finding(x.Id.ToString(), "connection", x.Id.ToString(), entry);
             }).ToList();
+    }
+
+    /// <summary>
+    /// 1C:Fresh over OData only (the extension is excluded): an entity whose last COMPLETED full export (or, without one, the
+    /// creation of the connection) is older than OData:FullSyncOverdueDays. Deltas do not close it; a completed full export does.
+    /// </summary>
+    private static async Task<List<Finding>> FullSyncOverdueAsync(RuleContext c, CancellationToken ct)
+    {
+        var connections = (await c.Db.Connections.AsNoTracking().Where(x => x.Status == ConnectionStatus.Active && x.AdapterKind == AdapterKind.Accounting1C)
+            .OrderBy(x => x.Id).ToListAsync(ct)).Where(x => x.IsOneCOData).ToList();
+        if (connections.Count == 0) return [];
+        var days = Math.Max(1, (c.OData ?? new OData.ODataOptions()).FullSyncOverdueDays);
+        var states = await OData.ODataFullSyncStates.LoadAsync(c.Db, c.TenantId, null, ct);
+        var result = new List<Finding>();
+        foreach (var x in connections)
+            foreach (var s in states.Where(s => s.ConnectionId == x.Id && (s.LastFullSyncAt ?? x.CreatedAt) < c.Now.AddDays(-days)))
+            {
+                var entry = ConnectionEntry(x);
+                entry["entity"] = s.Entity;
+                entry["overdue_days"] = days;
+                entry["last_full_sync_at"] = s.LastFullSyncAt;
+                entry["last_attempt_at"] = s.LastAttemptAt;
+                entry["last_outcome"] = s.LastOutcome;
+                entry["last_failure"] = s.LastAttemptFailed ? s.LastReason ?? "the full export did not complete" : null;
+                result.Add(new Finding($"{x.Id}:{s.Entity}", "connection", x.Id.ToString(), entry));
+            }
+        return result;
     }
 
     /// <summary>

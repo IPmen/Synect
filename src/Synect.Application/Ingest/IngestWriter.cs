@@ -135,6 +135,15 @@ public sealed class IngestWriter(ISynectDbContext db)
         await db.Database.ExecuteSqlRawAsync(sql, [tenant, now.ToUniversalTime(), keys, now.ToUniversalTime().AddHours(-1)], ct);
     }
 
+    /// <summary>Time of the last accepted data of a group of a 1C connection (ingest_freshness); never moves back.</summary>
+    public Task MarkFreshAsync(Guid tenant, Guid connection, Synect.Domain.Accounting.IngestDataGroup group, DateTimeOffset now, CancellationToken ct) =>
+        db.Database.ExecuteSqlAsync($"""
+            INSERT INTO ingest_freshness (tenant_id, connection_id, data_group, last_accepted_at)
+            VALUES ({tenant}, {connection}, {group.ToString()}, {now.ToUniversalTime()})
+            ON CONFLICT (tenant_id, connection_id, data_group) DO UPDATE SET last_accepted_at = excluded.last_accepted_at
+            WHERE ingest_freshness.last_accepted_at < excluded.last_accepted_at
+            """, ct);
+
     /// <summary>
     /// Records that still exist in a pulled source and were not sent again (their version did not change): last_seen_at
     /// only, at most once an hour, like <see cref="TouchAsync"/>. Entities keyed by ref only.

@@ -398,4 +398,54 @@ public sealed class ODataClientTests
         Assert.Equal(ODataVatRateKind.NotFound, ODataVatRateKind.Detect(Metadata("Цена", "Edm.Double"), Doc, "Товары", "СтавкаНДС", null).Kind);
         Assert.Equal(ODataVatRateKind.NotFound, ODataVatRateKind.Detect(Metadata("СтавкаНДС", "Edm.String"), Doc, "Услуги", "СтавкаНДС", null).Kind);
     }
+
+    // ---- numbers: one canonical form, so the same value always gives the same item and the same content hash ----
+
+    private static readonly string[] SixForms = ["6", "\"6\"", "\"6.0000\"", "6.00"];
+
+    private static ODataSource Source(string field, ODataFieldMap map) => new()
+    {
+        Resource = new ODataNamed { Name = "Document_Test" },
+        Fields = new Dictionary<string, ODataFieldMap> { [field] = map },
+    };
+
+    private static JsonObject MapOne(ODataSource source, string json) =>
+        new ODataRecordMapper(ODataProfileResolver.ByName("clobus-bp-uz", new ODataOptions()), new ODataLookupCache())
+            .Map(JsonDocument.Parse(json).RootElement, source);
+
+    private static void AssertOneForm(Func<string, JsonObject> map, string field, string expected)
+    {
+        var items = SixForms.Select(map).ToList();
+        Assert.All(items, i => Assert.Equal(expected, (string)i[field]!));
+        var hashes = items.Select(i => Synect.Application.Ingest.IngestHash.Compute(JsonSerializer.SerializeToElement(i))).Distinct().ToList();
+        Assert.Single(hashes);
+    }
+
+    [Theory]
+    [InlineData("money")]
+    [InlineData("decimal")]
+    public void Money_and_decimal_have_one_form_and_one_hash(string transform)
+    {
+        var source = Source("amount", new ODataFieldMap { Source = "Сумма", Transform = transform });
+        AssertOneForm(v => MapOne(source, $$"""{"Ref_Key":"{{FakeODataServer.Sale1}}","Сумма":{{v}}}"""), "amount", "6");
+    }
+
+    [Fact]
+    public void Amount_with_vat_has_one_form_and_one_hash()
+    {
+        var source = Source("amount", new ODataFieldMap { Source = "Сумма", VatSource = "СуммаНДС", HeaderFlag = "СуммаВключаетНДС", Transform = "amount_with_vat" });
+        // VAT included: the amount as is; and VAT added: 6 + 0.
+        AssertOneForm(v => MapOne(source, $$"""{"Ref_Key":"{{FakeODataServer.Sale1}}","СуммаВключаетНДС":true,"Сумма":{{v}},"СуммаНДС":1}"""), "amount", "6");
+        AssertOneForm(v => MapOne(source, $$"""{"Ref_Key":"{{FakeODataServer.Sale1}}","СуммаВключаетНДС":false,"Сумма":{{v}},"СуммаНДС":"0.00"}"""), "amount", "6");
+    }
+
+    [Fact]
+    public void Numeric_vat_rate_has_the_same_form_as_other_numbers()
+    {
+        var source = Source("vat_rate", new ODataFieldMap { Source = "СтавкаНДС", Transform = "vat_rate" });
+        AssertOneForm(v => MapOne(source, $$"""{"Ref_Key":"{{FakeODataServer.Sale1}}","СтавкаНДС":{{v}}}"""), "vat_rate", "6");
+        Assert.Equal("12", (string)MapOne(source, $$"""{"Ref_Key":"{{FakeODataServer.Sale1}}","СтавкаНДС":"НДС12_112"}""")["vat_rate"]!);
+        Assert.Equal("Без НДС", (string)MapOne(source, $$"""{"Ref_Key":"{{FakeODataServer.Sale1}}","СтавкаНДС":"БезНДС"}""")["vat_rate"]!);
+        Assert.Equal("12%", (string)MapOne(source, $$"""{"Ref_Key":"{{FakeODataServer.Sale1}}","СтавкаНДС":"12%"}""")["vat_rate"]!); // not a plain number: as received
+    }
 }

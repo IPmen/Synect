@@ -261,7 +261,9 @@ public sealed partial class ODataRecordMapper(ODataProfile profile, ODataLookupC
 
     /// <summary>
     /// 1C VAT rate enum names: НДС12 and НДС12_112 → "12", НДС0 → "0", БезНДС → "Без НДС" (stored as NULL by the receiver
-    /// and kept in extra); a number is passed on. TODO(verify-real): enum names of the Uzbek configuration.
+    /// and kept in extra); a plain number ("6", 6.00, "6.0000") is written in the same canonical form as amounts ("6"), so
+    /// the same rate always gives the same item and content hash; any other text is passed on. TODO(verify-real): enum names
+    /// of the Uzbek configuration.
     /// </summary>
     public static string? VatRate(string? text)
     {
@@ -269,6 +271,7 @@ public sealed partial class ODataRecordMapper(ODataProfile profile, ODataLookupC
         var m = VatEnum().Match(text);
         if (m.Success) return m.Groups[1].Value;
         if (text.Equals("БезНДС", StringComparison.OrdinalIgnoreCase)) return "Без НДС";
+        if (decimal.TryParse(text, NumberStyles.AllowDecimalPoint | NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var d)) return Format(d);
         return text;
     }
 

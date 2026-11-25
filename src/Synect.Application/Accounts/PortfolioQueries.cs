@@ -40,6 +40,9 @@ public sealed record OrganizationConnection(
 
     /// <summary>1C extension: prefix of the newest active ingest key (not enough to use it).</summary>
     public string? IngestKeyPrefix { get; init; }
+
+    /// <summary>1C:Fresh over OData: per entity, the last completed full export and the last attempt (with its outcome).</summary>
+    public IReadOnlyList<OData.ODataFullSyncState>? FullSyncs { get; init; }
 }
 
 /// <param name="NewBySeverity">New attention items (including snoozed ones whose time is over) per severity.</param>
@@ -85,6 +88,9 @@ public sealed class PortfolioQueries(AnalyticsContext ctx, IOptions<AccountsOpti
             var withCredentials = (await ctx.QueryAsync<IdRow>(new Sql()
                 .Raw("select s.connection_id from connection_secrets s where s.tenant_id = ").P(t).Raw(" and s.kind = 'credentials'"), token))
                 .Select(r => r.ConnectionId).ToHashSet();
+            var fullSyncs = connections.Any(c => c.IsOneCOData)
+                ? await OData.ODataFullSyncStates.LoadAsync(ctx.Db, t, null, token)
+                : [];
             var keyPrefixes = (await ctx.QueryAsync<KeyRow>(new Sql()
                 .Raw("select distinct on (k.connection_id) k.connection_id, k.key_prefix from ingest_keys k where k.tenant_id = ").P(t)
                 .Raw(" and k.revoked_at is null order by k.connection_id, k.created_at desc"), token))
@@ -130,6 +136,7 @@ public sealed class PortfolioQueries(AnalyticsContext ctx, IOptions<AccountsOpti
                 LastAttemptAt = attemptBy.TryGetValue(c.Id, out var attempt) ? attempt : null,
                 CredentialsSet = withCredentials.Contains(c.Id),
                 IngestKeyPrefix = keyPrefixes.GetValueOrDefault(c.Id),
+                FullSyncs = c.IsOneCOData ? fullSyncs.Where(s => s.ConnectionId == c.Id).ToList() : null,
             }).ToList();
             return new OrganizationSummary(list, newBy, openCritical, unmatched, awaiting, days);
         }, ct);

@@ -285,15 +285,12 @@ public sealed class IngestService(
 
         // A package with at least one item that was not refused shows that the 1C source is alive. Freshness is also kept
         // per data group, so that catalog packages every minute never make stale accounting data look fresh.
-        if (accepted + unchanged > 0 || parsed.Count == 0)
+        // A pulled package (1C:Fresh over OData) changes neither: its loader marks the connection and the freshness once the
+        // whole load succeeded, so a load that fails half-way never resets the circuit breaker or looks fresh.
+        if (!key.Pulled && (accepted + unchanged > 0 || parsed.Count == 0))
         {
             connection.MarkSyncSucceeded(now);
-            await db.Database.ExecuteSqlAsync($"""
-                INSERT INTO ingest_freshness (tenant_id, connection_id, data_group, last_accepted_at)
-                VALUES ({key.TenantId}, {connection.Id}, {spec.Group.ToString()}, {now.ToUniversalTime()})
-                ON CONFLICT (tenant_id, connection_id, data_group) DO UPDATE SET last_accepted_at = excluded.last_accepted_at
-                WHERE ingest_freshness.last_accepted_at < excluded.last_accepted_at
-                """, ct);
+            await writer.MarkFreshAsync(key.TenantId, connection.Id, spec.Group, now, ct);
         }
         batch.FinishedAt = time.GetUtcNow();
         await db.SaveChangesAsync(ct);

@@ -47,6 +47,7 @@ public sealed class AttentionEvaluator(
     IOptions<AttentionOptions> options,
     IOptions<ReconciliationOptions> reconciliation,
     IOptions<AnalyticsOptions> analytics,
+    IOptions<Synect.Application.OData.ODataOptions> odata,
     TimeProvider time)
 {
     public static readonly IReadOnlyList<AttentionCategory> AllCategories =
@@ -86,7 +87,7 @@ public sealed class AttentionEvaluator(
         var now = time.GetUtcNow();
         var a = analytics.Value;
         var context = new RuleContext(db, tenantId, now, DateOnly.FromDateTime(now.ToOffset(a.UtcOffset).DateTime), options.Value,
-            reconciliation.Value, a);
+            reconciliation.Value, a, odata.Value);
         var rules = AttentionRuleSet.All.Where(r => categories.Contains(r.Category)).ToList();
         var codes = rules.Select(r => r.Code).ToList();
 

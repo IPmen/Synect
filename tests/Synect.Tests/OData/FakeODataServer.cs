@@ -53,6 +53,9 @@ public sealed partial class FakeODataServer(int application = 100001) : HttpMess
     /// <summary>/$count answers 400 (not available).</summary>
     public bool CountUnavailable { get; set; }
 
+    /// <summary>Resources that give neither odata.count nor /$count: their full export can never be proved complete.</summary>
+    public HashSet<string> NoCountFor { get; } = new(StringComparer.Ordinal);
+
     /// <summary>A forced answer for matching requests (resource, decoded query); null = normal behaviour.</summary>
     public Func<string, string, HttpResponseMessage?>? FailWhen { get; set; }
 
@@ -129,7 +132,7 @@ public sealed partial class FakeODataServer(int application = 100001) : HttpMess
             catch (FormatException) { return new HttpResponseMessage(HttpStatusCode.BadRequest); }
         }
         var list = rows.ToList();
-        if (isCount) return CountUnavailable ? new HttpResponseMessage(HttpStatusCode.BadRequest) : Text(list.Count.ToString(CultureInfo.InvariantCulture), "text/plain");
+        if (isCount) return CountUnavailable || NoCountFor.Contains(resource) ? new HttpResponseMessage(HttpStatusCode.BadRequest) : Text(list.Count.ToString(CultureInfo.InvariantCulture), "text/plain");
 
         if (query.TryGetValue("$orderby", out var order))
         {
@@ -142,7 +145,7 @@ public sealed partial class FakeODataServer(int application = 100001) : HttpMess
         var select = query.TryGetValue("$select", out var s) ? s.Split(',') : null;
         var value = new JsonArray(list.Select(r => (JsonNode)Project(r, select)).ToArray());
         var body = new JsonObject { ["odata.metadata"] = $"https://clobus.uz:443{ServicePath}$metadata#{resource}", ["value"] = value };
-        if (!OmitInlineCount && query.TryGetValue("$inlinecount", out var ic) && ic == "allpages") body["odata.count"] = total.ToString(CultureInfo.InvariantCulture);
+        if (!OmitInlineCount && !NoCountFor.Contains(resource) && query.TryGetValue("$inlinecount", out var ic) && ic == "allpages") body["odata.count"] = total.ToString(CultureInfo.InvariantCulture);
         return Json(body);
     }
 

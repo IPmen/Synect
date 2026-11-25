@@ -130,7 +130,7 @@ public sealed partial class ODataSyncTests
         Assert.Equal(0, await DeletedCountAsync(tenant));
         var marker = await f.ValueAsync($"""
             SELECT envelope_extra -> 'synect_odata' -> 'mass_delete_blocked' ->> 'empty_source' FROM ingest_batches
-            WHERE tenant_id = '{tenant}' AND entity = 'counterparties' AND envelope_extra ? 'synect_odata'
+            WHERE tenant_id = '{tenant}' AND entity = 'counterparties' AND (envelope_extra -> 'synect_odata' -> 'mass_delete_blocked') IS NOT NULL
             """);
         Assert.Equal("true", marker);
     }
