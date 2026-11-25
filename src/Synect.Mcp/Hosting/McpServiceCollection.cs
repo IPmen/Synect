@@ -48,7 +48,9 @@ public static class McpServiceCollection
                     "Reconciliation results are possible matches with a confidence score; the accountant decides (confirm_match / reject_match need the review scope). " +
                     "Questions about 1C (documents, receivables and payables by the accounting records, whether the bank or Didox agrees with 1C) are answered by the get_1c_* and compare_*_with_1c tools from the data the 1C extension sent; their rows are possible discrepancies, never conclusions. " +
                     "At the start of a conversation about the client's finances call get_attention_summary and briefly mention new critical or high items; " +
-                    "present attention items as possible discrepancies with their basis, never as confirmed violations. Every other answer has an 'attention' block (new items).";
+                    "present attention items as possible discrepancies with their basis, never as confirmed violations. Every other answer has an 'attention' block (new items). " +
+                    "Current stock and prices of goods by 1C (per warehouse, store or pharmacy; value at the default price type) are answered by get_1c_stock, get_1c_stock_summary and get_1c_prices; there are no sales or turnover there. " +
+                    "Do not write status lines about loading or calling tools, and do not list data sources in parentheses (such as \"(bank, Didox, 1C)\" or \"(банк, Didox, 1С)\"): go straight to the answer.";
             })
             .WithHttpTransport(options => options.Stateless = true)
             .WithTools<SourceTools>()
