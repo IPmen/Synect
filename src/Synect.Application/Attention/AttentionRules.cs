@@ -79,7 +79,11 @@ internal static class AttentionRuleSet
             (_, f) => ($"The last load of the {f.Entry["kind"]} connection {f.Entry["source"]} is incomplete",
                 f.Entry["kind"] as string == "bank"
                     ? "The bank has not closed some days older than yesterday (is_day_closed = false); figures of those days may still change."
-                    : "The last successful Didox load did not read every page; some documents may be missing."),
+                    : f.Entry["kind"] as string == ConnectionKinds.OneCFreshOData
+                        ? "The last 1C:Fresh (OData) load is incomplete: a full export was sent as a delta because the list of records may be incomplete, " +
+                          "or a mass deletion was held back (mass_delete_blocked: entity, absent records and share), or the receiver refused records. " +
+                          "Nothing was marked deleted for those entities."
+                        : "The last successful Didox load did not read every page; some documents may be missing."),
             (_, l) => ($"{Count(l.Count, "connection")} with incomplete loads", "")),
 
         new(AttentionRuleCodes.BankBalanceMismatch, AttentionCategory.Bank, AttentionSeverity.High, false, BalanceMismatchAsync,
@@ -148,7 +152,10 @@ internal static class AttentionRuleSet
     private static Dictionary<string, object?> ConnectionEntry(Connection c) => new()
     {
         ["connection_id"] = c.Id,
-        ["kind"] = c.AdapterKind switch { AdapterKind.Edo => "Didox", AdapterKind.File => "file_import", _ => c.AdapterKind.ToString().ToLowerInvariant() },
+        ["kind"] = c.AdapterKind switch
+        {
+            AdapterKind.Edo => "Didox", AdapterKind.File => "file_import", AdapterKind.Accounting1C => c.Kind, _ => c.AdapterKind.ToString().ToLowerInvariant(),
+        },
         ["source"] = c.SourceCode,
         ["status"] = c.Status.ToString(),
         ["status_changed_at"] = c.StatusChangedAt,
@@ -168,8 +175,9 @@ internal static class AttentionRuleSet
         // File import connections get data only when someone imports a statement: their own, longer threshold.
         TimeSpan Threshold(Connection x) => x.AdapterKind == AdapterKind.File ? c.Options.FileStaleAfter : c.Options.StaleAfter;
         var rows = await c.Db.Connections.AsNoTracking().Where(x => x.Status == ConnectionStatus.Active).OrderBy(x => x.Id).ToListAsync(ct);
-        // Stage 8a adds no attention rules for 1C: its staleness is reported by the freshness query only.
-        return rows.Where(x => x.AdapterKind != AdapterKind.Accounting1C && (x.LastSuccessfulSyncAt ?? x.CreatedAt) < c.Now - Threshold(x))
+        // The 1C extension pushes its data: its staleness is reported by the freshness query only. 1C:Fresh over OData is
+        // loaded by Synect like a bank or Didox and is checked the same way.
+        return rows.Where(x => (x.AdapterKind != AdapterKind.Accounting1C || x.IsOneCOData) && (x.LastSuccessfulSyncAt ?? x.CreatedAt) < c.Now - Threshold(x))
             .Select(x =>
             {
                 var entry = ConnectionEntry(x);
@@ -207,15 +215,26 @@ internal static class AttentionRuleSet
                 result.Add(new Finding(g.Key.ToString(), "connection", g.Key.ToString(), entry, days.Select(d => d.ToString("O")).ToList()));
             }
         }
-        foreach (var x in connections.Where(x => x.AdapterKind is not (AdapterKind.Bank or AdapterKind.File or AdapterKind.Accounting1C)))
+        // Didox and 1C:Fresh over OData (the 1C extension has no loads of its own).
+        foreach (var x in connections.Where(x => x.AdapterKind is not (AdapterKind.Bank or AdapterKind.File or AdapterKind.Accounting1C) || x.IsOneCOData))
         {
             var last = await c.Db.SyncRuns.AsNoTracking()
                 .Where(r => r.ConnectionId == x.Id && r.Result == SyncRunResult.Succeeded)
-                .OrderByDescending(r => r.FinishedAt).Select(r => new { r.Id, r.IsComplete, r.FinishedAt }).FirstOrDefaultAsync(ct);
+                .OrderByDescending(r => r.FinishedAt).Select(r => new { r.Id, r.IsComplete, r.StartedAt, r.FinishedAt }).FirstOrDefaultAsync(ct);
             if (last is null || last.IsComplete) continue;
             var entry = ConnectionEntry(x);
             entry["sync_run_id"] = last.Id;
             entry["load_finished_at"] = last.FinishedAt;
+            if (x.IsOneCOData)
+            {
+                // What the OData loader journaled for this run (entity, absent records, share), never record content.
+                var blocked = await c.QueryAsync<MarkerRow>(new Sql()
+                    .Raw("select (b.envelope_extra -> 'synect_odata' -> 'mass_delete_blocked')::text as marker from ingest_batches b where b.tenant_id = ").P(c.TenantId)
+                    .Raw(" and b.connection_id = ").P(x.Id).Raw(" and b.received_at >= ").P(last.StartedAt)
+                    .Raw(" and (b.envelope_extra -> 'synect_odata' -> 'mass_delete_blocked') is not null order by b.received_at"), ct);
+                if (blocked.Count > 0)
+                    entry["mass_delete_blocked"] = blocked.Select(b => System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(b.Marker)).ToList();
+            }
             result.Add(new Finding(x.Id.ToString(), "connection", x.Id.ToString(), entry));
         }
         return result.OrderBy(f => f.Key, StringComparer.Ordinal).ToList();
@@ -593,4 +612,9 @@ internal static class AttentionRuleSet
         public DateTimeOffset? RejectedAt { get; set; }
         public string? Owner { get; set; }
     }
+}
+
+internal sealed class MarkerRow
+{
+    public string Marker { get; set; } = "";
 }

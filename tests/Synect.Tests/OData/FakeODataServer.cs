@@ -44,6 +44,21 @@ public sealed partial class FakeODataServer(int application = 100001) : HttpMess
     /// <summary>Delay before answering (timeouts).</summary>
     public TimeSpan Delay { get; set; }
 
+    /// <summary>A server cap on $top that it applies silently (fewer records than asked, without saying so).</summary>
+    public int? MaxPageSize { get; set; }
+
+    /// <summary>$inlinecount=allpages is ignored: no odata.count in the answer.</summary>
+    public bool OmitInlineCount { get; set; }
+
+    /// <summary>/$count answers 400 (not available).</summary>
+    public bool CountUnavailable { get; set; }
+
+    /// <summary>A forced answer for matching requests (resource, decoded query); null = normal behaviour.</summary>
+    public Func<string, string, HttpResponseMessage?>? FailWhen { get; set; }
+
+    /// <summary>Called before each request is answered (resource, decoded query): to change data between pages.</summary>
+    public Action<string, string>? OnRequest { get; set; }
+
     private long _version;
 
     public string NextVersion() => Convert.ToBase64String(BitConverter.GetBytes(Interlocked.Increment(ref _version)).Reverse().ToArray());
@@ -83,6 +98,8 @@ public sealed partial class FakeODataServer(int application = 100001) : HttpMess
         Requests.Enqueue((request.Method, resource, Uri.UnescapeDataString(uri.Query), uri.AbsoluteUri, request.Headers.Authorization?.ToString()));
         if (Delay > TimeSpan.Zero) await Task.Delay(Delay, ct);
         if (Overrides.TryDequeue(out var forced)) return forced();
+        OnRequest?.Invoke(resource, Uri.UnescapeDataString(uri.Query));
+        if (FailWhen?.Invoke(resource, Uri.UnescapeDataString(uri.Query)) is { } failure) return failure;
         if (request.Method != HttpMethod.Get) return new HttpResponseMessage(HttpStatusCode.MethodNotAllowed);
 
         var expected = "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(Login + ":" + Password));
@@ -112,7 +129,7 @@ public sealed partial class FakeODataServer(int application = 100001) : HttpMess
             catch (FormatException) { return new HttpResponseMessage(HttpStatusCode.BadRequest); }
         }
         var list = rows.ToList();
-        if (isCount) return Text(list.Count.ToString(CultureInfo.InvariantCulture), "text/plain");
+        if (isCount) return CountUnavailable ? new HttpResponseMessage(HttpStatusCode.BadRequest) : Text(list.Count.ToString(CultureInfo.InvariantCulture), "text/plain");
 
         if (query.TryGetValue("$orderby", out var order))
         {
@@ -121,11 +138,11 @@ public sealed partial class FakeODataServer(int application = 100001) : HttpMess
         }
         var total = list.Count;
         if (!IgnoreSkip && query.TryGetValue("$skip", out var skip)) list = list.Skip(int.Parse(skip, CultureInfo.InvariantCulture)).ToList();
-        if (query.TryGetValue("$top", out var top)) list = list.Take(int.Parse(top, CultureInfo.InvariantCulture)).ToList();
+        if (query.TryGetValue("$top", out var top)) list = list.Take(Math.Min(int.Parse(top, CultureInfo.InvariantCulture), MaxPageSize ?? int.MaxValue)).ToList();
         var select = query.TryGetValue("$select", out var s) ? s.Split(',') : null;
         var value = new JsonArray(list.Select(r => (JsonNode)Project(r, select)).ToArray());
         var body = new JsonObject { ["odata.metadata"] = $"https://clobus.uz:443{ServicePath}$metadata#{resource}", ["value"] = value };
-        if (query.TryGetValue("$inlinecount", out var ic) && ic == "allpages") body["odata.count"] = total.ToString(CultureInfo.InvariantCulture);
+        if (!OmitInlineCount && query.TryGetValue("$inlinecount", out var ic) && ic == "allpages") body["odata.count"] = total.ToString(CultureInfo.InvariantCulture);
         return Json(body);
     }
 

@@ -88,12 +88,24 @@ public sealed class ODataCommands(IServiceProvider services)
         return 0;
     }
 
-    /// <summary>sync-odata --tenant X --connection id|name [--mode auto|full|delta] [--dry-run]</summary>
+    /// <summary>
+    /// sync-odata --tenant X --connection id|name [--mode auto|full|delta] [--dry-run] [--confirm-mass-delete]. The confirmation
+    /// lets a full export mark deleted more records than OData:MassDeleteGuard allows; it needs --mode full, cannot be combined
+    /// with --dry-run, and is journaled with the operator's name (ingest_batches.envelope_extra) and logged.
+    /// </summary>
     public async Task<int> SyncAsync(Guid tenantId, CliArgs options)
     {
         var key = options.Get("connection") ?? throw new ArgumentException("--connection <id|name> is required");
         var mode = options.Enum("mode", ODataSyncMode.Auto);
         var dryRun = options.Get("dry-run") == "true";
+        string? confirmedBy = null;
+        if (options.Get("confirm-mass-delete") == "true")
+        {
+            if (mode != ODataSyncMode.Full || dryRun)
+                throw new ArgumentException("--confirm-mass-delete needs --mode full and cannot be combined with --dry-run (run a dry run first, without it).");
+            confirmedBy = $"{Environment.UserName}@{Environment.MachineName}";
+            Console.WriteLine($"Mass deletion confirmed by {confirmedBy}: a full export may mark deleted more records than OData:MassDeleteGuard allows.");
+        }
         var report = await InTenantAsync(tenantId, async sp =>
         {
             var db = sp.GetRequiredService<ISynectDbContext>();
@@ -101,7 +113,7 @@ public sealed class ODataCommands(IServiceProvider services)
                 ? g
                 : await db.InTransactionAsync(t => Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.SingleAsync(
                     db.Connections.Where(c => c.Name == key && c.SourceCode == Connection.OneCFreshODataSourceCode).Select(c => c.Id), t), CancellationToken.None);
-            return await sp.GetRequiredService<ODataSyncService>().RunAsync(id, mode, dryRun, CancellationToken.None);
+            return await sp.GetRequiredService<ODataSyncService>().RunAsync(id, mode, dryRun, CancellationToken.None, confirmedBy);
         });
         Console.WriteLine($"{(report.DryRun ? "DRY RUN (nothing written)" : "Loaded")}: mode {report.Mode}, profile {report.Profile}, {report.Requests} requests ({report.Retries} retries), {report.ElapsedMs} ms");
         Console.WriteLine($"{"entity",-16} {"mode",-6} {"listed",7} {"new",6} {"changed",8} {"restored",9} {"same",6} {"absent",7} {"send",6} {"pkgs",5} {"accepted",9} {"rejected",9} {"deleted",8}");
@@ -109,6 +121,7 @@ public sealed class ODataCommands(IServiceProvider services)
         {
             Console.WriteLine($"{e.Entity,-16} {e.Mode,-6} {e.Listed,7} {e.New,6} {e.Changed,8} {e.Restored,9} {e.Unchanged,6} {e.MissingInSource,7} {e.Sent,6} {e.Packages,5} {e.Accepted,9} {e.Rejected,9} {e.MarkedDeleted,8}");
             foreach (var w in e.Warnings) Console.WriteLine($"    ! {w}");
+            if (e.MassDeleteBlocked) Console.WriteLine($"    ! MASS DELETION HELD BACK for {e.Entity}: check the source; if it is right, run again with --mode full --confirm-mass-delete.");
         }
         foreach (var w in report.Warnings) Console.WriteLine($"! {w}");
         if (report.MissingProperties.Count > 0)
@@ -259,6 +272,26 @@ public sealed class ODataCommands(IServiceProvider services)
                           (overlap >= 0 ? $", overlap {overlap}" : "") + (p1?.Count is { } total ? $", odata.count {total} ({(p1.Count == p2?.Count ? "same on both pages" : "differs")})" : ""));
             md.AppendLine();
         }
+
+        // VAT rate attribute of the document lines: an enumeration (string value names) or a reference (СтавкаНДС_Key).
+        md.AppendLine("## VAT rate attribute (СтавкаНДС)");
+        md.AppendLine();
+        md.AppendLine("| Table part | Kind | Evidence |");
+        md.AppendLine("|---|---|---|");
+        foreach (var source in profile.Entities.SelectMany(e => e.Sources).Where(s => s.Children is not null))
+            foreach (var table in source.Children!.Tables.Where(t => t.Fields.Values.Any(f => f.Transform == "vat_rate")))
+            {
+                var vatProperty = table.Fields.Values.First(f => f.Transform == "vat_rate").Source!;
+                JsonElement? line = null;
+                var (sample, _, _) = await Step(() => client.GetAsync(new ODataQuery(source.Resource.Name) { Top = 1 }, CancellationToken.None));
+                if (sample is { Items.Count: > 0 } && sample.Items[0].TryGetProperty(table.Property.Name, out var rowsOf) && rowsOf.ValueKind == JsonValueKind.Array && rowsOf.GetArrayLength() > 0)
+                    line = rowsOf[0];
+                var detected = ODataVatRateKind.Detect(metadata, source.Resource.Name, table.Property.Name, vatProperty, line);
+                md.AppendLine($"| {source.Resource.Name}.{table.Property.Name} | **{detected.Kind}** | {detected.Evidence} |");
+            }
+        md.AppendLine();
+        md.AppendLine("enumeration: the profile's vat_rate transform (НДС12 → 12, БезНДС → «Без НДС») applies; reference: the profile needs a lookup of the VAT rate catalog (not built in).");
+        md.AppendLine();
 
         md.AppendLine("## Totals");
         md.AppendLine();

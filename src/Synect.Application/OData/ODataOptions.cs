@@ -66,4 +66,24 @@ public sealed class ODataOptions
     public bool LocalDevelopmentAllowed { get; private set; }
 
     public void AllowLocalDevelopment() => LocalDevelopmentAllowed = true;
+
+    /// <summary>OData:MassDeleteGuard: a full export that would mark too many records deleted is not completed.</summary>
+    public ODataMassDeleteGuardOptions MassDeleteGuard { get; set; } = new();
+}
+
+/// <summary>
+/// OData:MassDeleteGuard. A completed full export marks deleted the records absent from the source. It is held back (sent
+/// as a delta, the load is incomplete, an attention item is raised) when more than <see cref="MaxShare"/> of the active
+/// records of an entity are absent and they are at least <see cref="MinCount"/>, or when the source returned no records at
+/// all while active ones are stored. Only DevTools sync-odata --confirm-mass-delete lets such an export complete.
+/// </summary>
+public sealed class ODataMassDeleteGuardOptions
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Share of the active records of an entity (0.2 = 20%); more absent than this is a mass deletion.</summary>
+    public double MaxShare { get; set; } = 0.2;
+
+    /// <summary>A mass deletion also needs at least this many absent records (50).</summary>
+    public int MinCount { get; set; } = 50;
 }

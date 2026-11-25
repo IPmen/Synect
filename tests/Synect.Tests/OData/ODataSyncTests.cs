@@ -43,6 +43,8 @@ public sealed class ODataFixture : IAsyncLifetime
                 o.MaxRetryDelay = TimeSpan.FromMilliseconds(5);
                 o.PageSize = 2;
                 o.RecordsPerKeyRequest = 2;
+                // Tiny data: the mass-deletion guard from 5 absent records (production: 50); the share stays 20%.
+                o.MassDeleteGuard.MinCount = 5;
             });
         });
     }
@@ -77,7 +79,7 @@ public sealed class ODataFixture : IAsyncLifetime
 /// comparison, disappearing and returning records, dry run, paging protection, the queue path with its circuit breaker, the
 /// one-active-1C rule, push and pull kept apart, the scheduler and the connections overview.
 /// </summary>
-public sealed class ODataSyncTests(ODataFixture f) : IClassFixture<ODataFixture>
+public sealed partial class ODataSyncTests(ODataFixture f) : IClassFixture<ODataFixture>
 {
     private void RequirePostgres() => Assert.SkipUnless(f.Available, PostgresFixture.SkipReason);
 

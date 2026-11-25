@@ -347,6 +347,8 @@ public sealed class ODataClientTests
     [InlineData("НДС12_112", "12")]
     [InlineData("НДС0", "0")]
     [InlineData("НДС15", "15")]
+    [InlineData("НДС6", "6")]
+    [InlineData("НДС6_106", "6")]
     [InlineData("БезНДС", "Без НДС")]
     [InlineData("12", "12")]
     public void Vat_rate_enum_names_become_numbers(string value, string expected) => Assert.Equal(expected, ODataRecordMapper.VatRate(value));
@@ -379,5 +381,21 @@ public sealed class ODataClientTests
         };
         var mapped = mapper.Map(JsonSerializer.SerializeToElement(doc), purchase);
         Assert.Equal("112", (string)mapped["lines"]![0]!["amount"]!); // VAT not included: amount plus VAT
+    }
+
+    [Fact]
+    public void Vat_rate_attribute_is_recognised_as_an_enumeration_or_a_reference()
+    {
+        static System.Text.Json.JsonElement Line(string json) => System.Text.Json.JsonDocument.Parse(json).RootElement;
+        const string Doc = "Document_РеализацияТоваровУслуг";
+        Assert.Equal(ODataVatRateKind.Enumeration, ODataVatRateKind.Detect(null, Doc, "Товары", "СтавкаНДС", Line("""{"СтавкаНДС":"НДС12"}""")).Kind);
+        Assert.Equal(ODataVatRateKind.Reference, ODataVatRateKind.Detect(null, Doc, "Товары", "СтавкаНДС", Line("""{"СтавкаНДС_Key":"6f9619ff-8b86-d011-b42d-00c04fc964ff"}""")).Kind);
+
+        string Metadata(string property, string type) =>
+            $"""<edmx:Edmx xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx"><edmx:DataServices><Schema xmlns="http://schemas.microsoft.com/ado/2009/11/edm" Namespace="StandardODATA"><EntityType Name="{Doc}_Товары_RowType"><Property Name="LineNumber" Type="Edm.Int64"/><Property Name="{property}" Type="{type}"/></EntityType></Schema></edmx:DataServices></edmx:Edmx>""";
+        Assert.Equal(ODataVatRateKind.Enumeration, ODataVatRateKind.Detect(Metadata("СтавкаНДС", "Edm.String"), Doc, "Товары", "СтавкаНДС", null).Kind);
+        Assert.Equal(ODataVatRateKind.Reference, ODataVatRateKind.Detect(Metadata("СтавкаНДС_Key", "Edm.Guid"), Doc, "Товары", "СтавкаНДС", null).Kind);
+        Assert.Equal(ODataVatRateKind.NotFound, ODataVatRateKind.Detect(Metadata("Цена", "Edm.Double"), Doc, "Товары", "СтавкаНДС", null).Kind);
+        Assert.Equal(ODataVatRateKind.NotFound, ODataVatRateKind.Detect(Metadata("СтавкаНДС", "Edm.String"), Doc, "Услуги", "СтавкаНДС", null).Kind);
     }
 }

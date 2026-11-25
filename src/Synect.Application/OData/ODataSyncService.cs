@@ -44,6 +44,16 @@ public sealed class ODataEntityReport
     public int UnchangedByReceiver { get; set; }
     public int Rejected { get; set; }
     public int MarkedDeleted { get; set; }
+
+    /// <summary>Active (not deleted) records stored before the load.</summary>
+    public int ActiveStored { get; set; }
+
+    /// <summary>The mass-deletion guard held the full export back (nothing marked deleted).</summary>
+    public bool MassDeleteBlocked { get; set; }
+
+    /// <summary>A mass deletion was let through by an explicit confirmation (DevTools --confirm-mass-delete).</summary>
+    public bool MassDeleteConfirmed { get; set; }
+
     public List<string> Warnings { get; } = [];
 }
 
@@ -88,6 +98,7 @@ public sealed class ODataSyncService(
     IOptions<IngestOptions> ingestOptions,
     IOptions<CircuitBreakerOptions> breakerOptions,
     Queue.SyncShutdown shutdown,
+    Attention.AttentionTrigger attention,
     TimeProvider time,
     ILogger<ODataSyncService> logger)
 {
@@ -101,8 +112,35 @@ public sealed class ODataSyncService(
 
     private ODataOptions O => options.Value;
 
-    /// <summary>A load by the sync queue: recorded as a sync run; a failure feeds the circuit breaker.</summary>
+    /// <summary>A load by the sync queue: recorded as a sync run; a failure feeds the circuit breaker. Never forces a mass deletion.</summary>
     public async Task<SyncOutcome> SyncAsync(Guid connectionId, CancellationToken ct)
+    {
+        var (outcome, _, _) = await RecordedAsync(connectionId, ODataSyncMode.Auto, null, ct);
+        return outcome;
+    }
+
+    /// <summary>
+    /// A load started by hand (DevTools). <paramref name="dryRun"/> writes nothing (no sync run, no packages). A real load
+    /// is recorded as a sync run like a queued one (circuit breaker, attention rules). <paramref name="confirmedMassDeleteBy"/>
+    /// (DevTools --confirm-mass-delete only): who confirmed that a full export may mark deleted more than the guard allows;
+    /// the confirmation is journaled in ingest_batches.envelope_extra of the export and logged.
+    /// </summary>
+    public async Task<ODataSyncReport> RunAsync(Guid connectionId, ODataSyncMode mode, bool dryRun, CancellationToken ct, string? confirmedMassDeleteBy = null)
+    {
+        if (dryRun)
+        {
+            var connection = await db.InTransactionAsync(token => LoadConnectionAsync(connectionId, token), ct);
+            return await RunAsync(connection, mode, dryRun: true, null, null, ct);
+        }
+        if (confirmedMassDeleteBy is not null && string.IsNullOrWhiteSpace(confirmedMassDeleteBy))
+            throw new ArgumentException("A mass deletion is confirmed by a named operator.", nameof(confirmedMassDeleteBy));
+        var (_, report, error) = await RecordedAsync(connectionId, mode, confirmedMassDeleteBy, ct);
+        if (error is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+        return report!;
+    }
+
+    private async Task<(SyncOutcome Outcome, ODataSyncReport? Report, Exception? Error)> RecordedAsync(Guid connectionId, ODataSyncMode mode,
+        string? confirmedMassDeleteBy, CancellationToken ct)
     {
         var (connection, run) = await db.InTransactionAsync(async token =>
         {
@@ -115,7 +153,8 @@ public sealed class ODataSyncService(
 
         try
         {
-            var report = await RunAsync(connection, ODataSyncMode.Auto, dryRun: false, run.Id, ct);
+            var report = await RunAsync(connection, mode, dryRun: false, run.Id, confirmedMassDeleteBy, ct);
+            report.SyncRunId = run.Id;
             await db.InTransactionAsync(async token =>
             {
                 var tracked = await db.SyncRuns.SingleAsync(r => r.Id == run.Id, token);
@@ -125,7 +164,9 @@ public sealed class ODataSyncService(
                 c.MarkSyncSucceeded(now);
                 await db.SaveChangesAsync(token);
             }, ct);
-            return new SyncOutcome(run.Id, SyncRunResult.Succeeded, report.Complete, report.Records, null);
+            // Attention rules over the connection (own scope and transaction; never fails the load, hence no cancellation token).
+            await attention.AfterLoadAsync(AdapterKind.Accounting1C, succeeded: true, CancellationToken.None);
+            return (new SyncOutcome(run.Id, SyncRunResult.Succeeded, report.Complete, report.Records, null), report, null);
         }
         catch (Exception ex)
         {
@@ -133,15 +174,9 @@ public sealed class ODataSyncService(
             var outcome = await SyncRunFinalizer.FailAsync(db, run.Id, connectionId, ex, 0, time.GetUtcNow(), breakerOptions.Value.FailureThreshold,
                 interruptedByShutdown: ex is OperationCanceledException && shutdown.JobsCancelled);
             if (ex is OperationCanceledException) throw;
-            return outcome;
+            await attention.AfterLoadAsync(AdapterKind.Accounting1C, succeeded: false, CancellationToken.None);
+            return (outcome, null, ex);
         }
-    }
-
-    /// <summary>A load started by hand (DevTools): <paramref name="dryRun"/> writes nothing (no sync run, no packages).</summary>
-    public async Task<ODataSyncReport> RunAsync(Guid connectionId, ODataSyncMode mode, bool dryRun, CancellationToken ct)
-    {
-        var connection = await db.InTransactionAsync(token => LoadConnectionAsync(connectionId, token), ct);
-        return await RunAsync(connection, mode, dryRun, null, ct);
     }
 
     /// <summary>The access test: $metadata and one count with the stored credentials.</summary>
@@ -188,7 +223,8 @@ public sealed class ODataSyncService(
 
     private sealed record Remote(string Ref, string? Version, ODataSource Source);
 
-    private async Task<ODataSyncReport> RunAsync(Connection connection, ODataSyncMode mode, bool dryRun, Guid? runId, CancellationToken ct)
+    private async Task<ODataSyncReport> RunAsync(Connection connection, ODataSyncMode mode, bool dryRun, Guid? runId, string? confirmedMassDeleteBy,
+        CancellationToken ct)
     {
         var watch = Stopwatch.StartNew();
         var profile = ODataProfileResolver.Resolve(connection.Settings, O);
@@ -222,12 +258,12 @@ public sealed class ODataSyncService(
 
             // 1. Keys and versions in the source.
             var remote = new Dictionary<string, Remote>(StringComparer.Ordinal);
-            var consistent = true;
+            var problems = new List<string>();
             foreach (var source in entity.Sources)
             {
                 var filter = Filter(source, organization, full || !isDocument || source.DateProperty is null ? null : DeltaFrom());
-                var (rows, ok) = await ListKeysAsync(client, profile, source, filter, mapper, er, ct);
-                consistent &= ok;
+                var (rows, problem) = await ListKeysAsync(client, profile, source, filter, mapper, full, ct);
+                if (problem is not null) problems.Add($"{source.Resource.Name}: {problem}");
                 foreach (var r in rows)
                     if (!remote.TryAdd(r.Ref, r))
                         er.Warnings.Add($"{source.Resource.Name}: ref listed by two resources of {spec.Name}; the first one is used.");
@@ -250,13 +286,65 @@ public sealed class ODataSyncService(
                 er.Unchanged++;
                 unchanged.Add(r.Ref);
             }
+            er.ActiveStored = full ? stored.Values.Count(s => !s.IsDeleted) : 0;
             if (full) er.MissingInSource = stored.Values.Count(s => !s.IsDeleted && !remote.ContainsKey(s.Ref));
 
-            if (full && !consistent)
+            // A full export may mark records deleted only when the list of keys is known to be complete: every resource said
+            // how many records it has (odata.count, else /$count) and exactly that many keys were collected.
+            var exportFull = full;
+            if (full && problems.Count > 0)
             {
+                exportFull = false;
                 er.Mode = "delta";
-                er.Warnings.Add("The source changed while it was listed (count or duplicate pages); sent as a delta, nothing is marked deleted this time.");
+                foreach (var problem in problems) er.Warnings.Add(problem + "; sent as a delta, nothing is marked deleted this time.");
                 report.Complete = false;
+                logger.LogWarning("OData full export of {Entity} sent as a delta: the list of keys may be incomplete ({Problems})",
+                    spec.Name, string.Join("; ", problems));
+            }
+
+            // Mass deletion guard.
+            JsonObject? marker = null;
+            var guard = O.MassDeleteGuard;
+            if (exportFull && guard.Enabled && er.ActiveStored > 0)
+            {
+                var share = (double)er.MissingInSource / er.ActiveStored;
+                var empty = remote.Count == 0;
+                if (empty || (er.MissingInSource >= guard.MinCount && share > guard.MaxShare))
+                {
+                    var facts = new JsonObject
+                    {
+                        ["entity"] = spec.Name, ["missing"] = er.MissingInSource, ["active"] = er.ActiveStored,
+                        ["share"] = Math.Round(share, 4), ["empty_source"] = empty,
+                        ["max_share"] = guard.MaxShare, ["min_count"] = guard.MinCount,
+                    };
+                    if (confirmedMassDeleteBy is null)
+                    {
+                        exportFull = false;
+                        er.Mode = "delta";
+                        er.MassDeleteBlocked = true;
+                        report.Complete = false;
+                        er.Warnings.Add(empty
+                            ? $"The source returned no records while {er.ActiveStored} are stored; nothing is marked deleted (OData:MassDeleteGuard)."
+                            : $"{er.MissingInSource} of {er.ActiveStored} active records ({share:P0}) are absent from the source; nothing is marked deleted " +
+                              "(OData:MassDeleteGuard). If this is right: DevTools sync-odata --mode full --confirm-mass-delete.");
+                        marker = new JsonObject { ["mass_delete_blocked"] = facts };
+                        logger.LogWarning(
+                            "OData mass deletion held back: connection {ConnectionId}, entity {Entity}, absent {Missing} of {Active} active ({Share:P1}), empty source {Empty}",
+                            connection.Id, spec.Name, er.MissingInSource, er.ActiveStored, share, empty);
+                    }
+                    else
+                    {
+                        er.MassDeleteConfirmed = true;
+                        facts["confirmed_by"] = confirmedMassDeleteBy;
+                        facts["confirmed_at"] = time.GetUtcNow().ToString("O", CultureInfo.InvariantCulture);
+                        facts["via"] = "DevTools sync-odata --confirm-mass-delete";
+                        marker = new JsonObject { ["mass_delete_confirmed"] = facts };
+                        er.Warnings.Add($"Mass deletion confirmed by {confirmedMassDeleteBy}: {er.MissingInSource} of {er.ActiveStored} records will be marked deleted.");
+                        logger.LogWarning(
+                            "OData mass deletion CONFIRMED by {Operator}: connection {ConnectionId}, entity {Entity}, absent {Missing} of {Active} active ({Share:P1})",
+                            confirmedMassDeleteBy, connection.Id, spec.Name, er.MissingInSource, er.ActiveStored, share);
+                    }
+                }
             }
 
             // 3. Read the records to send, map them.
@@ -281,10 +369,10 @@ public sealed class ODataSyncService(
             if (items.Count < toRead.Count)
                 er.Warnings.Add($"{toRead.Count - items.Count} listed records were not returned when read by key (deleted meanwhile?).");
 
-            // 4. Send through the receiver (or count, in a dry run).
-            var exportFull = full && consistent;
+            // 4. Send through the receiver (or count, in a dry run). A held-back export still sends one (possibly empty) delta
+            // package, so that the reason is journaled in ingest_batches.envelope_extra.
             var packages = items.Chunk(Math.Min(PackageItems, ingestOptions.Value.MaxItems)).ToList();
-            if (packages.Count == 0 && exportFull) packages.Add([]);
+            if (packages.Count == 0 && (exportFull || marker is not null)) packages.Add([]);
             er.Packages = packages.Count;
             if (dryRun) continue;
 
@@ -292,7 +380,7 @@ public sealed class ODataSyncService(
             var batchId = $"odata-{runKey}-{spec.Name}";
             for (var i = 0; i < packages.Count; i++)
             {
-                var body = Envelope(spec.Name, batchId, i + 1, exportFull, fullSyncId, i == packages.Count - 1, packages[i]);
+                var body = Envelope(spec.Name, batchId, i + 1, exportFull, fullSyncId, i == packages.Count - 1, packages[i], i == 0 ? marker : null);
                 var response = await ingest.ProcessPulledAsync(connection.Id, body, exportFull && i == 0 ? unchanged : null, ct);
                 Account(er, response, spec.Name);
             }
@@ -332,23 +420,20 @@ public sealed class ODataSyncService(
     /// <summary>
     /// Keys and versions page by page: $top/$skip with $inlinecount=allpages, ordered by the key (stable). Stops on an empty
     /// or short page, at OData:MaxPages, or when a page brings nothing new (a source that ignores $skip would loop).
-    /// Returns false (inconsistent) when the count changed between pages or pages overlapped.
+    /// Returns why the list may be incomplete, or null: the count changed between pages, pages overlapped, the number of
+    /// keys differs from odata.count, or — for a full export without odata.count — from /$count, or /$count is unavailable.
     /// </summary>
-    private async Task<(List<Remote> Rows, bool Consistent)> ListKeysAsync(IODataClient client, ODataProfile profile, ODataSource source, string? filter,
-        ODataRecordMapper mapper, ODataEntityReport er, CancellationToken ct)
+    private async Task<(List<Remote> Rows, string? Problem)> ListKeysAsync(IODataClient client, ODataProfile profile, ODataSource source, string? filter,
+        ODataRecordMapper mapper, bool full, CancellationToken ct)
     {
         var rows = new List<Remote>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var consistent = true;
+        string? problem = null;
         long? firstCount = null;
         var size = Math.Max(1, O.PageSize);
         for (var page = 0; ; page++)
         {
-            if (page >= O.MaxPages)
-            {
-                er.Warnings.Add($"{source.Resource.Name}: stopped at OData:MaxPages ({O.MaxPages}).");
-                return (rows, false);
-            }
+            if (page >= O.MaxPages) return (rows, $"stopped at OData:MaxPages ({O.MaxPages})");
             var result = await client.GetAsync(new ODataQuery(source.Resource.Name)
             {
                 Filter = filter,
@@ -362,7 +447,7 @@ public sealed class ODataSyncService(
             if (result.Count is { } count)
             {
                 firstCount ??= count;
-                if (count != firstCount) consistent = false;
+                if (count != firstCount) problem ??= $"odata.count changed between pages ({firstCount} -> {count})";
             }
             var fresh = 0;
             foreach (var record in result.Items)
@@ -370,7 +455,7 @@ public sealed class ODataSyncService(
                 if (mapper.KeyOf(record) is not { } key) continue;
                 if (!seen.Add(key))
                 {
-                    consistent = false;
+                    problem ??= "pages repeated records";
                     continue;
                 }
                 fresh++;
@@ -381,8 +466,24 @@ public sealed class ODataSyncService(
                 throw new ODataProtocolException($"OData {source.Resource.Name}: page {page + 1} repeated earlier records ($skip ignored?); listing stopped.");
             if (firstCount is { } total && (page + 1) * (long)size >= total) break;
         }
-        if (firstCount is { } expected && rows.Count != expected) consistent = false;
-        return (rows, consistent);
+        if (firstCount is { } expected)
+        {
+            if (rows.Count != expected) problem ??= $"{rows.Count} keys listed, odata.count says {expected}";
+        }
+        else if (full)
+        {
+            // No odata.count: a page may have been cut silently, so the total is asked separately.
+            try
+            {
+                var total = await client.CountAsync(source.Resource.Name, filter, ct);
+                if (total != rows.Count) problem ??= $"no odata.count; {rows.Count} keys listed, /$count says {total}";
+            }
+            catch (AdapterException ex) when (ex is not AdapterAuthenticationException)
+            {
+                problem ??= "no odata.count and /$count is not available";
+            }
+        }
+        return (rows, problem);
     }
 
     /// <summary>
@@ -457,7 +558,11 @@ public sealed class ODataSyncService(
                         && (b.Status == IngestBatchStatus.Processed || b.Status == IngestBatchStatus.ProcessedWithErrors))
             .MaxAsync(b => (DateTimeOffset?)b.ReceivedAt, token), ct);
 
-    private byte[] Envelope(string entity, string batchId, int sequence, bool full, string? fullSyncId, bool last, IEnumerable<JsonObject> items)
+    /// <summary>Envelope field (kept in ingest_batches.envelope_extra) with what the OData loader decided about deletions.</summary>
+    public const string MarkerField = "synect_odata";
+
+    private byte[] Envelope(string entity, string batchId, int sequence, bool full, string? fullSyncId, bool last, IEnumerable<JsonObject> items,
+        JsonObject? marker)
     {
         var envelope = new JsonObject
         {
@@ -476,6 +581,7 @@ public sealed class ODataSyncService(
             envelope["full_sync_id"] = fullSyncId;
             envelope["is_last_batch"] = last;
         }
+        if (marker is not null) envelope[MarkerField] = marker.DeepClone();
         return JsonSerializer.SerializeToUtf8Bytes(envelope);
     }
 
