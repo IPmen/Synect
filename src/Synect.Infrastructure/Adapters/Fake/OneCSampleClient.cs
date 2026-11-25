@@ -387,6 +387,60 @@ public sealed class OneCSampleScenarios(OneCSampleClient client)
             r => r.Status == HttpStatusCode.BadRequest && r.Get("error") == "unsupported_schema_version", ct: ct);
     }
 
+    /// <summary>
+    /// A small pharmacy chain for demos of the stock and price tools: 3 pharmacies and a central warehouse, 7 groups, 36 medicines and
+    /// goods with real-looking names, a default retail and a wholesale price type (3 items have no retail price), and deterministic stock
+    /// with in-stock, low, zero and negative rows. Fixed refs ("ph-"): a second run answers "unchanged".
+    /// </summary>
+    public async Task PharmacyAsync(CancellationToken ct = default)
+    {
+        var at = new DateTimeOffset(2026, 11, 25, 9, 0, 0, TimeSpan.FromHours(5));
+        var b = "pharmacy-" + _run;
+        string[] groups = ["Обезболивающие", "Простуда и грипп", "Витамины", "ЖКТ", "Сердце и давление", "Антибиотики", "Гигиена"];
+        (string Name, int Group)[] goods =
+        [
+            ("Парацетамол 500 мг №10", 0), ("Ибупрофен 200 мг №20", 0), ("Нурофен Экспресс 200 мг №12", 0), ("Анальгин 500 мг №10", 0),
+            ("Но-шпа 40 мг №24", 0), ("Цитрамон П №10", 0),
+            ("Терафлю порошок №10", 1), ("Колдрекс Хотрем №5", 1), ("Арбидол 100 мг №20", 1), ("Ингавирин 90 мг №7", 1),
+            ("Стрепсилс с ментолом №24", 1), ("Називин спрей 0,05%", 1),
+            ("Витамин C 500 мг №30", 2), ("Компливит №60", 2), ("Аевит №20", 2), ("Магне B6 №50", 2), ("Витамин D3 2000 МЕ №60", 2),
+            ("Смекта пакетики №10", 3), ("Мезим форте №20", 3), ("Линекс №16", 3), ("Омепразол 20 мг №30", 3), ("Активированный уголь №10", 3),
+            ("Каптоприл 25 мг №40", 4), ("Эналаприл 10 мг №20", 4), ("Валидол 60 мг №10", 4), ("Кардиомагнил 75 мг №100", 4),
+            ("Амоксициллин 500 мг №16", 5), ("Азитромицин 500 мг №3", 5), ("Цефтриаксон 1 г флакон", 5), ("Ципрофлоксацин 500 мг №10", 5),
+            ("Маска медицинская №50", 6), ("Бинт стерильный 7×14", 6), ("Антисептик для рук 100 мл", 6), ("Пластырь бактерицидный №20", 6),
+            ("Термометр электронный", 6), ("Шприц 5 мл №10", 6),
+        ];
+        string[] warehouses = ["Аптека №1 Чиланзар", "Аптека №2 Юнусабад", "Аптека №3 Мирабад", "Центральный склад"];
+        static decimal Retail(int i) => 8_000m + (i * 3_700 % 60_000) / 100 * 100;
+        var withoutRetail = new HashSet<int> { 14, 29, 35 };
+
+        await StepAsync("pharmacy: groups", "accepted", client.Envelope("categories", b + "-c", 1,
+            groups.Select((g, i) => OneCSampleClient.Category($"ph-cat-{i}", g, null, at))), r => r.Int("rejected") == 0, ct: ct);
+        await StepAsync("pharmacy: price types", "accepted", client.Envelope("price_types", b + "-t", 1, new[]
+        {
+            OneCSampleClient.PriceType("ph-pt-retail", "Розничная", true, at), OneCSampleClient.PriceType("ph-pt-wholesale", "Оптовая", false, at),
+        }), r => r.Int("rejected") == 0, ct: ct);
+        await StepAsync("pharmacy: warehouses", "accepted", client.Envelope("warehouses", b + "-w", 1,
+            warehouses.Select((w, i) => OneCSampleClient.Warehouse($"ph-wh-{i}", w, at))), r => r.Int("rejected") == 0, ct: ct);
+        await StepAsync("pharmacy: items", "accepted", client.Envelope("items", b + "-i", 1,
+            goods.Select((g, i) => OneCSampleClient.CatalogItem($"ph-it-{i}", g.Name, $"ph-cat-{g.Group}", at, "Goods", OneCSampleClient.Barcode(900 + i)))),
+            r => r.Int("rejected") == 0, ct: ct);
+        var prices = goods.SelectMany((_, i) =>
+        {
+            var wholesale = Math.Round(Retail(i) * 0.82m / 100m) * 100m;
+            var list = new List<Dictionary<string, object?>> { OneCSampleClient.Price($"ph-it-{i}", "ph-pt-wholesale", wholesale, at) };
+            if (!withoutRetail.Contains(i)) list.Add(OneCSampleClient.Price($"ph-it-{i}", "ph-pt-retail", Retail(i), at));
+            return list;
+        });
+        await StepAsync("pharmacy: prices", "accepted", client.Envelope("prices", b + "-p", 1, prices), r => r.Int("rejected") == 0, ct: ct);
+        var stock = goods.SelectMany((_, i) => warehouses.Select((_, w) =>
+        {
+            var quantity = w == 3 ? 40m + i * 5 % 160 : (i * 7 + w * 13) % 60 - 5;   // pharmacies: a few negative, zero and low rows
+            return OneCSampleClient.Stock($"ph-it-{i}", $"ph-wh-{w}", quantity, at, reserved: w < 3 && quantity > 10 ? 1m : null);
+        }));
+        await StepAsync("pharmacy: stock", "accepted", client.Envelope("stock", b + "-s", 1, stock), r => r.Int("rejected") == 0, ct: ct);
+    }
+
     public sealed record CatalogMinuteResult(int Packages, int Items, int Accepted, int Unchanged, int Rejected, TimeSpan P50, TimeSpan P95, TimeSpan Max);
 
     /// <summary>

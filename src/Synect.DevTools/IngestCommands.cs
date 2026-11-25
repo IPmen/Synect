@@ -79,8 +79,8 @@ public sealed class IngestCommands(IServiceProvider services)
     public async Task<int> SendSampleAsync(Guid tenantId, CliArgs options)
     {
         var scenario = (options.Get("scenario") ?? "basic").ToLowerInvariant();
-        if (scenario is not ("basic" or "messy" or "catalog-minute" or "large" or "mirror" or "golden"))
-            throw new ArgumentException("--scenario must be basic, messy, catalog-minute, large, mirror or golden");
+        if (scenario is not ("basic" or "messy" or "catalog-minute" or "large" or "mirror" or "golden" or "pharmacy"))
+            throw new ArgumentException("--scenario must be basic, messy, catalog-minute, large, mirror, golden or pharmacy");
         var url = options.Get("url") ?? "http://localhost:5299";
         string? tin;
         await using (var scope = services.CreateAsyncScope())
@@ -128,7 +128,8 @@ public sealed class IngestCommands(IServiceProvider services)
                 return r.Rejected == 0 ? 0 : 1;
             }
             if (scenario is "mirror" or "golden") return await SendMirrorAsync(tenantId, new OneCSampleClient(http, key, tin), scenario, options);
-            if (scenario == "basic") await scenarios.BasicAsync();
+            if (scenario == "pharmacy") await scenarios.PharmacyAsync();
+            else if (scenario == "basic") await scenarios.BasicAsync();
             else await scenarios.MessyAsync();
             foreach (var s in scenarios.Steps)
             {
