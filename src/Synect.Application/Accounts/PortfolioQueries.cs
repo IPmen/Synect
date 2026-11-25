@@ -65,7 +65,7 @@ public sealed record OrganizationSummary(
 /// edo_documents); nothing is recalculated on the fly. One transaction with the analytics timeout per organization.
 /// </summary>
 public sealed class PortfolioQueries(AnalyticsContext ctx, IOptions<AccountsOptions> options, IOptions<ReconciliationOptions> reconciliation, TimeProvider time,
-    IOptions<Ingest.IngestOptions> ingest)
+    IOptions<Ingest.IngestOptions> ingest, IOptions<OData.ODataOptions> odata)
 {
     public Task<AnalyticsResult<OrganizationSummary>> SummaryAsync(bool withWorkload, CancellationToken ct) =>
         ctx.RunAsync(async token =>
@@ -136,7 +136,8 @@ public sealed class PortfolioQueries(AnalyticsContext ctx, IOptions<AccountsOpti
                 LastAttemptAt = attemptBy.TryGetValue(c.Id, out var attempt) ? attempt : null,
                 CredentialsSet = withCredentials.Contains(c.Id),
                 IngestKeyPrefix = keyPrefixes.GetValueOrDefault(c.Id),
-                FullSyncs = c.IsOneCOData ? fullSyncs.Where(s => s.ConnectionId == c.Id).ToList() : null,
+                // Every entity of the connection's profile, also those never exported in full (last_full_sync_at null).
+                FullSyncs = c.IsOneCOData ? OData.ODataFullSyncStates.ForProfile(c, fullSyncs, odata.Value) : null,
             }).ToList();
             return new OrganizationSummary(list, newBy, openCritical, unmatched, awaiting, days);
         }, ct);

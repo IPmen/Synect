@@ -172,4 +172,57 @@ public sealed partial class ODataSyncTests
         await Host.InTenantAsync(extension, sp => sp.GetRequiredService<AttentionEvaluator>().EvaluateAsync([AttentionCategory.Connection], CancellationToken.None));
         Assert.Empty(await OverdueAsync(extension));
     }
+
+    [Fact]
+    public async Task Entities_never_exported_in_full_are_shown_and_become_overdue_from_the_activation()
+    {
+        RequirePostgres();
+        var (tenant, connection, server) = await NewAsync("OData first sync fails");
+        // The connection's own profile: counterparties, contracts, bank accounts (in this order).
+        var profile = System.Text.Json.Nodes.JsonNode.Parse(ODataProfile.BuiltIn["clobus-bp-uz"],
+            documentOptions: new System.Text.Json.JsonDocumentOptions { CommentHandling = System.Text.Json.JsonCommentHandling.Skip })!.AsObject();
+        var three = new System.Text.Json.Nodes.JsonArray(profile["entities"]!.AsArray().Take(3).Select(e => e!.DeepClone()).ToArray());
+        profile["name"] = "three-entities";
+        profile["entities"] = three;
+        await f.ExecAdminAsync($"UPDATE connections SET settings = settings || jsonb_build_object('profile_json', '{profile.ToJsonString().Replace("'", "''")}'::jsonb) WHERE id = '{connection}'");
+
+        // The first load fails on the second entity: counterparties complete, contracts fail, bank accounts are never reached.
+        server.FailWhen = (resource, query) => resource == "Catalog_ДоговорыКонтрагентов" && query.Contains("$select=Ref_Key,DataVersion", StringComparison.Ordinal)
+            ? FakeODataServer.Status(System.Net.HttpStatusCode.ServiceUnavailable)
+            : null;
+        await Assert.ThrowsAsync<Synect.Application.Adapters.AdapterTransientException>(() => AutoAsync(tenant, connection));
+
+        var states = (await Host.InTenantAsync(tenant, sp => sp.GetRequiredService<PortfolioQueries>().SummaryAsync(false, CancellationToken.None))).Data!
+            .Connections.Single(c => c.ConnectionId == connection).FullSyncs!;
+        Assert.Equal(["counterparties", "contracts", "bank_accounts"], states.Select(x => x.Entity));
+        Assert.NotNull(states[0].LastFullSyncAt);
+        Assert.Equal((null, ODataFullSyncStates.OutcomeError), (states[1].LastFullSyncAt, states[1].LastOutcome));
+        Assert.Equal((null, null), (states[2].LastFullSyncAt, states[2].LastAttemptAt)); // shown although the journal has nothing for it
+
+        // Below the threshold: nothing; past it (counted from the activation, the connection's created_at here): both entities.
+        Task Evaluate() => Host.InTenantAsync(tenant, sp => sp.GetRequiredService<AttentionEvaluator>().EvaluateAsync([AttentionCategory.Connection], CancellationToken.None));
+        // Two days later the scheduled load fails the same way; counterparties complete again, so only the other two can be overdue.
+        Host.Time.Advance(TimeSpan.FromDays(2));
+        await Assert.ThrowsAsync<Synect.Application.Adapters.AdapterTransientException>(() => AutoAsync(tenant, connection));
+        await Evaluate();
+        Assert.Empty(await OverdueAsync(tenant));
+        Host.Time.Advance(TimeSpan.FromDays(1) + TimeSpan.FromHours(1));
+        await Evaluate();
+        var open = (await OverdueAsync(tenant)).Select(i => System.Text.Json.JsonDocument.Parse(i.Details).RootElement).ToList();
+        Assert.Equal(["bank_accounts", "contracts"], open.Select(d => d.GetProperty("entity").GetString()).Order());
+        Assert.All(open, d =>
+        {
+            Assert.True(d.GetProperty("never_completed").GetBoolean());
+            Assert.StartsWith("the full export of this entity has never completed", d.GetProperty("last_failure").GetString());
+        });
+        Assert.Contains("AdapterTransientException", open.Single(d => d.GetProperty("entity").GetString() == "contracts").GetProperty("last_failure").GetString());
+        Assert.Contains("never attempted", open.Single(d => d.GetProperty("entity").GetString() == "bank_accounts").GetProperty("last_failure").GetString());
+
+        // A completed full export of both closes both items (the load itself re-evaluates the connection rules).
+        server.FailWhen = null;
+        var report = await AutoAsync(tenant, connection);
+        Assert.Equal(("full", "full"), (E(report, "contracts").Mode, E(report, "bank_accounts").Mode));
+        Assert.All(await OverdueAsync(tenant), i => Assert.Equal("Resolved", i.Status));
+        Assert.Equal(2, (await OverdueAsync(tenant)).Count);
+    }
 }

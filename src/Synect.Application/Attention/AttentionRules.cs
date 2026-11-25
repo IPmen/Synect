@@ -195,29 +195,41 @@ internal static class AttentionRuleSet
     }
 
     /// <summary>
-    /// 1C:Fresh over OData only (the extension is excluded): an entity whose last COMPLETED full export (or, without one, the
-    /// creation of the connection) is older than OData:FullSyncOverdueDays. Deltas do not close it; a completed full export does.
+    /// 1C:Fresh over OData only (the extension is excluded): an entity of the connection's profile whose last COMPLETED full
+    /// export is older than OData:FullSyncOverdueDays; an entity that never completed one is counted from the activation of the
+    /// connection: status_changed_at when it became Active again, else created_at. Deltas do not close it; a completed full
+    /// export does.
     /// </summary>
     private static async Task<List<Finding>> FullSyncOverdueAsync(RuleContext c, CancellationToken ct)
     {
         var connections = (await c.Db.Connections.AsNoTracking().Where(x => x.Status == ConnectionStatus.Active && x.AdapterKind == AdapterKind.Accounting1C)
             .OrderBy(x => x.Id).ToListAsync(ct)).Where(x => x.IsOneCOData).ToList();
         if (connections.Count == 0) return [];
-        var days = Math.Max(1, (c.OData ?? new OData.ODataOptions()).FullSyncOverdueDays);
+        var options = c.OData ?? new OData.ODataOptions();
+        var days = Math.Max(1, options.FullSyncOverdueDays);
         var states = await OData.ODataFullSyncStates.LoadAsync(c.Db, c.TenantId, null, ct);
         var result = new List<Finding>();
         foreach (var x in connections)
-            foreach (var s in states.Where(s => s.ConnectionId == x.Id && (s.LastFullSyncAt ?? x.CreatedAt) < c.Now.AddDays(-days)))
+        {
+            // Active connections only: status_changed_at is when the last change made it Active (null: Active since created).
+            var activatedAt = x.StatusChangedAt ?? x.CreatedAt;
+            foreach (var s in OData.ODataFullSyncStates.ForProfile(x, states, options).Where(s => (s.LastFullSyncAt ?? activatedAt) < c.Now.AddDays(-days)))
             {
+                var never = s.LastFullSyncAt is null;
                 var entry = ConnectionEntry(x);
                 entry["entity"] = s.Entity;
                 entry["overdue_days"] = days;
+                entry["never_completed"] = never;
+                entry["counted_from"] = never ? activatedAt : s.LastFullSyncAt;
                 entry["last_full_sync_at"] = s.LastFullSyncAt;
                 entry["last_attempt_at"] = s.LastAttemptAt;
                 entry["last_outcome"] = s.LastOutcome;
-                entry["last_failure"] = s.LastAttemptFailed ? s.LastReason ?? "the full export did not complete" : null;
+                entry["last_failure"] = never
+                    ? "the full export of this entity has never completed" + (s.LastReason is { } r ? $"; last attempt: {r}" : s.LastAttemptAt is null ? "; it was never attempted" : "")
+                    : s.LastAttemptFailed ? s.LastReason ?? "the full export did not complete" : null;
                 result.Add(new Finding($"{x.Id}:{s.Entity}", "connection", x.Id.ToString(), entry));
             }
+        }
         return result;
     }
 

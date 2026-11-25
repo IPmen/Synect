@@ -70,6 +70,30 @@ public static class ODataFullSyncStates
             """).ToListAsync(ct);
 
     /// <summary>
+    /// The states of one connection for every entity of its profile (an entity with no package yet gets a state with every
+    /// time null), followed by any entity the journal has that the profile no longer lists. An unreadable profile leaves the
+    /// journal states only.
+    /// </summary>
+    public static List<ODataFullSyncState> ForProfile(Synect.Domain.Sync.Connection connection, IEnumerable<ODataFullSyncState> states, ODataOptions options)
+    {
+        var own = states.Where(s => s.ConnectionId == connection.Id).ToList();
+        List<string> entities;
+        try
+        {
+            entities = ODataProfileResolver.Resolve(connection.Settings, options).Entities
+                .Select(e => Ingest.IngestSchema.Find(e.Entity)!.Name).Distinct(StringComparer.Ordinal).ToList();
+        }
+        catch (Exception ex) when (ex is ODataProfileException or System.Text.Json.JsonException)
+        {
+            return own;
+        }
+        var byEntity = own.ToDictionary(s => s.Entity, StringComparer.Ordinal);
+        var result = entities.Select(e => byEntity.GetValueOrDefault(e) ?? new ODataFullSyncState { ConnectionId = connection.Id, Entity = e }).ToList();
+        result.AddRange(own.Where(s => !entities.Contains(s.Entity, StringComparer.Ordinal)));
+        return result;
+    }
+
+    /// <summary>
     /// Auto mode for one entity: full when its last completed full export is at least FullSyncInterval − FullSyncTolerance old
     /// (or there is none), unless the last attempt failed less than FullRetryAfter ago (then a delta).
     /// </summary>
