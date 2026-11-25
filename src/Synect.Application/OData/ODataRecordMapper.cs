@@ -27,6 +27,12 @@ public sealed class ODataLookupCache
         if (!_values.ContainsKey(resource)) _values[resource] = new(StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>Every record read of a resource: key and properties (empty when the resource was not read).</summary>
+    public IEnumerable<(string Key, IReadOnlyDictionary<string, string?> Values)> All(string resource) =>
+        _values.TryGetValue(resource, out var byKey)
+            ? byKey.Select(kv => (kv.Key, (IReadOnlyDictionary<string, string?>)kv.Value))
+            : [];
+
     public string? Get(string resource, string key, IEnumerable<string> properties)
     {
         if (!_values.TryGetValue(resource, out var byKey) || !byKey.TryGetValue(key, out var values)) return null;
@@ -100,6 +106,22 @@ public sealed partial class ODataRecordMapper(ODataProfile profile, ODataLookupC
         return item;
     }
 
+    /// <summary>
+    /// A row of a register's virtual table (snapshot entities): only the mapped fields; no ref, deletion mark or version
+    /// (the receiver keys the row by its key fields).
+    /// </summary>
+    public JsonObject MapRow(JsonElement record, ODataSource source)
+    {
+        var item = new JsonObject();
+        var where = source.VirtualTable is { } vt ? $"{source.Resource.Name}/{vt.Name}" : source.Resource.Name;
+        foreach (var (field, map) in source.Fields)
+        {
+            var value = Value(record, record, map, where);
+            if (value is not null) item[field] = value;
+        }
+        return item;
+    }
+
     private static void Renumber(JsonArray rows)
     {
         for (var i = 0; i < rows.Count; i++)
@@ -111,17 +133,31 @@ public sealed partial class ODataRecordMapper(ODataProfile profile, ODataLookupC
         if (map.Const is not null) return map.Const.DeepClone();
         if (map.SumOf is { } sums) return SumOf(header, sums);
 
-        var raw = Get(record, map.Source!);
-        if (raw is null)
+        JsonElement? raw;
+        if (map.SourceAny is { Count: > 0 } candidates)
         {
-            MissingProperties.Add($"{where}.{map.Source}");
-            return null;
+            raw = null;
+            var present = false;
+            foreach (var name in candidates)
+            {
+                if (Get(record, name) is not { } candidate) continue;
+                present = true;
+                if (IsEmpty(candidate) || (map.OnlyType is { } t && !HasType(record, name, t))) continue;
+                raw = candidate;
+                break;
+            }
+            if (!present) MissingProperties.Add($"{where}.{string.Join("|", candidates)}");
+            if (raw is null) return null;
         }
-        if (map.OnlyType is { } type)
+        else
         {
-            // TODO(verify-real): a composite reference is assumed to come as "{name}" (GUID) plus "{name}_Type" ("StandardODATA.Catalog_…").
-            var actual = Get(record, map.Source + "_Type");
-            if (actual is not { ValueKind: JsonValueKind.String } t || !string.Equals(t.GetString(), type, StringComparison.Ordinal)) return null;
+            raw = Get(record, map.Source!);
+            if (raw is null)
+            {
+                MissingProperties.Add($"{where}.{map.Source}");
+                return null;
+            }
+            if (map.OnlyType is { } type && !HasType(record, map.Source!, type)) return null;
         }
         if (IsEmpty(raw.Value) && map.Fallback is { } fallback) raw = Get(record, fallback);
         if (raw is null || IsEmpty(raw.Value)) return null;
@@ -191,6 +227,13 @@ public sealed partial class ODataRecordMapper(ODataProfile profile, ODataLookupC
         }
     }
 
+    /// <summary>
+    /// TODO(verify-real): a composite reference (and a subconto of an accounting register) is assumed to come as "{name}"
+    /// (GUID) plus "{name}_Type" ("StandardODATA.Catalog_…").
+    /// </summary>
+    private static bool HasType(JsonElement record, string name, string type) =>
+        Get(record, name + "_Type") is { ValueKind: JsonValueKind.String } t && string.Equals(t.GetString(), type, StringComparison.Ordinal);
+
     private static JsonNode? SumOf(JsonElement header, List<ODataSumOf> sums)
     {
         decimal total = 0;
@@ -254,7 +297,7 @@ public sealed partial class ODataRecordMapper(ODataProfile profile, ODataLookupC
     };
 
     /// <summary>Decimal string with a point and no exponent, trailing zeros removed ("1234.5").</summary>
-    private static string Format(decimal d) => (d / 1.000000000000000000000000000000000m).ToString(CultureInfo.InvariantCulture);
+    public static string Format(decimal d) => (d / 1.000000000000000000000000000000000m).ToString(CultureInfo.InvariantCulture);
 
     [GeneratedRegex(@"^НДС(\d{1,2})(_\d+)?$")]
     private static partial Regex VatEnum();

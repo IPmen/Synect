@@ -47,6 +47,14 @@ public sealed class ODataSumOf
 public sealed class ODataFieldMap
 {
     [JsonPropertyName("source")] public string? Source { get; set; }
+
+    /// <summary>
+    /// Several candidate properties instead of <see cref="Source"/>: the first present, non-empty one (with
+    /// <see cref="OnlyType"/>: the first whose "{name}_Type" matches). For subconto of an accounting register, whose order
+    /// depends on the account: ExtDimension1, ExtDimension2, ExtDimension3.
+    /// </summary>
+    [JsonPropertyName("source_any")] public List<string>? SourceAny { get; set; }
+
     [JsonPropertyName("const")] public JsonNode? Const { get; set; }
     [JsonPropertyName("transform")] public string Transform { get; set; } = "string";
     [JsonPropertyName("map")] public Dictionary<string, string>? Map { get; set; }
@@ -83,10 +91,48 @@ public sealed class ODataChildren
     [JsonPropertyName("tables")] public List<ODataChildTable> Tables { get; set; } = [];
 }
 
+/// <summary>
+/// A parameter of a virtual table. type "condition" (default): a filter expression passed as a quoted string, with the
+/// placeholders {organization} (guid'…' of settings.organization_key; without it the parameter is left out) and {accounts}
+/// (see <see cref="ODataAccounts"/>). type "datetime": only the placeholders {today_start} or {today_end} (local date of
+/// the application).
+/// </summary>
+public sealed class ODataParameter
+{
+    [JsonPropertyName("value")] public string Value { get; set; } = string.Empty;
+    [JsonPropertyName("type")] public string Type { get; set; } = "condition";
+    [JsonPropertyName("verify")] public bool Verify { get; set; }
+}
+
+/// <summary>
+/// Accounts of a chart of accounts by code, for the {accounts} placeholder: "Account_Key eq guid'…' or …". A code ending in
+/// '*' takes every account whose code starts with the rest (e.g. "29*"). Codes are matched against the Code property of
+/// <see cref="Chart"/>, read once per load.
+/// </summary>
+public sealed class ODataAccounts
+{
+    [JsonPropertyName("chart")] public string Chart { get; set; } = string.Empty;
+    [JsonPropertyName("property")] public string Property { get; set; } = "Account_Key";
+    [JsonPropertyName("codes")] public List<string> Codes { get; set; } = [];
+    [JsonPropertyName("verify")] public bool Verify { get; set; }
+}
+
 /// <summary>One OData resource feeding an entity of the receiver (documents come from two: sales and purchases).</summary>
 public sealed class ODataSource
 {
     [JsonPropertyName("resource")] public ODataNamed Resource { get; set; } = new();
+
+    /// <summary>Snapshot entities: the virtual table of the register (Balance, SliceLast, …).</summary>
+    [JsonPropertyName("virtual_table")] public ODataNamed? VirtualTable { get; set; }
+
+    /// <summary>Parameters of <see cref="VirtualTable"/> by name (Period, Condition, AccountCondition, …).</summary>
+    [JsonPropertyName("parameters")] public Dictionary<string, ODataParameter>? Parameters { get; set; }
+
+    [JsonPropertyName("accounts")] public ODataAccounts? Accounts { get; set; }
+
+    /// <summary>Snapshot entities: $orderby for paging (properties of the virtual table); none by default.</summary>
+    [JsonPropertyName("order_by")] public string? OrderBy { get; set; }
+
     [JsonPropertyName("filter")] public ODataFilter? Filter { get; set; }
 
     /// <summary>
@@ -106,6 +152,26 @@ public sealed class ODataEntityMap
 {
     /// <summary>Entity of the receiver (IngestSchema): counterparties, contracts, bank_accounts, documents, bank_documents.</summary>
     [JsonPropertyName("entity")] public string Entity { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The client may not publish it: when a resource of the entity answers 404, or none of its accounts exists, the entity
+    /// is skipped with a warning (the load goes on and stays complete) and it is not counted by the overdue rule until it has
+    /// been loaded at least once.
+    /// </summary>
+    [JsonPropertyName("optional")] public bool Optional { get; set; }
+
+    /// <summary>
+    /// A register read as a whole: rows of a virtual table (no Ref_Key, no DataVersion), grouped by the receiver's key with
+    /// numeric fields summed, sent as a full export every load (current-state tables: absent rows removed; dated balances:
+    /// the date of the load replaced). For entities not keyed by ref (stock, prices, settlement_balances, bank_account_balances).
+    /// </summary>
+    [JsonPropertyName("snapshot")] public bool Snapshot { get; set; }
+
+    /// <summary>
+    /// Snapshot: rows with the same receiver key. "sum" (default): numeric fields added (balances by batch, by settlement
+    /// document). "first": the first row is kept and the others counted in a warning (prices by an extra dimension).
+    /// </summary>
+    [JsonPropertyName("duplicates")] public string Duplicates { get; set; } = "sum";
 
     [JsonPropertyName("sources")] public List<ODataSource> Sources { get; set; } = [];
 }
@@ -156,12 +222,18 @@ public sealed class ODataProfile
         foreach (var e in Entities)
         {
             var spec = IngestSchema.Find(e.Entity) ?? throw new ODataProfileException($"Profile {origin}: unknown entity '{e.Entity}'.");
-            if (!spec.HasRef) throw new ODataProfileException($"Profile {origin}: entity '{e.Entity}' is not keyed by ref.");
+            if (e.Snapshot && spec.HasRef)
+                throw new ODataProfileException($"Profile {origin}: entity '{e.Entity}' is keyed by ref; a snapshot is for balances, stock and prices.");
+            if (!e.Snapshot && !spec.HasRef)
+                throw new ODataProfileException($"Profile {origin}: entity '{e.Entity}' is not keyed by ref; read it as a snapshot of a register.");
             if (e.Sources.Count == 0) throw new ODataProfileException($"Profile {origin}: entity '{e.Entity}' has no sources.");
+            if (e.Duplicates is not ("sum" or "first"))
+                throw new ODataProfileException($"Profile {origin}: entity '{e.Entity}': duplicates is sum or first.");
             var fields = spec.Fields.Select(f => f.Name).ToHashSet(StringComparer.Ordinal);
             foreach (var s in e.Sources)
             {
                 if (!ODataUrl.IsName(s.Resource.Name)) throw new ODataProfileException($"Profile {origin}: '{s.Resource.Name}' is not a valid resource name.");
+                CheckSnapshotSource(origin, e, s);
                 foreach (var (field, map) in s.Fields)
                 {
                     if (!fields.Contains(field) && field != "data_version")
@@ -191,14 +263,64 @@ public sealed class ODataProfile
     private static readonly HashSet<string> Transforms =
         ["string", "ref", "date", "money", "decimal", "int", "bool", "not", "vat_rate", "enum", "currency", "amount_with_vat"];
 
+    public static readonly IReadOnlySet<string> Placeholders = new HashSet<string>(StringComparer.Ordinal) { "{organization}", "{accounts}" };
+
+    private static void CheckSnapshotSource(string origin, ODataEntityMap e, ODataSource s)
+    {
+        var where = $"Profile {origin}: {e.Entity} ({s.Resource.Name})";
+        if (!e.Snapshot)
+        {
+            if (s.VirtualTable is not null || s.Parameters is not null || s.Accounts is not null || s.OrderBy is not null)
+                throw new ODataProfileException($"{where}: virtual_table, parameters, accounts and order_by belong to a snapshot entity.");
+            return;
+        }
+        if (s.Children is not null || s.DateProperty is not null)
+            throw new ODataProfileException($"{where}: a snapshot has neither children nor date_property.");
+        if (s.VirtualTable is { } vt && !ODataUrl.VirtualTables.Contains(vt.Name))
+            throw new ODataProfileException($"{where}: '{vt.Name}' is not a supported virtual table ({string.Join(", ", ODataUrl.VirtualTables)}).");
+        if (s.Parameters is { Count: > 0 } && s.VirtualTable is null)
+            throw new ODataProfileException($"{where}: parameters need a virtual_table.");
+        foreach (var (name, p) in s.Parameters ?? [])
+        {
+            if (!ODataUrl.IsName(name)) throw new ODataProfileException($"{where}: '{name}' is not a valid parameter name.");
+            switch (p.Type)
+            {
+                case "datetime" when p.Value is "{today_start}" or "{today_end}":
+                    break;
+                case "datetime":
+                    throw new ODataProfileException($"{where}: parameter {name} of type datetime is {{today_start}} or {{today_end}}.");
+                case "condition":
+                    if (string.IsNullOrWhiteSpace(p.Value)) throw new ODataProfileException($"{where}: parameter {name} is empty.");
+                    foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(p.Value, @"\{[^}]*\}"))
+                        if (!Placeholders.Contains(m.Value)) throw new ODataProfileException($"{where}: parameter {name}: unknown placeholder {m.Value}.");
+                    if (p.Value.Contains("{accounts}", StringComparison.Ordinal) && s.Accounts is null)
+                        throw new ODataProfileException($"{where}: parameter {name} uses {{accounts}} without accounts.");
+                    break;
+                default:
+                    throw new ODataProfileException($"{where}: parameter {name} has an unknown type '{p.Type}'.");
+            }
+        }
+        if (s.Accounts is { } a)
+        {
+            if (!ODataUrl.IsName(a.Chart) || !ODataUrl.IsName(a.Property) || a.Codes.Count == 0
+                || a.Codes.Any(c => string.IsNullOrWhiteSpace(c) || c.TrimEnd('*').Length == 0 || c.IndexOf('*') is >= 0 and var i && i != c.Length - 1))
+                throw new ODataProfileException($"{where}: accounts need a chart, a property and codes (a '*' only at the end).");
+        }
+        if (s.OrderBy is { } order)
+            foreach (var o in order.Split(','))
+                if (!ODataUrl.IsName(o.Trim().Split(' ')[0])) throw new ODataProfileException($"{where}: order_by '{order}' is not valid.");
+    }
+
     private static void CheckMap(string origin, string entity, string field, ODataFieldMap map)
     {
         if (!Transforms.Contains(map.Transform))
             throw new ODataProfileException($"Profile {origin}: {entity}.{field} has an unknown transform '{map.Transform}'.");
-        foreach (var n in new[] { map.Source, map.Fallback, map.VatSource, map.HeaderFlag }.OfType<string>())
+        foreach (var n in new[] { map.Source, map.Fallback, map.VatSource, map.HeaderFlag }.OfType<string>().Concat(map.SourceAny ?? []))
             if (!ODataUrl.IsName(n)) throw new ODataProfileException($"Profile {origin}: {entity}.{field}: '{n}' is not a valid property name.");
-        if (map.Source is null && map.Const is null && map.SumOf is null)
-            throw new ODataProfileException($"Profile {origin}: {entity}.{field} needs source, const or sum_of.");
+        if (map.Source is not null && map.SourceAny is not null)
+            throw new ODataProfileException($"Profile {origin}: {entity}.{field} has both source and source_any.");
+        if (map.Source is null && map.SourceAny is not { Count: > 0 } && map.Const is null && map.SumOf is null)
+            throw new ODataProfileException($"Profile {origin}: {entity}.{field} needs source, source_any, const or sum_of.");
         if (map.Lookup is { } l && (!ODataUrl.IsName(l.Resource) || l.Properties.Count == 0 || l.Properties.Any(p => !ODataUrl.IsName(p))))
             throw new ODataProfileException($"Profile {origin}: {entity}.{field} has an invalid lookup.");
         if (map.Transform == "enum" && map.Map is null)

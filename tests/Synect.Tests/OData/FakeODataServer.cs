@@ -116,8 +116,31 @@ public sealed partial class FakeODataServer(int application = 100001) : HttpMess
         var isCount = resource.EndsWith("/$count", StringComparison.Ordinal);
         if (isCount) resource = resource[..^"/$count".Length];
         string? key = null;
+        var conditions = new List<string>();
+        var vt = VirtualTablePattern().Match(resource);
+        if (vt.Success)
+        {
+            // Register/VirtualTable(Name='…',…): rows are stored under "Register/VirtualTable"; Condition-like parameters filter them.
+            resource = vt.Groups[1].Value + "/" + vt.Groups[2].Value;
+            foreach (var p in SplitTop(vt.Groups[3].Value, ",").Where(p => p.Length > 0))
+            {
+                var eq = p.IndexOf('=');
+                if (eq < 0) return new HttpResponseMessage(HttpStatusCode.BadRequest);
+                var (name, literal) = (p[..eq], p[(eq + 1)..]);
+                VirtualTableParameters.Enqueue((resource, name, literal));
+                if (name is "Condition" or "AccountCondition")
+                {
+                    if (!literal.StartsWith('\'') || !literal.EndsWith('\'')) return new HttpResponseMessage(HttpStatusCode.BadRequest);
+                    conditions.Add(literal[1..^1].Replace("''", "'", StringComparison.Ordinal));
+                }
+                else if (name is not ("Period" or "Dimensions"))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.BadRequest);
+                }
+            }
+        }
         var m = KeyPattern().Match(resource);
-        if (m.Success)
+        if (!vt.Success && m.Success)
         {
             resource = m.Groups[1].Value;
             key = m.Groups[2].Value;
@@ -126,6 +149,14 @@ public sealed partial class FakeODataServer(int application = 100001) : HttpMess
 
         IEnumerable<JsonObject> rows = all;
         if (key is not null) rows = rows.Where(r => (string)r["Ref_Key"]! == key);
+        try
+        {
+            foreach (var condition in conditions) rows = rows.Where(r => Eval(condition, r)).ToList();
+        }
+        catch (FormatException)
+        {
+            return new HttpResponseMessage(HttpStatusCode.BadRequest);
+        }
         if (query.TryGetValue("$filter", out var filter))
         {
             try { rows = rows.Where(r => Eval(filter, r)).ToList(); }
@@ -151,6 +182,19 @@ public sealed partial class FakeODataServer(int application = 100001) : HttpMess
 
     [GeneratedRegex(@"^(.+)\(guid'([0-9a-fA-F-]{36})'\)$")]
     private static partial Regex KeyPattern();
+
+    [GeneratedRegex(@"^([^/(]+)/(Balance|Turnovers|BalanceAndTurnovers|SliceLast|SliceFirst)\((.*)\)$")]
+    private static partial Regex VirtualTablePattern();
+
+    /// <summary>Parameters of virtual tables as received (resource "Register/VirtualTable", name, literal).</summary>
+    public ConcurrentQueue<(string Resource, string Name, string Literal)> VirtualTableParameters { get; } = new();
+
+    /// <summary>A row of a register's virtual table (no Ref_Key, DataVersion or DeletionMark).</summary>
+    public JsonObject AddRow(string registerAndTable, JsonObject row)
+    {
+        Resources.GetOrAdd(registerAndTable, _ => []).Add(row);
+        return row;
+    }
 
     private static JsonObject Project(JsonObject r, string[]? select)
     {

@@ -124,22 +124,25 @@ public sealed class ODataHttpClient : IODataClient
         return names;
     }
 
-    public async Task<long> CountAsync(string resource, string? filter, CancellationToken ct)
+    public Task<long> CountAsync(string resource, string? filter, CancellationToken ct) =>
+        CountAsync(new ODataQuery(resource) { Filter = filter }, ct);
+
+    public async Task<long> CountAsync(ODataQuery query, CancellationToken ct)
     {
-        var (_, body) = await GetAsync(resource, ODataUrl.Count(resource, filter), accept: "text/plain", ct);
+        var (_, body) = await GetAsync(query.What, ODataUrl.Count(query), accept: "text/plain", ct);
         var text = Encoding.UTF8.GetString(body).Trim().Trim('﻿');
         // The documented answer is a plain number ("29"). TODO(verify-real): no BOM/XML wrapper on a real application.
         return long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)
             ? n
-            : throw new ODataProtocolException($"OData {resource}/$count did not return a number.");
+            : throw new ODataProtocolException($"OData {query.What}/$count did not return a number.");
     }
 
     public async Task<ODataPage> GetAsync(ODataQuery query, CancellationToken ct)
     {
-        var (_, body) = await GetAsync(query.Resource, ODataUrl.Build(query), accept: "application/json", ct);
-        using var doc = Parse(body, query.Resource);
+        var (_, body) = await GetAsync(query.What, ODataUrl.Build(query), accept: "application/json", ct);
+        using var doc = Parse(body, query.What);
         var root = doc.RootElement;
-        if (root.ValueKind != JsonValueKind.Object) throw new ODataProtocolException($"OData {query.Resource}: the answer is not a JSON object.");
+        if (root.ValueKind != JsonValueKind.Object) throw new ODataProtocolException($"OData {query.What}: the answer is not a JSON object.");
         long? count = null;
         if (root.TryGetProperty("odata.count", out var c))
         {
@@ -204,7 +207,7 @@ public sealed class ODataHttpClient : IODataClient
                         failure = $"OData {what}: HTTP {status}";
                         break;
                     case 404:
-                        throw new ODataProtocolException($"OData {what}: HTTP 404 (not published: check the «Состав» tab of the OData settings).");
+                        throw new ODataNotPublishedException($"OData {what}: HTTP 404 (not published: check the «Состав» tab of the OData settings).");
                     default:
                         throw new ODataProtocolException($"OData {what}: HTTP {status}.");
                 }

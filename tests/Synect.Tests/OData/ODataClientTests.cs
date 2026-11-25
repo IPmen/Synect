@@ -272,7 +272,10 @@ public sealed class ODataClientTests
     public void Built_in_profile_is_valid_and_marks_what_to_verify()
     {
         var profile = ODataProfileResolver.ByName("clobus-bp-uz", new ODataOptions());
-        Assert.Equal(["counterparties", "contracts", "bank_accounts", "documents", "bank_documents"], profile.Entities.Select(e => e.Entity));
+        Assert.Equal(["counterparties", "contracts", "bank_accounts", "documents", "bank_documents",
+            "categories", "items", "warehouses", "price_types", "prices", "stock", "settlement_balances"], profile.Entities.Select(e => e.Entity));
+        // What the client may not publish is optional; the accounting core is not.
+        Assert.All(profile.Entities, e => Assert.Equal(e.Entity is "categories" or "items" or "warehouses" or "price_types" or "prices" or "stock" or "settlement_balances", e.Optional));
         Assert.All(profile.Entities.SelectMany(e => e.Sources), s => Assert.True(s.Resource.Verify));
         // Every mapping of the starting profile states explicitly whether it must be checked on a real application.
         var json = ODataProfile.BuiltIn["clobus-bp-uz"];

@@ -3,7 +3,7 @@
   // training "Бухгалтерия предприятия" 3.0.111). NOT checked on a real Uzbek application yet: every name, filter and
   // transform marked "verify": true must be checked against $metadata of the client's application (probe-odata).
   "name": "clobus-bp-uz",
-  "description": "Бухгалтерия (узбекская конфигурация на 1С:Фреш / Clobus): контрагенты, договоры, банковские счета организации, реализация и поступление, банковские документы. Стартовый профиль, не проверен на настоящем приложении.",
+  "description": "Бухгалтерия (узбекская конфигурация на 1С:Фреш / Clobus): контрагенты, договоры, банковские счета организации, реализация и поступление, банковские документы; необязательно — номенклатура, склады, цены, остатки товаров и сальдо расчётов из регистра «Хозрасчетный». Стартовый профиль, не проверен на настоящем приложении.",
   "key_property": "Ref_Key",
   "version_property": "DataVersion",
   "deletion_property": "DeletionMark",
@@ -325,6 +325,166 @@
                 }
               }
             ]
+          }
+        }
+      ]
+    },
+
+    // ---- Catalog, stock and settlement balances. All optional: a client who did not publish them still gets the rest.
+    // Registers are read as snapshots of their virtual tables. In the accounting edition stock and settlements live in the
+    // accounting register Хозрасчетный (accounts with subconto), not in accumulation registers. The account codes are the
+    // Uzbek chart of accounts (НСБУ 21): 10xx materials, 28xx finished goods, 29xx goods, 40xx receivables from buyers,
+    // 43xx advances to suppliers, 60xx payables to suppliers, 63xx advances from buyers. All of it is to be checked.
+    {
+      "entity": "categories",
+      "optional": true,
+      "sources": [
+        {
+          "resource": { "name": "Catalog_Номенклатура", "verify": true },
+          "filter": { "value": "IsFolder eq true", "verify": true },
+          "fields": {
+            "name": { "source": "Description", "transform": "string", "verify": false },
+            "parent_ref": { "source": "Parent_Key", "transform": "ref", "verify": true }
+          }
+        }
+      ]
+    },
+    {
+      "entity": "items",
+      "optional": true,
+      "sources": [
+        {
+          "resource": { "name": "Catalog_Номенклатура", "verify": true },
+          "filter": { "value": "IsFolder eq false", "verify": true },
+          "fields": {
+            "code": { "source": "Code", "transform": "string", "verify": true },
+            "article": { "source": "Артикул", "transform": "string", "verify": true },
+            "name": { "source": "Description", "transform": "string", "verify": false },
+            "full_name": { "source": "НаименованиеПолное", "transform": "string", "verify": true },
+            "category_ref": { "source": "Parent_Key", "transform": "ref", "verify": true },
+            "unit": {
+              "source": "ЕдиницаИзмерения_Key", "transform": "string", "verify": true,
+              "lookup": { "resource": "Catalog_КлассификаторЕдиницИзмерения", "properties": [ "Description" ] }
+            },
+            "vat_rate": { "source": "СтавкаНДС", "transform": "vat_rate", "verify": true },
+            "item_type": {
+              "source": "Услуга", "transform": "enum", "verify": true,
+              "map": { "true": "Service", "false": "Goods" }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "entity": "warehouses",
+      "optional": true,
+      "sources": [
+        {
+          "resource": { "name": "Catalog_Склады", "verify": true },
+          "filter": { "value": "IsFolder eq false", "verify": true },
+          "fields": {
+            "name": { "source": "Description", "transform": "string", "verify": false }
+          }
+        }
+      ]
+    },
+    {
+      "entity": "price_types",
+      "optional": true,
+      "sources": [
+        {
+          "resource": { "name": "Catalog_ТипыЦенНоменклатуры", "verify": true },
+          "fields": {
+            "name": { "source": "Description", "transform": "string", "verify": false },
+            "currency": {
+              "source": "ВалютаЦены_Key", "transform": "currency", "verify": true,
+              "lookup": { "resource": "Catalog_Валюты", "properties": [ "Description", "Code" ] }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "entity": "prices",
+      "optional": true,
+      "snapshot": true,
+      "duplicates": "first",
+      "sources": [
+        {
+          "resource": { "name": "InformationRegister_ЦеныНоменклатуры", "verify": true },
+          "virtual_table": { "name": "SliceLast", "verify": true },
+          "fields": {
+            "item_ref": { "source": "Номенклатура_Key", "transform": "ref", "verify": true },
+            "price_type_ref": { "source": "ТипЦен_Key", "transform": "ref", "verify": true },
+            "price": { "source": "Цена", "transform": "money", "verify": true },
+            "currency": {
+              "source": "Валюта_Key", "transform": "currency", "verify": true,
+              "lookup": { "resource": "Catalog_Валюты", "properties": [ "Description", "Code" ] }
+            },
+            "effective_from": { "source": "Period", "transform": "date", "verify": true }
+          }
+        }
+      ]
+    },
+    {
+      "entity": "stock",
+      "optional": true,
+      "snapshot": true,
+      "sources": [
+        {
+          "resource": { "name": "AccountingRegister_Хозрасчетный", "verify": true },
+          "virtual_table": { "name": "Balance", "verify": true },
+          "accounts": { "chart": "ChartOfAccounts_Хозрасчетный", "property": "Account_Key", "codes": [ "10*", "28*", "29*" ], "verify": true },
+          "parameters": {
+            "Period": { "type": "datetime", "value": "{today_end}", "verify": true },
+            "AccountCondition": { "value": "{accounts}", "verify": true },
+            "Condition": { "value": "Организация_Key eq {organization}", "verify": true }
+          },
+          "fields": {
+            "item_ref": {
+              "source_any": [ "ExtDimension1", "ExtDimension2", "ExtDimension3" ], "only_type": "StandardODATA.Catalog_Номенклатура",
+              "transform": "ref", "verify": true
+            },
+            "warehouse_ref": {
+              "source_any": [ "ExtDimension1", "ExtDimension2", "ExtDimension3" ], "only_type": "StandardODATA.Catalog_Склады",
+              "transform": "ref", "verify": true
+            },
+            "quantity": { "source": "КоличествоBalance", "transform": "decimal", "verify": true }
+          }
+        }
+      ]
+    },
+    {
+      "entity": "settlement_balances",
+      "optional": true,
+      "snapshot": true,
+      "sources": [
+        {
+          "resource": { "name": "AccountingRegister_Хозрасчетный", "verify": true },
+          "virtual_table": { "name": "Balance", "verify": true },
+          "accounts": { "chart": "ChartOfAccounts_Хозрасчетный", "property": "Account_Key", "codes": [ "40*", "43*", "60*", "63*" ], "verify": true },
+          "parameters": {
+            "Period": { "type": "datetime", "value": "{today_end}", "verify": true },
+            "AccountCondition": { "value": "{accounts}", "verify": true },
+            "Condition": { "value": "Организация_Key eq {organization}", "verify": true }
+          },
+          "fields": {
+            "counterparty_ref": {
+              "source_any": [ "ExtDimension1", "ExtDimension2", "ExtDimension3" ], "only_type": "StandardODATA.Catalog_Контрагенты",
+              "transform": "ref", "verify": true
+            },
+            "contract_ref": {
+              "source_any": [ "ExtDimension1", "ExtDimension2", "ExtDimension3" ], "only_type": "StandardODATA.Catalog_ДоговорыКонтрагентов",
+              "transform": "ref", "verify": true
+            },
+            "gl_account_code": {
+              "source": "Account_Key", "transform": "string", "verify": true,
+              "lookup": { "resource": "ChartOfAccounts_Хозрасчетный", "properties": [ "Code" ] }
+            },
+            // No currency: Сумма of Хозрасчетный is always in the accounting currency (UZS, the receiver's default), also on
+            // currency accounts (the amount in the currency is ВалютнаяСумма, not read yet).
+            "balance_debit": { "source": "СуммаBalanceDr", "transform": "money", "verify": true },
+            "balance_credit": { "source": "СуммаBalanceCr", "transform": "money", "verify": true }
           }
         }
       ]

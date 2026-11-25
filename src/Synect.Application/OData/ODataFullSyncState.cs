@@ -77,17 +77,20 @@ public static class ODataFullSyncStates
     public static List<ODataFullSyncState> ForProfile(Synect.Domain.Sync.Connection connection, IEnumerable<ODataFullSyncState> states, ODataOptions options)
     {
         var own = states.Where(s => s.ConnectionId == connection.Id).ToList();
+        var byEntity = own.ToDictionary(s => s.Entity, StringComparer.Ordinal);
         List<string> entities;
         try
         {
+            // An optional entity (the client may not publish it) counts only once it has packages in the journal.
             entities = ODataProfileResolver.Resolve(connection.Settings, options).Entities
-                .Select(e => Ingest.IngestSchema.Find(e.Entity)!.Name).Distinct(StringComparer.Ordinal).ToList();
+                .Select(e => (Name: Ingest.IngestSchema.Find(e.Entity)!.Name, e.Optional))
+                .Where(e => !e.Optional || byEntity.ContainsKey(e.Name))
+                .Select(e => e.Name).Distinct(StringComparer.Ordinal).ToList();
         }
         catch (Exception ex) when (ex is ODataProfileException or System.Text.Json.JsonException)
         {
             return own;
         }
-        var byEntity = own.ToDictionary(s => s.Entity, StringComparer.Ordinal);
         var result = entities.Select(e => byEntity.GetValueOrDefault(e) ?? new ODataFullSyncState { ConnectionId = connection.Id, Entity = e }).ToList();
         result.AddRange(own.Where(s => !entities.Contains(s.Entity, StringComparer.Ordinal)));
         return result;

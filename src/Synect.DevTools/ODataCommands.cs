@@ -131,7 +131,7 @@ public sealed class ODataCommands(IServiceProvider services)
     }
 
     /// <summary>
-    /// probe-odata --url ... --user ... [--profile name] [--out path]: what the application publishes and how it answers, written
+    /// probe-odata --url ... --user ... [--profile name] [--organization-key guid] [--out path]: what the application publishes and how it answers, written
     /// to docs/odata-probe-&lt;date&gt;.md WITHOUT the host, values or TINs (property names, JSON types, counts, timings only).
     /// </summary>
     public async Task<int> ProbeAsync(CliArgs options)
@@ -213,8 +213,8 @@ public sealed class ODataCommands(IServiceProvider services)
             md.AppendLine();
         }
 
-        // 3. Each resource of the profile: count, first record's fields, filters, paging.
-        foreach (var source in profile.Entities.SelectMany(e => e.Sources.Select(s => (e.Entity, Source: s))))
+        // 3. Each resource of the profile (catalogs and documents): count, first record's fields, filters, paging.
+        foreach (var source in profile.Entities.Where(e => !e.Snapshot).SelectMany(e => e.Sources.Select(s => (e.Entity, Source: s))))
         {
             var resource = source.Source.Resource.Name;
             md.AppendLine($"## {resource} ({source.Entity})");
@@ -273,6 +273,72 @@ public sealed class ODataCommands(IServiceProvider services)
             md.AppendLine();
         }
 
+        // 4. Registers read as snapshots: the very request of the load (accounts by code, parameters of the virtual table),
+        // the properties of the first rows, the types of their subconto (type names, not values), counts and paging.
+        var organization = options.Get("organization-key");
+        if (organization is not null && !Guid.TryParse(organization, out _)) throw new ArgumentException("--organization-key is a GUID (Ref_Key of the organization)");
+        foreach (var (entity, source) in profile.Entities.Where(e => e.Snapshot).SelectMany(e => e.Sources.Select(s => (e.Entity, s))))
+        {
+            md.AppendLine($"## {source.Resource.Name}/{source.VirtualTable?.Name} ({entity}, snapshot)");
+            md.AppendLine();
+            string? accounts = null;
+            if (source.Accounts is { } a)
+            {
+                var (chart, chartOutcome, chartMs) = await Step(() => ReadChartAsync(client, a.Chart, odata));
+                md.AppendLine($"- chart {a.Chart}: {chartOutcome}{(chart is null ? "" : $", {chart.Count} accounts")} ({chartMs} ms)");
+                if (chart is not null)
+                {
+                    accounts = ODataSnapshotQuery.AccountCondition(a, chart, out var missing);
+                    md.AppendLine($"- account codes of the profile: {string.Join(", ", a.Codes)}; accounts matched: {(accounts is null ? 0 : accounts.Split(" or ").Length)}" +
+                                  (missing.Count > 0 ? $"; **not found: {string.Join(", ", missing)}**" : ""));
+                }
+                if (accounts is null)
+                {
+                    md.AppendLine("- no account of the profile was found: the load skips this source");
+                    md.AppendLine();
+                    continue;
+                }
+            }
+            var query = ODataSnapshotQuery.Build(source, organization, accounts, today, source.Filter?.Value);
+            md.AppendLine($"- parameters: {(query.Parameters is { Count: > 0 } ps ? string.Join(", ", ps.Select(p => p.Key)) : "none")}{(organization is null ? " (no --organization-key: the organization condition is left out)" : "")}");
+            var (first, firstOutcome, firstMs) = await Step(() => client.GetAsync(query with { Top = 50, InlineCount = true }, CancellationToken.None));
+            md.AppendLine($"- first rows ($top=50, $inlinecount): {firstOutcome}" +
+                          (first is null ? "" : $", {first.Items.Count} rows, {(first.Count is { } c ? $"odata.count {c}" : "no odata.count")}") + $" ({firstMs} ms)");
+            if (first is { Items.Count: > 0 })
+            {
+                var used = source.Fields.Values.SelectMany(f => new[] { f.Source }.Concat(f.SourceAny ?? [])).OfType<string>().ToHashSet(StringComparer.Ordinal);
+                md.AppendLine();
+                md.AppendLine("| Property | JSON type | In profile |");
+                md.AppendLine("|---|---|---|");
+                foreach (var p in first.Items[0].EnumerateObject()) md.AppendLine($"| {p.Name} | {TypeOf(p.Value)} | {(used.Contains(p.Name) ? "yes" : "")} |");
+                var missingProps = used.Where(u => !first.Items[0].TryGetProperty(u, out _)).ToList();
+                if (missingProps.Count > 0) md.AppendLine($"\nProfile properties absent from the rows: **{string.Join(", ", missingProps)}**");
+                // Subconto and composite types: the profile's only_type must be one of these names.
+                var types = first.Items.SelectMany(r => r.EnumerateObject())
+                    .Where(p => p.Name.EndsWith("_Type", StringComparison.Ordinal) && p.Value.ValueKind == JsonValueKind.String && p.Value.GetString() is { Length: > 0 })
+                    .GroupBy(p => (p.Name, Type: p.Value.GetString()!)).OrderBy(g => g.Key.Name, StringComparer.Ordinal).ThenBy(g => g.Key.Type, StringComparer.Ordinal).ToList();
+                if (types.Count > 0)
+                {
+                    md.AppendLine();
+                    md.AppendLine("| Composite property | Type | Rows of the first page |");
+                    md.AppendLine("|---|---|---|");
+                    foreach (var g in types) md.AppendLine($"| {g.Key.Name} | {g.Key.Type} | {g.Count()} |");
+                }
+                var expected = source.Fields.Values.Select(f => f.OnlyType).OfType<string>().Distinct(StringComparer.Ordinal)
+                    .Where(t => !types.Any(g => g.Key.Type == t)).ToList();
+                if (expected.Count > 0) md.AppendLine($"\nTypes the profile expects but the first page does not have: **{string.Join(", ", expected)}**");
+            }
+            md.AppendLine();
+            var (count, countOutcome, countMs) = await Step(() => client.CountAsync(query, CancellationToken.None));
+            md.AppendLine($"- /$count of the virtual table: {countOutcome}{(countOutcome == "ok" ? $", {count}" : "")} ({countMs} ms)");
+            var (p1, o1, ms1) = await Step(() => client.GetAsync(query with { Top = 2, Skip = 0, InlineCount = true }, CancellationToken.None));
+            var (p2, o2, ms2) = await Step(() => client.GetAsync(query with { Top = 2, Skip = 2, InlineCount = true }, CancellationToken.None));
+            var overlap = p1 is not null && p2 is not null ? p1.Items.Select(i => i.GetRawText()).Intersect(p2.Items.Select(i => i.GetRawText())).Count() : -1;
+            md.AppendLine($"- paging $top=2 $skip=0/2{(source.OrderBy is null ? " (no $orderby)" : $" $orderby={source.OrderBy}")}: page 1 {o1} ({p1?.Items.Count} rows, {ms1} ms), " +
+                          $"page 2 {o2} ({p2?.Items.Count} rows, {ms2} ms){(overlap >= 0 ? $", overlap {overlap}" : "")}");
+            md.AppendLine();
+        }
+
         // VAT rate attribute of the document lines: an enumeration (string value names) or a reference (СтавкаНДС_Key).
         md.AppendLine("## VAT rate attribute (СтавкаНДС)");
         md.AppendLine();
@@ -301,6 +367,22 @@ public sealed class ODataCommands(IServiceProvider services)
         await File.WriteAllTextAsync(outPath, md.ToString());
         Console.WriteLine($"Probe written to {outPath} (no host, values or TINs).");
         return metadata is null ? 2 : 0;
+    }
+
+    /// <summary>Key and Code of every account of a chart, page by page (as the load reads it for the accounts of snapshots).</summary>
+    private static async Task<List<(string Key, string? Code)>> ReadChartAsync(IODataClient client, string chart, ODataOptions odata)
+    {
+        var result = new List<(string, string?)>();
+        var size = Math.Max(1, odata.PageSize);
+        for (var page = 0; page < odata.MaxPages; page++)
+        {
+            var rows = await client.GetAsync(new ODataQuery(chart) { Select = ["Ref_Key", "Code"], OrderBy = "Ref_Key", Top = size, Skip = page * size }, CancellationToken.None);
+            foreach (var r in rows.Items)
+                if (ODataRecordMapper.NormalizeRef(ODataRecordMapper.Get(r, "Ref_Key")) is { } key)
+                    result.Add((key, ODataRecordMapper.Get(r, "Code") is { ValueKind: JsonValueKind.String } c ? c.GetString() : null));
+            if (rows.Items.Count < size) break;
+        }
+        return result;
     }
 
     private static string TypeOf(JsonElement e) => e.ValueKind switch

@@ -166,8 +166,11 @@ public sealed class ODataSyncService(
                 tracked.Succeed(now, report.Complete, report.Records);
                 c.MarkSyncSucceeded(now);
                 await db.SaveChangesAsync(token);
-                // The whole source was read: its accounting data is fresh even when nothing changed.
+                // The whole source was read: its accounting data is fresh even when nothing changed; so is its catalog (items,
+                // stock, prices) when the profile has catalog entities that were not skipped.
                 await writer.MarkFreshAsync(c.TenantId, c.Id, IngestDataGroup.Accounting, now, token);
+                if (report.Entities.Any(e => e.Mode != "skipped" && IngestSchema.Find(e.Entity)?.Group == IngestDataGroup.Catalog))
+                    await writer.MarkFreshAsync(c.TenantId, c.Id, IngestDataGroup.Catalog, now, token);
             }, ct);
             // Attention rules over the connection (own scope and transaction; never fails the load, hence no cancellation token).
             await attention.AfterLoadAsync(AdapterKind.Accounting1C, succeeded: true, CancellationToken.None);
@@ -251,7 +254,9 @@ public sealed class ODataSyncService(
             ODataSyncMode.Delta => false,
             _ => ODataFullSyncStates.FullIsDue(states.GetValueOrDefault(entity), decisionTime, O),
         };
-        var decisions = profile.Entities.ToDictionary(e => e.Entity, e => FullFor(IngestSchema.Find(e.Entity)!.Name), StringComparer.Ordinal);
+        // A snapshot of a register is read whole every time, so it is always sent as a full export (except an explicit delta).
+        var decisions = profile.Entities.ToDictionary(e => e.Entity,
+            e => e.Snapshot ? mode != ODataSyncMode.Delta : FullFor(IngestSchema.Find(e.Entity)!.Name), StringComparer.Ordinal);
         report.Mode = decisions.Values.All(d => d) ? "full" : decisions.Values.All(d => !d) ? "delta" : "mixed";
         var runKey = (runId ?? Guid.CreateVersion7()).ToString("N");
         logger.LogInformation("OData sync started: connection {ConnectionId}, mode {Mode}, dry run {DryRun}, profile {Profile}",
@@ -274,6 +279,12 @@ public sealed class ODataSyncService(
             var sentPackages = 0;
             try
             {
+                if (entity.Snapshot)
+                {
+                    await SnapshotAsync(client, connection, entity, spec, er, report, mapper, lookups, organization, full, dryRun, runKey, batchId,
+                        confirmedMassDeleteBy, () => sentPackages++, ct);
+                    continue;
+                }
 
                 // 1. Keys and versions in the source.
                 var remote = new Dictionary<string, Remote>(StringComparer.Ordinal);
@@ -401,22 +412,14 @@ public sealed class ODataSyncService(
                     marker[ODataFullSyncStates.AttemptField] = new JsonObject { ["outcome"] = attemptOutcome, ["reason"] = attemptReason };
                 }
 
-                // 4. Send through the receiver (or count, in a dry run). A held-back export still sends one (possibly empty) delta
-                // package, so that the reason is journaled in ingest_batches.envelope_extra.
-                var packages = items.Chunk(Math.Min(PackageItems, ingestOptions.Value.MaxItems)).ToList();
-                if (packages.Count == 0 && (exportFull || marker is not null)) packages.Add([]);
-                er.Packages = packages.Count;
-                if (dryRun) continue;
-
-                var fullSyncId = exportFull ? $"odata-{runKey}" : null;
-                for (var i = 0; i < packages.Count; i++)
-                {
-                    var body = Envelope(spec.Name, batchId, i + 1, exportFull, fullSyncId, i == packages.Count - 1, packages[i], i == 0 ? marker : null);
-                    sentPackages++;
-                    var response = await ingest.ProcessPulledAsync(connection.Id, body, exportFull && i == 0 ? unchanged : null, ct);
-                    Account(er, response, spec.Name);
-                }
-                if (er.Rejected > 0) report.Complete = false;
+                // 4. Send through the receiver (or count, in a dry run).
+                await SendPackagesAsync(connection.Id, spec, er, report, batchId, runKey, items, exportFull, marker, unchanged, dryRun, () => sentPackages++, ct);
+            }
+            catch (ODataNotPublishedException ex) when (entity.Optional && sentPackages == 0)
+            {
+                // Not published by the client (or absent from its configuration): an optional entity is skipped, the load goes on.
+                Skip(er, ex.Message);
+                logger.LogInformation("OData optional entity {Entity} skipped: not published", spec.Name);
             }
             catch (Exception ex) when (full && !dryRun && ex is not OperationCanceledException)
             {
@@ -440,11 +443,260 @@ public sealed class ODataSyncService(
         return report;
     }
 
-    private DateOnly DeltaFrom()
+    // 1C dates are local (Tashkent); the delta window is counted in days, so the offset matters little but is applied.
+    private DateOnly LocalToday() => DateOnly.FromDateTime(time.GetUtcNow().ToOffset(ingestOptions.Value.SourceUtcOffset).DateTime);
+
+    private DateOnly DeltaFrom() => LocalToday().AddDays(-Math.Max(1, O.DeltaWindowDays));
+
+    private static void Skip(ODataEntityReport er, string why)
     {
-        // 1C dates are local (Tashkent); the window is counted in days, so the offset matters little but is applied.
-        var local = time.GetUtcNow().ToOffset(ingestOptions.Value.SourceUtcOffset);
-        return DateOnly.FromDateTime(local.DateTime).AddDays(-Math.Max(1, O.DeltaWindowDays));
+        er.Mode = "skipped";
+        er.FullAttempted = false;
+        er.Warnings.Add(why + " The entity is optional and was skipped.");
+    }
+
+    /// <summary>
+    /// Sends the items through the receiver in packages (or only counts them, in a dry run). A held-back or failed full
+    /// attempt still sends one (possibly empty) delta package, so that the reason is journaled in ingest_batches.envelope_extra.
+    /// </summary>
+    private async Task SendPackagesAsync(Guid connectionId, IngestEntitySpec spec, ODataEntityReport er, ODataSyncReport report, string batchId, string runKey,
+        List<JsonObject> items, bool exportFull, JsonObject? marker, IReadOnlyCollection<string>? unchanged, bool dryRun, Action onSent, CancellationToken ct)
+    {
+        var packages = items.Chunk(Math.Min(PackageItems, ingestOptions.Value.MaxItems)).ToList();
+        if (packages.Count == 0 && (exportFull || marker is not null)) packages.Add([]);
+        er.Packages = packages.Count;
+        if (dryRun) return;
+
+        var fullSyncId = exportFull ? $"odata-{runKey}" : null;
+        for (var i = 0; i < packages.Count; i++)
+        {
+            var body = Envelope(spec.Name, batchId, i + 1, exportFull, fullSyncId, i == packages.Count - 1, packages[i], i == 0 ? marker : null);
+            onSent();
+            var response = await ingest.ProcessPulledAsync(connectionId, body, exportFull && i == 0 ? unchanged : null, ct);
+            Account(er, response, spec.Name);
+        }
+        if (er.Rejected > 0) report.Complete = false;
+    }
+
+    /// <summary>
+    /// A snapshot entity: every row of the register's virtual table(s), mapped, grouped by the receiver's key (numeric fields
+    /// summed: a register has more dimensions than the receiver keeps, e.g. batches or settlement documents), rows whose
+    /// numbers are all zero left out, sent as one full export. The receiver then removes the absent rows of a current-state
+    /// table (stock, prices) or marks deleted the absent balances of the date. The export stays a delta (nothing removed) when
+    /// the list of rows may be incomplete, and is held back when the source returned nothing while rows are stored
+    /// (OData:MassDeleteGuard; DevTools --confirm-mass-delete lets it through).
+    /// </summary>
+    private async Task SnapshotAsync(IODataClient client, Connection connection, ODataEntityMap entity, IngestEntitySpec spec, ODataEntityReport er,
+        ODataSyncReport report, ODataRecordMapper mapper, ODataLookupCache lookups, string? organization, bool full, bool dryRun, string runKey,
+        string batchId, string? confirmedMassDeleteBy, Action onSent, CancellationToken ct)
+    {
+        var today = LocalToday();
+        var numeric = spec.DataFields.Where(f => f.Type is IngestFieldType.Money or IngestFieldType.Decimal).Select(f => f.Name).ToList();
+        var hasDate = spec.Fields.Any(f => f.Name == "as_of_date");
+        var rows = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        var problems = new List<string>();
+        int read = 0, withoutKey = 0, queried = 0, duplicates = 0;
+
+        foreach (var source in entity.Sources)
+        {
+            string? accounts = null;
+            if (source.Accounts is { } a)
+            {
+                accounts = AccountCondition(a, lookups, er, source.Resource.Name);
+                if (accounts is null)
+                {
+                    er.Warnings.Add($"{source.Resource.Name}: none of the accounts {string.Join(", ", a.Codes)} was found in {a.Chart} (codes of the profile?); the source is not read.");
+                    continue;
+                }
+            }
+            var query = ODataSnapshotQuery.Build(source, organization, accounts, today, Filter(source, organization, null));
+            queried++;
+            var (records, problem) = await ListRowsAsync(client, query, full, ct);
+            if (problem is not null) problems.Add($"{query.What}: {problem}");
+            foreach (var record in records)
+            {
+                read++;
+                var item = mapper.MapRow(record, source);
+                if (hasDate && item["as_of_date"] is null) item["as_of_date"] = today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                foreach (var k in spec.Keys.Where(k => k.Type == IngestFieldType.Currency && item[k.Name] is null))
+                    item[k.Name] = ingestOptions.Value.DefaultCurrency; // as the receiver fills it, so that rows group the same way
+                if (spec.Keys.Any(k => k.Required && item[k.Name] is null))
+                {
+                    withoutKey++;
+                    continue;
+                }
+                var key = string.Join('\u001f', spec.KeyFields.Select(k => item[k]?.ToString() ?? ""));
+                if (rows.TryGetValue(key, out var existing))
+                {
+                    if (entity.Duplicates == "first")
+                    {
+                        duplicates++;
+                        continue;
+                    }
+                    foreach (var n in numeric)
+                        if (Decimal(item[n]) is { } add) existing[n] = ODataRecordMapper.Format((Decimal(existing[n]) ?? 0) + add);
+                }
+                else
+                {
+                    rows[key] = item;
+                }
+            }
+        }
+
+        if (queried == 0)
+        {
+            if (entity.Optional)
+            {
+                Skip(er, "No source of the entity could be read.");
+                return;
+            }
+            report.Complete = false;
+            er.Mode = "delta";
+            er.Warnings.Add("No source of the entity could be read; nothing was loaded.");
+            return;
+        }
+
+        var items = rows.Values.Where(r => numeric.Any(n => Decimal(r[n]) is { } d && d != 0)).ToList();
+        er.Listed = items.Count;
+        er.Sent = items.Count;
+        if (withoutKey > 0)
+            er.Warnings.Add($"{withoutKey} of {read} rows had no {string.Join("/", spec.Keys.Where(k => k.Required).Select(k => k.Name))} and were left out.");
+        if (duplicates > 0)
+            er.Warnings.Add($"{duplicates} rows repeated the key {string.Join("+", spec.KeyFields)} of an earlier row; the first one was kept (another dimension in the register?).");
+
+        var exportFull = full;
+        string? attemptReason = null;
+        var attemptOutcome = ODataFullSyncStates.OutcomeFull;
+        JsonObject? marker = null;
+        if (full && problems.Count > 0)
+        {
+            exportFull = false;
+            er.Mode = "delta";
+            report.Complete = false;
+            foreach (var problem in problems) er.Warnings.Add(problem + "; sent as a delta, no row is removed this time.");
+            attemptOutcome = ODataFullSyncStates.OutcomeIncompleteList;
+            attemptReason = string.Join("; ", problems);
+            logger.LogWarning("OData snapshot of {Entity} sent as a delta: the list of rows may be incomplete ({Problems})", spec.Name, attemptReason);
+        }
+
+        if (exportFull && items.Count == 0 && O.MassDeleteGuard.Enabled)
+        {
+            er.ActiveStored = await db.InTransactionAsync(token => CountActiveAsync(spec, connection.TenantId, token), ct);
+            if (er.ActiveStored > 0)
+            {
+                var facts = new JsonObject { ["entity"] = spec.Name, ["missing"] = er.ActiveStored, ["active"] = er.ActiveStored, ["share"] = 1.0, ["empty_source"] = true };
+                if (confirmedMassDeleteBy is null)
+                {
+                    exportFull = false;
+                    er.Mode = "delta";
+                    er.MassDeleteBlocked = true;
+                    report.Complete = false;
+                    er.Warnings.Add($"The source returned no rows while {er.ActiveStored} are stored; nothing is removed (OData:MassDeleteGuard).");
+                    marker = new JsonObject { ["mass_delete_blocked"] = facts };
+                    attemptOutcome = ODataFullSyncStates.OutcomeHeldBack;
+                    attemptReason = $"the source returned no rows while {er.ActiveStored} are stored (mass-deletion guard)";
+                    logger.LogWarning("OData snapshot held back: connection {ConnectionId}, entity {Entity}, empty source, {Active} rows stored",
+                        connection.Id, spec.Name, er.ActiveStored);
+                }
+                else
+                {
+                    er.MassDeleteConfirmed = true;
+                    facts["confirmed_by"] = confirmedMassDeleteBy;
+                    facts["confirmed_at"] = time.GetUtcNow().ToString("O", CultureInfo.InvariantCulture);
+                    facts["via"] = "DevTools sync-odata --confirm-mass-delete";
+                    marker = new JsonObject { ["mass_delete_confirmed"] = facts };
+                    er.Warnings.Add($"Removal confirmed by {confirmedMassDeleteBy}: the source is empty, {er.ActiveStored} stored rows will be removed.");
+                    logger.LogWarning("OData snapshot removal CONFIRMED by {Operator}: connection {ConnectionId}, entity {Entity}, {Active} rows",
+                        confirmedMassDeleteBy, connection.Id, spec.Name, er.ActiveStored);
+                }
+            }
+        }
+
+        if (full)
+        {
+            marker ??= new JsonObject();
+            marker[ODataFullSyncStates.AttemptField] = new JsonObject { ["outcome"] = attemptOutcome, ["reason"] = attemptReason };
+        }
+        await SendPackagesAsync(connection.Id, spec, er, report, batchId, runKey, items, exportFull, marker, null, dryRun, onSent, ct);
+    }
+
+    private static decimal? Decimal(JsonNode? node)
+    {
+        if (node is not JsonValue v) return null;
+        if (v.TryGetValue<string>(out var s)) return decimal.TryParse(s, NumberStyles.Number, CultureInfo.InvariantCulture, out var d) ? d : null;
+        return v.TryGetValue<decimal>(out var n) ? n : null;
+    }
+
+    /// <summary>"Account_Key eq guid'…' or …" for the accounts of the profile found in the chart (read with the lookups), or null.</summary>
+    private static string? AccountCondition(ODataAccounts accounts, ODataLookupCache lookups, ODataEntityReport er, string resource)
+    {
+        var condition = ODataSnapshotQuery.AccountCondition(accounts, lookups.All(accounts.Chart).Select(x => (x.Key, x.Values.GetValueOrDefault("Code"))), out var missing);
+        if (condition is not null && missing.Count > 0) er.Warnings.Add($"{resource}: accounts not found in {accounts.Chart}: {string.Join(", ", missing)}.");
+        return condition;
+    }
+
+    private async Task<int> CountActiveAsync(IngestEntitySpec spec, Guid tenantId, CancellationToken ct)
+    {
+        // The table name comes from the schema only; the tenant is a bind parameter.
+        var sql = "SELECT count(*)::int AS \"Value\" FROM " + spec.Table + " t WHERE t.tenant_id = {0} AND NOT t.is_deleted";
+        return (await db.Database.SqlQueryRaw<int>(sql, tenantId).ToListAsync(ct)).Single();
+    }
+
+    /// <summary>
+    /// Every row of a virtual table, page by page ($top/$skip, $inlinecount=allpages, the profile's order_by if any). The
+    /// rows have no key, so a page that repeats an earlier row (same JSON) means unstable paging. Returns why the list may be
+    /// incomplete, like <see cref="ListKeysAsync"/>.
+    /// TODO(verify-real): $top/$skip, $inlinecount and /$count on virtual tables of registers; the order of rows without $orderby.
+    /// </summary>
+    private async Task<(List<JsonElement> Rows, string? Problem)> ListRowsAsync(IODataClient client, ODataQuery query, bool full, CancellationToken ct)
+    {
+        var rows = new List<JsonElement>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        string? problem = null;
+        long? firstCount = null;
+        var size = Math.Max(1, O.PageSize);
+        for (var page = 0; ; page++)
+        {
+            if (page >= O.MaxPages) return (rows, $"stopped at OData:MaxPages ({O.MaxPages})");
+            var result = await client.GetAsync(query with { Top = size, Skip = page * size, InlineCount = true }, ct);
+            if (result.Count is { } count)
+            {
+                firstCount ??= count;
+                if (count != firstCount) problem ??= $"odata.count changed between pages ({firstCount} -> {count})";
+            }
+            var fresh = 0;
+            foreach (var record in result.Items)
+            {
+                if (!seen.Add(record.GetRawText()))
+                {
+                    problem ??= "pages repeated rows";
+                    continue;
+                }
+                fresh++;
+                rows.Add(record);
+            }
+            if (result.Items.Count == 0 || result.Items.Count < size) break;
+            if (fresh == 0)
+                throw new ODataProtocolException($"OData {query.What}: page {page + 1} repeated earlier rows ($skip ignored?); listing stopped.");
+            if (firstCount is { } total && (page + 1) * (long)size >= total) break;
+        }
+        if (firstCount is { } expected)
+        {
+            if (rows.Count != expected) problem ??= $"{rows.Count} rows read, odata.count says {expected}";
+        }
+        else if (full)
+        {
+            try
+            {
+                var total = await client.CountAsync(query, ct);
+                if (total != rows.Count) problem ??= $"no odata.count; {rows.Count} rows read, /$count says {total}";
+            }
+            catch (AdapterException ex) when (ex is not AdapterAuthenticationException)
+            {
+                problem ??= "no odata.count and /$count is not available";
+            }
+        }
+        return (rows, problem);
     }
 
     private static string? Filter(ODataSource source, string? organization, DateOnly? from)
@@ -540,6 +792,12 @@ public sealed class ODataSyncService(
             {
                 if (!needed.TryGetValue(l.Resource, out var set)) needed[l.Resource] = set = new HashSet<string>(StringComparer.Ordinal);
                 set.UnionWith(l.Properties);
+            }
+            // Accounts of snapshot sources are found by code in their chart.
+            if (source.Accounts is { } a)
+            {
+                if (!needed.TryGetValue(a.Chart, out var set)) needed[a.Chart] = set = new HashSet<string>(StringComparer.Ordinal);
+                set.Add("Code");
             }
         }
         var size = Math.Max(1, O.PageSize);

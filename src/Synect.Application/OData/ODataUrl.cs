@@ -50,10 +50,48 @@ public static partial class ODataUrl
     /// </summary>
     public static string Encode(string value) => Uri.EscapeDataString(value);
 
-    public static string Build(ODataQuery q)
+    /// <summary>Virtual tables of registers that a profile may read.</summary>
+    public static readonly IReadOnlySet<string> VirtualTables =
+        new HashSet<string>(StringComparer.Ordinal) { "Balance", "Turnovers", "BalanceAndTurnovers", "SliceLast", "SliceFirst" };
+
+    // A parameter value is only ever a literal made by ODataLiteral: a quoted string (quotes doubled) or datetime'…'.
+    [GeneratedRegex(@"^('([^']|'')*'|datetime'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}')$")]
+    private static partial Regex ParameterLiteral();
+
+    /// <summary>
+    /// The path of a query: Resource, Resource(key) or Resource/VirtualTable(Name=literal,…). Parameter values are
+    /// percent-encoded; the structure characters ( = , ) are not.
+    /// TODO(verify-real): 1C is assumed to accept percent-encoded parameter values of virtual tables ('…' as %27…%27).
+    /// </summary>
+    public static string Path(ODataQuery q)
     {
         var path = new StringBuilder(Encode(CheckName(q.Resource)));
+        if (q.VirtualTable is { } table)
+        {
+            if (!VirtualTables.Contains(table)) throw new ArgumentException("Not a supported virtual table.", nameof(q));
+            if (q.Key is not null) throw new ArgumentException("A virtual table is not read by key.", nameof(q));
+            path.Append('/').Append(table).Append('(');
+            var first = true;
+            foreach (var (name, literal) in q.Parameters ?? [])
+            {
+                if (!ParameterLiteral().IsMatch(literal)) throw new ArgumentException("Not a valid virtual table parameter.", nameof(q));
+                if (!first) path.Append(',');
+                path.Append(Encode(CheckName(name))).Append('=').Append(Encode(literal));
+                first = false;
+            }
+            path.Append(')');
+        }
+        else if (q.Parameters is { Count: > 0 })
+        {
+            throw new ArgumentException("Parameters belong to a virtual table.", nameof(q));
+        }
         if (q.Key is { } key) path.Append('(').Append(Encode(key)).Append(')');
+        return path.ToString();
+    }
+
+    public static string Build(ODataQuery q)
+    {
+        var path = Path(q);
         var parts = new List<string> { "$format=json" };
         if (q.Filter is { Length: > 0 } filter) parts.Add("$filter=" + Encode(filter));
         if (q.Select is { Count: > 0 } select)
@@ -74,8 +112,11 @@ public static partial class ODataUrl
         return path + "?" + string.Join("&", parts);
     }
 
-    public static string Count(string resource, string? filter) =>
-        Encode(CheckName(resource)) + "/$count" + (filter is { Length: > 0 } ? "?$filter=" + Encode(filter) : "");
+    public static string Count(string resource, string? filter) => Count(new ODataQuery(resource) { Filter = filter });
+
+    /// <summary>…/$count of a query (resource or virtual table, with its filter); paging and $select are ignored.</summary>
+    public static string Count(ODataQuery q) =>
+        Path(q with { Key = null }) + "/$count" + (q.Filter is { Length: > 0 } filter ? "?$filter=" + Encode(filter) : "");
 
     public const string Metadata = "$metadata";
 

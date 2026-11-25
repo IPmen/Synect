@@ -139,7 +139,8 @@ public sealed partial class ODataSyncTests(ODataFixture f) : IClassFixture<OData
 
         // Freshness of the connection like a package of the extension, and paging really happened ($skip with pages of 2).
         Assert.NotNull(await f.ValueAsync($"SELECT last_successful_sync_at FROM connections WHERE id = '{connection}'"));
-        Assert.Equal(1, await f.CountAsync("ingest_freshness", tenant, $"connection_id = '{connection}'"));
+        // Accounting, and the catalog too: the sample publishes Catalog_Номенклатура, so items are loaded.
+        Assert.Equal(2, await f.CountAsync("ingest_freshness", tenant, $"connection_id = '{connection}'"));
         Assert.Contains(server.Requests, r => r.Resource == "Catalog_Контрагенты" && r.Query.Contains("$skip=2", StringComparison.Ordinal));
         Assert.All(server.Requests, r => Assert.Equal(HttpMethod.Get, r.Method));
         Assert.Empty(report.MissingProperties.Where(p => p.StartsWith("Catalog_Контрагенты.", StringComparison.Ordinal)));

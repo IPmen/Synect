@@ -13,7 +13,9 @@ namespace Synect.Tests.OData;
 /// </summary>
 public sealed partial class ODataSyncTests
 {
-    private static readonly string[] AllEntities = ["counterparties", "contracts", "bank_accounts", "documents", "bank_documents"];
+    // The sample publishes Catalog_Номенклатура, so the optional categories and items load too; warehouses, price types and
+    // the registers are not published and are skipped.
+    private static readonly string[] AllEntities = ["counterparties", "contracts", "bank_accounts", "documents", "bank_documents", "categories", "items"];
 
     private Task<ODataSyncReport> AutoAsync(Guid tenant, Guid connection) =>
         Host.InTenantAsync(tenant, sp => sp.GetRequiredService<ODataSyncService>().RunAsync(connection, ODataSyncMode.Auto, false, CancellationToken.None));
@@ -52,7 +54,7 @@ public sealed partial class ODataSyncTests
             Host.Time.Advance(TimeSpan.FromHours(24) - TimeSpan.FromMinutes(10));
             var report = await AutoAsync(tenant, connection);
             Assert.Equal(AllEntities, Attempted(report));
-            Assert.All(report.Entities, e => Assert.Equal("full", e.Mode));
+            Assert.All(report.Entities.Where(e => e.Mode != "skipped"), e => Assert.Equal("full", e.Mode));
         }
     }
 

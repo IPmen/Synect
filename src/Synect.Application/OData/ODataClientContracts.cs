@@ -18,6 +18,18 @@ public sealed record ODataQuery(string Resource)
 
     /// <summary>$inlinecount=allpages: the answer carries odata.count, the number of records matching the filter.</summary>
     public bool InlineCount { get; init; }
+
+    /// <summary>A virtual table of a register (Balance, Turnovers, BalanceAndTurnovers, SliceLast, SliceFirst): Resource/VirtualTable(…).</summary>
+    public string? VirtualTable { get; init; }
+
+    /// <summary>
+    /// Parameters of <see cref="VirtualTable"/> as name → literal built by <see cref="ODataLiteral"/> (a quoted string such as a
+    /// Condition, or datetime'…'); anything else is refused by <see cref="ODataUrl"/>.
+    /// </summary>
+    public IReadOnlyList<KeyValuePair<string, string>>? Parameters { get; init; }
+
+    /// <summary>The resource as logs and messages name it (with the virtual table, never the parameters).</summary>
+    public string What => VirtualTable is null ? Resource : Resource + "/" + VirtualTable;
 }
 
 /// <summary>Records of one answer (detached from the response document) and odata.count when it was asked for.</summary>
@@ -50,6 +62,9 @@ public interface IODataClient : IDisposable
     /// <summary>Resource/$count with an optional filter.</summary>
     Task<long> CountAsync(string resource, string? filter, CancellationToken ct);
 
+    /// <summary>The number of records of a query (its resource or virtual table and filter): …/$count.</summary>
+    Task<long> CountAsync(ODataQuery query, CancellationToken ct);
+
     Task<ODataPage> GetAsync(ODataQuery query, CancellationToken ct);
 }
 
@@ -64,6 +79,11 @@ public sealed class ODataMethodNotAllowedException(string method)
     : InvalidOperationException($"The OData client is read-only: HTTP {method} is not allowed, only GET.");
 
 /// <summary>An answer that cannot be used: 400/404, a redirect, malformed JSON, a paging loop. Not retried.</summary>
-public sealed class ODataProtocolException(string message) : AdapterException(message)
+public class ODataProtocolException(string message) : AdapterException(message)
+{
+}
+
+/// <summary>HTTP 404: the resource is not published (not ticked on the «Состав» tab) or does not exist in the configuration.</summary>
+public sealed class ODataNotPublishedException(string message) : ODataProtocolException(message)
 {
 }

@@ -63,7 +63,7 @@ using Synect.Infrastructure.Persistence;
 //   create-connection --tenant <name|id> --kind onec_fresh_odata --url <https://clobus.uz/a/...> --user <OData user> [--profile clobus-bp-uz]
 //                     [--organization-key <guid>] [--name ...] [--test]   1C:Fresh (Clobus) over the standard OData interface, pull
 //   sync-odata --tenant <name|id> --connection <id|name> [--mode auto|full|delta] [--dry-run]   loads now (dry run: reads, compares, writes nothing)
-//   probe-odata --url <...> --user <...> [--profile ...] [--out docs/odata-probe-<date>.md]   $metadata, counts, fields and types, filters, paging; no host or values
+//   probe-odata --url <...> --user <...> [--profile ...] [--organization-key <guid>] [--out docs/odata-probe-<date>.md]   $metadata, counts, fields and types, filters, paging, register snapshots; no host or values
 // Deployment (runs as the schema owner, ConnectionStrings:SynectOwner; Api and Worker never migrate at startup):
 //   migrate [--lock-timeout 5]                    applies pending migrations; every session has lock_timeout (seconds)
 //   migrate --status                              applied / pending migrations of this build; exit code 2 when not compatible
