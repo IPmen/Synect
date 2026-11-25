@@ -46,18 +46,27 @@ server: 13 Didox documents instead of about 400).
 
 ## Caddy (reverse proxy)
 
-Without a domain, Caddy listens on port 80 of the server IP (plain HTTP) and publishes only `/health` and `/ready`;
-every other path, `/mcp` and `/ingest/1c/v1/*` included, answers 404. Use an SSH tunnel for the rest:
+Since 2026-11-19 Caddy serves the domain `api.synect.uz` (A 2.29.216.38, AAAA 2a01:4f9:c010:e78d::1) with automatic
+HTTPS (Let's Encrypt, renewed by Caddy itself; state in `/var/lib/caddy`). HTTP redirects to HTTPS (308). Published:
+`/health`, `/ready`, `/mcp`, `/ingest/1c/v1/*` (body up to 4 MB); every other path, `/version` included, answers 404.
+`synect.uz` and `www.synect.uz` are not configured here (reserved for the landing page). The last line of the
+Caddyfile selects the mode: `import synect_with_domain api.synect.uz` (now) or `import synect_by_ip` (plain HTTP on the
+IP, only `/health` and `/ready`). The previous IP-only file is kept on the server as `/etc/caddy/Caddyfile.by-ip.bak`.
+
+The Api runs with `Hosting__ForwardedHeaders=true` (in `synect-api.service`): it takes the client IP from Caddy's
+`X-Forwarded-For` (only loopback proxies are trusted), so the per-IP limits (20 failed authentications per minute on
+`/mcp` and on the 1C receiver, then 429 with `Retry-After`) count each client separately instead of all clients as
+127.0.0.1.
+
+Change: copy `deploy/caddy/Caddyfile` to `/etc/caddy/Caddyfile`, then
+`caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy`.
+
+`/version` and the rest stay reachable through an SSH tunnel:
 
 ```
 ssh -L 5299:127.0.0.1:5299 root@2.29.216.38
-# then, on your computer: http://127.0.0.1:5299/mcp, /version, ...
+# then, on your computer: http://127.0.0.1:5299/version, ...
 ```
-
-**When the domain exists:** point its A record to the server, then change the last line of `/etc/caddy/Caddyfile`
-from `import synect_by_ip` to `import synect_with_domain synect.example.com` and run
-`caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy`. Caddy obtains the certificate, redirects
-HTTP to HTTPS and publishes `/mcp` and `/ingest/1c/v1/*` as well.
 
 ## Build and deploy a new version
 
