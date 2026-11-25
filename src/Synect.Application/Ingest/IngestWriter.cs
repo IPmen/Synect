@@ -16,6 +16,14 @@ public sealed class StoredRecord
     public bool IsDeleted { get; set; }
 }
 
+/// <summary>Version of a stored record as a pulled source reported it (extra.data_version), and its deletion mark.</summary>
+public sealed class StoredVersion
+{
+    public string Ref { get; set; } = string.Empty;
+    public string? DataVersion { get; set; }
+    public bool IsDeleted { get; set; }
+}
+
 /// <summary>
 /// Set-based SQL of the receiver (PostgreSQL only), generated from <see cref="IngestSchema"/>: one statement per step and
 /// package, rows passed as one jsonb parameter read with jsonb_to_recordset. Table and column names come only from the
@@ -125,6 +133,48 @@ public sealed class IngestWriter(ISynectDbContext db)
             WHERE t.tenant_id = {0} AND {{KeyJoin(spec, "t", "k")}} AND t.last_seen_at < {3}
             """;
         await db.Database.ExecuteSqlRawAsync(sql, [tenant, now.ToUniversalTime(), keys, now.ToUniversalTime().AddHours(-1)], ct);
+    }
+
+    /// <summary>Time of the last accepted data of a group of a 1C connection (ingest_freshness); never moves back.</summary>
+    public Task MarkFreshAsync(Guid tenant, Guid connection, Synect.Domain.Accounting.IngestDataGroup group, DateTimeOffset now, CancellationToken ct) =>
+        db.Database.ExecuteSqlAsync($"""
+            INSERT INTO ingest_freshness (tenant_id, connection_id, data_group, last_accepted_at)
+            VALUES ({tenant}, {connection}, {group.ToString()}, {now.ToUniversalTime()})
+            ON CONFLICT (tenant_id, connection_id, data_group) DO UPDATE SET last_accepted_at = excluded.last_accepted_at
+            WHERE ingest_freshness.last_accepted_at < excluded.last_accepted_at
+            """, ct);
+
+    /// <summary>
+    /// Records that still exist in a pulled source and were not sent again (their version did not change): last_seen_at
+    /// only, at most once an hour, like <see cref="TouchAsync"/>. Entities keyed by ref only.
+    /// </summary>
+    public async Task TouchRefsAsync(IngestEntitySpec spec, Guid tenant, DateTimeOffset now, IReadOnlyCollection<string> refs, CancellationToken ct)
+    {
+        if (refs.Count == 0 || !spec.HasRef) return;
+        var sql = $$"""
+            UPDATE {{spec.Table}} t SET last_seen_at = {1}
+            WHERE t.tenant_id = {0} AND t.ref = ANY({2}) AND t.last_seen_at < {3}
+            """;
+        await db.Database.ExecuteSqlRawAsync(sql, [tenant, now.ToUniversalTime(), refs.ToArray(), now.ToUniversalTime().AddHours(-1)], ct);
+    }
+
+    /// <summary>
+    /// data_version (kept in extra by the OData loader) and is_deleted of stored records of an entity keyed by ref: all of
+    /// them, or only <paramref name="refs"/>. Read-only.
+    /// </summary>
+    public async Task<Dictionary<string, StoredVersion>> LoadVersionsAsync(IngestEntitySpec spec, Guid tenant, IReadOnlyCollection<string>? refs,
+        CancellationToken ct)
+    {
+        if (!spec.HasRef) throw new InvalidOperationException($"Entity {spec.Name} is not keyed by ref.");
+        var result = new Dictionary<string, StoredVersion>(StringComparer.Ordinal);
+        if (refs is { Count: 0 }) return result;
+        // The table name comes from the schema only; every value is a bind parameter.
+        var sql = "SELECT t.ref AS ref, t.extra->>'data_version' AS data_version, t.is_deleted AS is_deleted FROM " + spec.Table
+                  + " t WHERE t.tenant_id = {0}" + (refs is null ? "" : " AND t.ref = ANY({1})");
+        object[] parameters = refs is null ? [tenant] : [tenant, refs.ToArray()];
+        var rows = await db.Database.SqlQueryRaw<StoredVersion>(sql, parameters).ToListAsync(ct);
+        foreach (var row in rows) result[row.Ref] = row;
+        return result;
     }
 
     /// <summary>

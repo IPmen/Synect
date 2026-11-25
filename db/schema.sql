@@ -3940,3 +3940,44 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261124172236_OneCFreshOData') THEN
+    ALTER TABLE ingest_batches ALTER COLUMN ingest_key_id DROP NOT NULL;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261124172236_OneCFreshOData') THEN
+    DO $$
+    DECLARE t uuid;
+    BEGIN
+        SELECT tenant_id INTO t FROM connections
+        WHERE adapter_kind = 'Accounting1C' AND status <> 'Disabled'
+        GROUP BY tenant_id HAVING count(*) > 1 LIMIT 1;
+        IF t IS NOT NULL THEN
+            RAISE EXCEPTION 'Organization % has more than one active 1C connection; disable all but one before this migration.', t;
+        END IF;
+    END $$;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261124172236_OneCFreshOData') THEN
+    CREATE UNIQUE INDEX ux_connections_one_active_1c ON connections (tenant_id) WHERE adapter_kind = 'Accounting1C' AND status <> 'Disabled';
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM __ef_migrations_history WHERE "migration_id" = '20261124172236_OneCFreshOData') THEN
+    INSERT INTO __ef_migrations_history (migration_id, product_version)
+    VALUES ('20261124172236_OneCFreshOData', '10.0.14');
+    END IF;
+END $EF$;
+COMMIT;
+

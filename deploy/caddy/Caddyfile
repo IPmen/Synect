@@ -1,9 +1,9 @@
 # /etc/caddy/Caddyfile - reverse proxy in front of synect-api (127.0.0.1:5299).
 #
 # THE ONE LINE TO CHANGE is the `import` at the very bottom:
-#   now (no domain):   import synect_by_ip
+#   no domain:         import synect_by_ip
 #                      plain HTTP on the server IP, only /health and /ready are published, everything else 404.
-#   with a domain:     import synect_with_domain synect.example.com
+#   with a domain (now, since 2026-11-19): import synect_with_domain api.synect.uz
 #                      automatic HTTPS (Let's Encrypt), HTTP -> HTTPS redirect, /mcp and /ingest/1c/v1/* published too.
 # Then: caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
 #
@@ -71,4 +71,88 @@
 	}
 }
 
-import synect_by_ip
+import synect_with_domain api.synect.uz
+
+# ---------------------------------------------------------------------------------------------------------------
+# Static site synect.uz (published by synect-site\deploy\deploy.ps1 into /var/www/synect/releases; Caddy reads
+# /var/www/synect/current only). Only white-listed paths are served; addresses keep .html; "/" serves synect.html.
+
+# HTTP -> HTTPS and www -> synect.uz as explicit 301 (Caddy's own automatic redirect would be 308).
+http://synect.uz, http://www.synect.uz {
+	redir https://synect.uz{uri} 301
+}
+
+www.synect.uz {
+	header Strict-Transport-Security "max-age=300"
+	redir https://synect.uz{uri} 301
+}
+
+synect.uz {
+	root * /var/www/synect/current
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options SAMEORIGIN
+		# HSTS: short trial value first; raise only after a few days without problems.
+		Strict-Transport-Security "max-age=300"
+	}
+
+	@pages path / /synect.html /synect-uz.html /voprosy.html /savollar.html /stati.html /sverka-platezhey-s-esf.html /neoplachennye-esf.html /esf-didox-ozhidayut-podpisi.html /ostatok-banka-ne-shoditsya-s-1s.html /dolgi-klientov-30-60-90.html /platezhi-bez-dokumentov.html /chek-list-zakrytiya-mesyaca.html /404.html
+	@meta path /sitemap.xml /robots.txt /yandex_332872da88824a2a.html /googlec04d433c7a384d9e.html
+	@assets path_regexp ^/assets/[A-Za-z0-9._-]+\.(webp|png|jpg|jpeg|svg|avif|gif|ico)$
+	@icons path /favicon.ico /favicon.svg /apple-touch-icon.png
+
+	# html 5 minutes
+	handle @pages {
+		header Cache-Control "public, max-age=300"
+		rewrite / /synect.html
+		file_server
+	}
+	handle @meta {
+		header Cache-Control "public, max-age=300"
+		file_server
+	}
+	# icons: 1 day
+	handle @icons {
+		header Cache-Control "public, max-age=86400"
+		file_server
+	}
+	# assets/: file names carry no hash, so 1 day
+	handle @assets {
+		header Cache-Control "public, max-age=86400"
+		file_server
+	}
+	# everything else (drafts, backups, *.md, *.py, .git, unknown pages): 404
+	handle {
+		error 404
+	}
+
+	handle_errors {
+		@notfound expression {err.status_code} == 404
+		handle @notfound {
+			header Cache-Control "public, max-age=300"
+			rewrite * /404.html
+			file_server
+		}
+		handle {
+			respond "{err.status_code} {err.status_text}"
+		}
+	}
+
+	log {
+		output file /var/log/caddy/synect-site-access.log {
+			roll_size 50MiB
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+			}
+		}
+	}
+}

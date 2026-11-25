@@ -22,6 +22,27 @@ public sealed record OrganizationConnection(
 
     /// <summary>1C only: freshness of the accounting and the catalog data separately (ingest_freshness).</summary>
     public IReadOnlyList<Ingest.IngestGroupFreshness>? DataGroups { get; init; }
+
+    /// <summary>onec_extension, onec_fresh_odata, didox, kapital_bank, file_import, … (<see cref="ConnectionKinds"/>).</summary>
+    public string ConnectionKind { get; init; } = "";
+
+    /// <summary>push (the source sends data: 1C extension, file import) or pull (Synect loads it).</summary>
+    public string Transport { get; init; } = "";
+
+    /// <summary>1C only: desktop, clobus or other.</summary>
+    public string? HostLabel { get; init; }
+
+    /// <summary>Last attempt: pull — start of the last load (successful or not); push — the last package received (accepted or not).</summary>
+    public DateTimeOffset? LastAttemptAt { get; init; }
+
+    /// <summary>Whether credentials are stored (never their value).</summary>
+    public bool CredentialsSet { get; init; }
+
+    /// <summary>1C extension: prefix of the newest active ingest key (not enough to use it).</summary>
+    public string? IngestKeyPrefix { get; init; }
+
+    /// <summary>1C:Fresh over OData: per entity, the last completed full export and the last attempt (with its outcome).</summary>
+    public IReadOnlyList<OData.ODataFullSyncState>? FullSyncs { get; init; }
 }
 
 /// <param name="NewBySeverity">New attention items (including snoozed ones whose time is over) per severity.</param>
@@ -44,7 +65,7 @@ public sealed record OrganizationSummary(
 /// edo_documents); nothing is recalculated on the fly. One transaction with the analytics timeout per organization.
 /// </summary>
 public sealed class PortfolioQueries(AnalyticsContext ctx, IOptions<AccountsOptions> options, IOptions<ReconciliationOptions> reconciliation, TimeProvider time,
-    IOptions<Ingest.IngestOptions> ingest)
+    IOptions<Ingest.IngestOptions> ingest, IOptions<OData.ODataOptions> odata)
 {
     public Task<AnalyticsResult<OrganizationSummary>> SummaryAsync(bool withWorkload, CancellationToken ct) =>
         ctx.RunAsync(async token =>
@@ -59,6 +80,21 @@ public sealed class PortfolioQueries(AnalyticsContext ctx, IOptions<AccountsOpti
                 .Raw("select distinct on (r.connection_id) r.connection_id, r.is_complete from sync_runs r where r.tenant_id = ").P(t)
                 .Raw(" and r.result = 'Succeeded' order by r.connection_id, r.finished_at desc"), token);
             var completeBy = complete.ToDictionary(r => r.ConnectionId, r => r.IsComplete);
+            var attempts = await ctx.QueryAsync<AttemptRow>(new Sql()
+                .Raw("select r.connection_id, max(r.started_at) as at from sync_runs r where r.tenant_id = ").P(t).Raw(" group by r.connection_id")
+                .Raw(" union all select b.connection_id, max(b.received_at) as at from ingest_batches b where b.tenant_id = ").P(t)
+                .Raw(" and b.ingest_key_id is not null group by b.connection_id"), token);
+            var attemptBy = attempts.GroupBy(a => a.ConnectionId).ToDictionary(g => g.Key, g => g.Max(a => a.At));
+            var withCredentials = (await ctx.QueryAsync<IdRow>(new Sql()
+                .Raw("select s.connection_id from connection_secrets s where s.tenant_id = ").P(t).Raw(" and s.kind = 'credentials'"), token))
+                .Select(r => r.ConnectionId).ToHashSet();
+            var fullSyncs = connections.Any(c => c.IsOneCOData)
+                ? await OData.ODataFullSyncStates.LoadAsync(ctx.Db, t, null, token)
+                : [];
+            var keyPrefixes = (await ctx.QueryAsync<KeyRow>(new Sql()
+                .Raw("select distinct on (k.connection_id) k.connection_id, k.key_prefix from ingest_keys k where k.tenant_id = ").P(t)
+                .Raw(" and k.revoked_at is null order by k.connection_id, k.created_at desc"), token))
+                .ToDictionary(r => r.ConnectionId, r => r.KeyPrefix);
 
             var attention = await ctx.QueryAsync<AttentionRow>(new Sql()
                 .Raw("select i.severity, (count(*) filter (where i.status = 'New' or (i.status = 'Snoozed' and i.snoozed_until <= ").P(now).Raw(")))::int as new_count,")
@@ -94,9 +130,34 @@ public sealed class PortfolioQueries(AnalyticsContext ctx, IOptions<AccountsOpti
                     ? Ingest.IngestFreshnessGroups.Evaluate(groups.Where(g => g.ConnectionId == c.Id).ToDictionary(g => g.DataGroup, g => g.LastAcceptedAt),
                         ingest.Value, now)
                     : null,
+                ConnectionKind = c.Kind,
+                Transport = c.Transport,
+                HostLabel = c.HostLabel,
+                LastAttemptAt = attemptBy.TryGetValue(c.Id, out var attempt) ? attempt : null,
+                CredentialsSet = withCredentials.Contains(c.Id),
+                IngestKeyPrefix = keyPrefixes.GetValueOrDefault(c.Id),
+                // Every entity of the connection's profile, also those never exported in full (last_full_sync_at null).
+                FullSyncs = c.IsOneCOData ? OData.ODataFullSyncStates.ForProfile(c, fullSyncs, odata.Value) : null,
             }).ToList();
             return new OrganizationSummary(list, newBy, openCritical, unmatched, awaiting, days);
         }, ct);
+
+    private sealed class AttemptRow
+    {
+        public Guid ConnectionId { get; set; }
+        public DateTimeOffset? At { get; set; }
+    }
+
+    private sealed class IdRow
+    {
+        public Guid ConnectionId { get; set; }
+    }
+
+    private sealed class KeyRow
+    {
+        public Guid ConnectionId { get; set; }
+        public string KeyPrefix { get; set; } = "";
+    }
 
     private sealed class CompleteRow
     {

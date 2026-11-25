@@ -1,0 +1,107 @@
+namespace Synect.Application.OData;
+
+/// <summary>OData section: the 1C:Fresh (Clobus) connector that reads an application over the standard OData interface.</summary>
+public sealed class ODataOptions
+{
+    /// <summary>
+    /// Hosts base_url may point to (a host itself or any of its subdomains). Empty (not configured) means clobus.uz only.
+    /// No default element here on purpose: the configuration binder appends to an existing array instead of replacing it.
+    /// </summary>
+    public string[] AllowedHosts { get; set; } = [];
+
+    public static readonly string[] DefaultAllowedHosts = ["clobus.uz"];
+
+    /// <summary>The configured hosts, or clobus.uz when none is configured.</summary>
+    public string[] EffectiveAllowedHosts =>
+        AllowedHosts.Length == 0 ? DefaultAllowedHosts : AllowedHosts.Select(h => h.Trim().TrimEnd('.').ToLowerInvariant()).Where(h => h.Length > 0).ToArray();
+
+    /// <summary>Requests per second to one application (5).</summary>
+    public double RequestsPerSecond { get; set; } = 5;
+
+    /// <summary>Time limit of one HTTP request (60 s).</summary>
+    public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>Retries of a request after a timeout, a network error, 429 or 5xx (3); 401/403 are never retried.</summary>
+    public int MaxRetries { get; set; } = 3;
+
+    /// <summary>Pause before the first retry, doubled each time (1 s), at most <see cref="MaxRetryDelay"/>; Retry-After is respected.</summary>
+    public TimeSpan RetryBaseDelay { get; set; } = TimeSpan.FromSeconds(1);
+
+    public TimeSpan MaxRetryDelay { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Records per page ($top) when listing keys and versions (500).</summary>
+    public int PageSize { get; set; } = 500;
+
+    /// <summary>Refs per request when changed records are read by key with a $filter of "or" terms (20; the URL stays short).</summary>
+    public int RecordsPerKeyRequest { get; set; } = 20;
+
+    /// <summary>Safety limit of pages of one resource (10 000).</summary>
+    public int MaxPages { get; set; } = 10_000;
+
+    /// <summary>Delta of documents: documents dated within this many days back are compared by DataVersion (45).</summary>
+    public int DeltaWindowDays { get; set; } = 45;
+
+    /// <summary>
+    /// Auto mode, per entity: a full export is due when its last COMPLETED full export is at least FullSyncInterval minus
+    /// <see cref="FullSyncTolerance"/> old (24 h).
+    /// </summary>
+    public TimeSpan FullSyncInterval { get; set; } = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// Slack of <see cref="FullSyncInterval"/> (2 h): a daily slot starts at the same time every day, while the previous export
+    /// was recorded when it ended; without the slack the full export slips by one slot a day (or to every other day).
+    /// </summary>
+    public TimeSpan FullSyncTolerance { get; set; } = TimeSpan.FromHours(2);
+
+    /// <summary>
+    /// After a full export of an entity that did not complete (incomplete key list, held back by the mass-deletion guard, an
+    /// error), the next full attempt of that entity waits at least this long (12 h); deltas run meanwhile.
+    /// </summary>
+    public TimeSpan FullRetryAfter { get; set; } = TimeSpan.FromHours(12);
+
+    /// <summary>Attention rule connection.full_sync_overdue: no completed full export of an entity for this many days (3).</summary>
+    public int FullSyncOverdueDays { get; set; } = 3;
+
+    /// <summary>Daytime delta loads every N hours between Sync:Schedule:DaytimeStart and DaytimeEnd (2; 0 = nightly only).</summary>
+    public int DaytimeRefreshHours { get; set; } = 2;
+
+    /// <summary>
+    /// Folder with mapping profiles (&lt;name&gt;.json) that override the built-in ones without a rebuild; empty = built-in only.
+    /// A connection can also carry its own profile in its settings (profile_json).
+    /// </summary>
+    public string? ProfilesPath { get; set; }
+
+    /// <summary>Profile used when a connection names none.</summary>
+    public string DefaultProfile { get; set; } = "clobus-bp-uz";
+
+    /// <summary>
+    /// OData:AllowHttpLocalhostInDevelopment (false): in the Development environment only, base_url may be http://localhost
+    /// (a local test server). Ignored elsewhere; the host calls <see cref="AllowLocalDevelopment"/> after checking the environment.
+    /// </summary>
+    public bool AllowHttpLocalhostInDevelopment { get; set; }
+
+    /// <summary>True when the host enabled http://localhost and loopback addresses (Development only). Not bound from configuration.</summary>
+    public bool LocalDevelopmentAllowed { get; private set; }
+
+    public void AllowLocalDevelopment() => LocalDevelopmentAllowed = true;
+
+    /// <summary>OData:MassDeleteGuard: a full export that would mark too many records deleted is not completed.</summary>
+    public ODataMassDeleteGuardOptions MassDeleteGuard { get; set; } = new();
+}
+
+/// <summary>
+/// OData:MassDeleteGuard. A completed full export marks deleted the records absent from the source. It is held back (sent
+/// as a delta, the load is incomplete, an attention item is raised) when more than <see cref="MaxShare"/> of the active
+/// records of an entity are absent and they are at least <see cref="MinCount"/>, or when the source returned no records at
+/// all while active ones are stored. Only DevTools sync-odata --confirm-mass-delete lets such an export complete.
+/// </summary>
+public sealed class ODataMassDeleteGuardOptions
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Share of the active records of an entity (0.2 = 20%); more absent than this is a mass deletion.</summary>
+    public double MaxShare { get; set; } = 0.2;
+
+    /// <summary>A mass deletion also needs at least this many absent records (50).</summary>
+    public int MinCount { get; set; } = 50;
+}

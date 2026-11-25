@@ -14,6 +14,8 @@
   <ItemGroup>
     <!-- Words of payment purposes (Russian, Uzbek); easy to extend without code changes. -->
     <EmbeddedResource Include="Reconciliation\PurposeDictionary.json" LogicalName="Synect.Reconciliation.PurposeDictionary.json" />
+    <!-- Mapping profiles of the 1C:Fresh OData connector (data, not code): Synect.OData.Profiles.<name>.json. -->
+    <EmbeddedResource Include="OData\Profiles\*.json" LogicalName="Synect.OData.Profiles.%(Filename).json" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Synect.Tests" />

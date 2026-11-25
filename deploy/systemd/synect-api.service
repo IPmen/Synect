@@ -15,6 +15,8 @@ Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=DOTNET_ENVIRONMENT=Production
 # Loopback only: Caddy is the only way in.
 Environment=ASPNETCORE_URLS=http://127.0.0.1:5299
+# Behind Caddy: the real client IP (X-Forwarded-For from the loopback proxy only) for the per-IP limits.
+Environment=Hosting__ForwardedHeaders=true
 Environment=HOME=/var/lib/synect
 Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
 

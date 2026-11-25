@@ -99,7 +99,15 @@ internal sealed class ConnectionConfiguration : IEntityTypeConfiguration<Connect
         b.Property(e => e.OnboardingStatus).HasConversion<string>().HasMaxLength(32).HasDefaultValue(OnboardingStatus.NotStarted);
         b.Property(e => e.OnboardingNote).HasMaxLength(Connection.MaxOnboardingNoteLength);
         b.HasIndex(e => new { e.TenantId, e.SourceCode });
+        // At most one 1C connection (extension or OData) that is not Disabled per organization: the source of accounting
+        // records is never ambiguous. Changing the source means disabling the old connection first.
+        b.HasIndex(e => e.TenantId, OneActiveOneCIndex)
+            .HasDatabaseName(OneActiveOneCIndex)
+            .IsUnique()
+            .HasFilter("adapter_kind = 'Accounting1C' AND status <> 'Disabled'");
     }
+
+    public const string OneActiveOneCIndex = "ux_connections_one_active_1c";
 }
 
 internal sealed class SyncRunConfiguration : IEntityTypeConfiguration<SyncRun>

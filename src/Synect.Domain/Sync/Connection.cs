@@ -51,8 +51,33 @@ public class Connection : TenantEntity
     /// <summary>Source code of the 1C connection (<see cref="AdapterKind.Accounting1C"/>); no adapter is registered for it.</summary>
     public const string Accounting1CSourceCode = "1c";
 
-    /// <summary>True for connections whose data is loaded by the sync queue (not file imports or 1C, whose data is pushed).</summary>
-    public bool IsSyncable => AdapterKind is AdapterKind.Bank or AdapterKind.Edo;
+    /// <summary>
+    /// Source code of the 1C:Fresh (Clobus) connection read over the standard OData interface (<see cref="AdapterKind.Accounting1C"/>,
+    /// pull): Synect itself loads the data on the schedule and writes it through the same receiver as the 1C extension.
+    /// </summary>
+    public const string OneCFreshODataSourceCode = "1c_fresh_odata";
+
+    /// <summary>True for connections whose data is loaded by the sync queue (banks, Didox, 1C over OData), not pushed or imported.</summary>
+    public bool IsSyncable => Transport == ConnectionKinds.TransportPull;
+
+    /// <summary>A 1C connection of either kind (extension or OData). An organization has at most one that is not Disabled.</summary>
+    public bool IsOneC => AdapterKind == AdapterKind.Accounting1C;
+
+    /// <summary>The 1C:Fresh OData connection (pull).</summary>
+    public bool IsOneCOData => AdapterKind == AdapterKind.Accounting1C && SourceCode == OneCFreshODataSourceCode;
+
+    /// <summary>Kind of the connection (<see cref="ConnectionKinds"/>), derived from the adapter kind and the source code.</summary>
+    public string Kind => ConnectionKinds.Of(AdapterKind, SourceCode);
+
+    /// <summary>push (data is sent to Synect: 1C extension, file import) or pull (Synect loads it); derived from <see cref="Kind"/>.</summary>
+    public string Transport => ConnectionKinds.TransportOf(Kind);
+
+    /// <summary>
+    /// Where the 1C application runs (1C connections only): desktop, clobus or other. For OData it comes from the host of
+    /// base_url (stored in <see cref="Settings"/> as host_label when the connection is created); the extension is desktop
+    /// unless host_label says otherwise. Null for non-1C connections.
+    /// </summary>
+    public string? HostLabel => !IsOneC ? null : ConnectionKinds.ReadSetting(Settings, "host_label") ?? (IsOneCOData ? ConnectionKinds.HostOther : ConnectionKinds.HostDesktop);
 
     public string Name { get; set; } = string.Empty;
 
@@ -148,5 +173,55 @@ public class Connection : TenantEntity
         if (Status != status) StatusChangedAt = at;
         Status = status;
         StatusReason = reason;
+    }
+}
+
+/// <summary>Connection kinds, transports and host labels as shown to people and tools.</summary>
+public static class ConnectionKinds
+{
+    public const string OneCExtension = "onec_extension";
+    public const string OneCFreshOData = "onec_fresh_odata";
+    public const string Didox = "didox";
+    public const string KapitalBank = "kapital_bank";
+    public const string FileImport = "file_import";
+    public const string Bank = "bank";
+    public const string Edo = "edo";
+
+    public const string TransportPush = "push";
+    public const string TransportPull = "pull";
+
+    public const string HostDesktop = "desktop";
+    public const string HostClobus = "clobus";
+    public const string HostOther = "other";
+
+    public static string Of(AdapterKind adapterKind, string sourceCode) => adapterKind switch
+    {
+        AdapterKind.Accounting1C => sourceCode == Connection.OneCFreshODataSourceCode ? OneCFreshOData : OneCExtension,
+        AdapterKind.File => FileImport,
+        AdapterKind.Bank => sourceCode.Contains("kapital", StringComparison.OrdinalIgnoreCase) ? KapitalBank : Bank,
+        AdapterKind.Edo => sourceCode.Contains("didox", StringComparison.OrdinalIgnoreCase) ? Didox : Edo,
+        _ => adapterKind.ToString().ToLowerInvariant(),
+    };
+
+    /// <summary>The 1C extension and file imports push data to Synect; everything else is loaded by Synect.</summary>
+    public static string TransportOf(string kind) => kind is OneCExtension or FileImport ? TransportPush : TransportPull;
+
+    /// <summary>A string property of the settings JSON object, or null (malformed settings count as empty).</summary>
+    public static string? ReadSetting(string? settingsJson, string name)
+    {
+        if (string.IsNullOrWhiteSpace(settingsJson)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(settingsJson);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                   && doc.RootElement.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
+                   && v.GetString() is { Length: > 0 } text
+                ? text
+                : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
     }
 }

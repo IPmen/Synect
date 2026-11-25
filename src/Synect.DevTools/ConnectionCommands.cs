@@ -33,7 +33,13 @@ public sealed class ConnectionCommands(IServiceProvider services)
     /// <summary>create-connection --tenant X --source &lt;code&gt; --login &lt;login&gt; [--name ...] [--test] [--password-stdin]</summary>
     public async Task<int> CreateAsync(Guid tenantId, CliArgs options)
     {
-        var source = options.Get("source") ?? throw new ArgumentException("--source <source code> is required (list-sources shows them)");
+        // --kind didox | kapital_bank is a shortcut for the real adapters' source codes.
+        var source = options.Get("source") ?? options.Get("kind") switch
+        {
+            "didox" => "didox",
+            "kapital_bank" => "kapitalbank",
+            _ => throw new ArgumentException("--source <source code> (list-sources shows them) or --kind onec_extension|onec_fresh_odata|didox|kapital_bank is required"),
+        };
         var login = RequireLogin(options);
         var password = ReadPassword(options, confirm: true);
         var test = options.Get("test") == "true";

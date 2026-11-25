@@ -101,6 +101,8 @@ public static class DependencyInjection
         services.AddScoped<Ingest.IngestKeyService>();
         services.AddScoped<Ingest.IngestWriter>();
         services.AddScoped<Ingest.IngestService>();
+        services.AddOptions<OData.ODataOptions>();
+        services.AddScoped<OData.ODataSyncService>();
         // Questions about 1C data and its comparison with the bank and Didox (read only).
         services.AddOptions<Accounting1C.AccountingOptions>();
         services.AddScoped<Accounting1C.AccountingQueries>();

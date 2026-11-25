@@ -79,7 +79,8 @@ public sealed class SyncDispatcher(
             }
 
             string provider;
-            try { provider = registry.Get(candidate.SourceCode).ProviderName; }
+            // 1C:Fresh over OData has no adapter in the registry: its loads share one provider slot of their own.
+            try { provider = candidate.SourceCode == Connection.OneCFreshODataSourceCode ? OData.ODataSyncService.Provider : registry.Get(candidate.SourceCode).ProviderName; }
             catch (KeyNotFoundException)
             {
                 await FinishJobAsync(candidate, SyncJobStatus.Failed, null, $"No adapter for source '{candidate.SourceCode}'.");

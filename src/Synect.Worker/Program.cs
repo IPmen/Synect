@@ -13,6 +13,7 @@ builder.Services.Configure<HostOptions>(o =>
 // The connection string comes from user-secrets (Development) or ConnectionStrings__Synect (environment / systemd
 // EnvironmentFile in Production). Migrations are never applied here: see `Synect.DevTools migrate`.
 builder.Services.AddSynectInfrastructure(builder.Configuration);
+builder.Services.AddODataEnvironment(builder.Environment.IsEnvironment("Development"));
 builder.Services.AddHostedService<SyncWorker>();
 
 var host = builder.Build();

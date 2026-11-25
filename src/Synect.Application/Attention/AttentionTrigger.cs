@@ -39,6 +39,8 @@ public sealed class AttentionTrigger(
     public Task<AttentionEvaluation?> AfterLoadAsync(AdapterKind kind, bool succeeded, CancellationToken ct)
     {
         if (!succeeded) return RunAsync([AttentionCategory.Connection], ct);
+        // 1C (OData) loads: only the connection rules; no rule reads 1C data yet.
+        if (kind == AdapterKind.Accounting1C) return RunAsync([AttentionCategory.Connection], ct);
         // Bank API loads and statement file imports (AdapterKind.File) both bring bank data.
         var data = kind == AdapterKind.Edo ? AttentionCategory.Documents : AttentionCategory.Bank;
         return RunAsync([AttentionCategory.Connection, data, AttentionCategory.Reconciliation], ct);

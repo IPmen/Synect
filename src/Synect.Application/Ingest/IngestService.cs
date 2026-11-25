@@ -40,7 +40,37 @@ public sealed class IngestService(
 {
     private IngestOptions O => options.Value;
 
-    public async Task<IngestResponse> ProcessAsync(IngestKeyIdentity key, byte[] body, CancellationToken ct)
+    /// <summary>
+    /// organization_tin of packages built by Synect itself from a pulled source (1C:Fresh over OData). The organization of such
+    /// a package is the tenant context of the load, not a key, so the TIN of the envelope is a fixed placeholder.
+    /// </summary>
+    public const string PulledOrganizationTin = "000000000";
+
+    /// <summary>Where a package came from: the 1C extension with an ingest key (push) or a load of Synect itself (pull).</summary>
+    private sealed record Source(Guid? IngestKeyId, Guid TenantId, Guid ConnectionId, string? TenantTin)
+    {
+        public bool Pulled => IngestKeyId is null;
+    }
+
+    /// <summary>A package sent by the 1C extension with an ingest key.</summary>
+    public Task<IngestResponse> ProcessAsync(IngestKeyIdentity key, byte[] body, CancellationToken ct) =>
+        ProcessCoreAsync(new Source(key.IngestKeyId, key.TenantId, key.ConnectionId, key.TenantTin), body, null, ct);
+
+    /// <summary>
+    /// A package built by Synect from a pulled 1C source (1C:Fresh over OData) for the current organization and the given
+    /// connection: the same parsing, writing, journal and full-export bookkeeping as a package of the extension, with no
+    /// ingest key (ingest_batches.ingest_key_id is null, the source is the connection). organization_tin must be
+    /// <see cref="PulledOrganizationTin"/>. <paramref name="unchangedKeys"/>: in a full export, keys of records that still
+    /// exist in the source but were not sent again because their version did not change; they count as present, so the
+    /// completed export does not mark them deleted (they are also touched as seen).
+    /// </summary>
+    public Task<IngestResponse> ProcessPulledAsync(Guid connectionId, byte[] body, IReadOnlyCollection<string>? unchangedKeys, CancellationToken ct)
+    {
+        var tenantId = tenant.TenantId ?? throw new InvalidOperationException("Pulled packages are processed in a tenant context.");
+        return ProcessCoreAsync(new Source(null, tenantId, connectionId, PulledOrganizationTin), body, unchangedKeys, ct);
+    }
+
+    private async Task<IngestResponse> ProcessCoreAsync(Source key, byte[] body, IReadOnlyCollection<string>? unchangedKeys, CancellationToken ct)
     {
         if (tenant.TenantId != key.TenantId) throw new InvalidOperationException("The tenant context must be the organization of the ingest key.");
         var started = Stopwatch.StartNew();
@@ -76,7 +106,7 @@ public sealed class IngestService(
 
             try
             {
-                var response = await db.InTransactionAsync(token => ProcessInTransactionAsync(key, envelope, items, sha, body.Length, receivedAt, token), ct);
+                var response = await db.InTransactionAsync(token => ProcessInTransactionAsync(key, envelope, items, sha, body.Length, receivedAt, unchangedKeys, token), ct);
                 logger.LogInformation(
                     "Ingest {Entity} package {BatchId}#{Sequence} for tenant {TenantId}: {Status} in {ElapsedMs} ms",
                     envelope.Entity.Name, envelope.BatchId, envelope.Sequence, key.TenantId, response.Status, started.ElapsedMilliseconds);
@@ -101,13 +131,15 @@ public sealed class IngestService(
 
     private sealed record Outcome(IngestResponse Response, string Status, Counts? Counts);
 
-    private async Task<Outcome> ProcessInTransactionAsync(IngestKeyIdentity key, IngestEnvelope env, JsonElement items, string sha,
-        int bytes, DateTimeOffset now, CancellationToken ct)
+    private async Task<Outcome> ProcessInTransactionAsync(Source key, IngestEnvelope env, JsonElement items, string sha,
+        int bytes, DateTimeOffset now, IReadOnlyCollection<string>? unchangedKeys, CancellationToken ct)
     {
         await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock(hashtextextended({"ingest:" + key.TenantId}, 0))", ct);
 
         var connection = await db.Connections.SingleOrDefaultAsync(c => c.Id == key.ConnectionId, ct);
-        if (connection is null || connection.AdapterKind != AdapterKind.Accounting1C || connection.Status == ConnectionStatus.Disabled)
+        // The extension sends only to its own connection; a pulled package belongs only to the OData connection that loaded it.
+        if (connection is null || connection.AdapterKind != AdapterKind.Accounting1C || connection.Status == ConnectionStatus.Disabled
+            || connection.IsOneCOData != key.Pulled)
         {
             const string message = "The 1C connection of this organization is disabled.";
             return new Outcome(Error(403, IngestEnvelopeCodes.ConnectionDisabled, message), "rejected", null);
@@ -218,6 +250,7 @@ public sealed class IngestService(
         await writer.ReplaceChildrenAsync(spec, key.TenantId, toApply.Where(i => i.Children is not null).ToList(), storedBefore, ct);
         Lap("children");
         await writer.TouchAsync(spec, key.TenantId, now, touch, ct);
+        if (unchangedKeys is { Count: > 0 } && spec.HasRef) await writer.TouchRefsAsync(spec, key.TenantId, now, unchangedKeys, ct);
         Lap("touch");
 
         // Raw layer: every applied item as received; the last refused version of an item with a readable key separately.
@@ -244,22 +277,20 @@ public sealed class IngestService(
         object? fullSync = null;
         if (env.IsFull)
         {
-            var keys = parsed.Where(p => p.Key is not null && p.Key.Length <= 400).Select(p => p.Key!).Distinct(StringComparer.Ordinal).ToList();
+            var keys = parsed.Where(p => p.Key is not null && p.Key.Length <= 400).Select(p => p.Key!)
+                .Concat(unchangedKeys?.Where(k => k.Length <= 400) ?? []).Distinct(StringComparer.Ordinal).ToList();
             await writer.TrackFullSyncAsync(key.TenantId, env.FullSyncId!, spec.Name, keys, now, ct);
             fullSync = await CompleteFullSyncAsync(spec, key.TenantId, batch, env, now, ct);
         }
 
         // A package with at least one item that was not refused shows that the 1C source is alive. Freshness is also kept
         // per data group, so that catalog packages every minute never make stale accounting data look fresh.
-        if (accepted + unchanged > 0 || parsed.Count == 0)
+        // A pulled package (1C:Fresh over OData) changes neither: its loader marks the connection and the freshness once the
+        // whole load succeeded, so a load that fails half-way never resets the circuit breaker or looks fresh.
+        if (!key.Pulled && (accepted + unchanged > 0 || parsed.Count == 0))
         {
             connection.MarkSyncSucceeded(now);
-            await db.Database.ExecuteSqlAsync($"""
-                INSERT INTO ingest_freshness (tenant_id, connection_id, data_group, last_accepted_at)
-                VALUES ({key.TenantId}, {connection.Id}, {spec.Group.ToString()}, {now.ToUniversalTime()})
-                ON CONFLICT (tenant_id, connection_id, data_group) DO UPDATE SET last_accepted_at = excluded.last_accepted_at
-                WHERE ingest_freshness.last_accepted_at < excluded.last_accepted_at
-                """, ct);
+            await writer.MarkFreshAsync(key.TenantId, connection.Id, spec.Group, now, ct);
         }
         batch.FinishedAt = time.GetUtcNow();
         await db.SaveChangesAsync(ct);
@@ -345,7 +376,7 @@ public sealed class IngestService(
         };
     }
 
-    private static void Fill(IngestBatch batch, IngestKeyIdentity key, IngestEnvelope env, string sha, int bytes, DateTimeOffset now)
+    private static void Fill(IngestBatch batch, Source key, IngestEnvelope env, string sha, int bytes, DateTimeOffset now)
     {
         batch.ConnectionId = key.ConnectionId;
         batch.IngestKeyId = key.IngestKeyId;
@@ -367,7 +398,7 @@ public sealed class IngestService(
     }
 
     /// <summary>A refused envelope is journaled when batch_id and sequence could be read (a processed row is never replaced).</summary>
-    private Task JournalRefusalAsync(IngestKeyIdentity key, string? batchId, int? sequence, string? entity, int? schemaVersion,
+    private Task JournalRefusalAsync(Source key, string? batchId, int? sequence, string? entity, int? schemaVersion,
         string code, string message, string sha, int bytes, DateTimeOffset now, CancellationToken ct)
     {
         if (batchId is null || sequence is null) return Task.CompletedTask;
@@ -375,12 +406,12 @@ public sealed class IngestService(
             IngestBatchStatus.Rejected, $"{code}: {message}", sha, bytes, now, ct);
     }
 
-    private Task JournalAsync(IngestKeyIdentity key, IngestEnvelope env, IngestBatchStatus status, string error, string sha, int bytes,
+    private Task JournalAsync(Source key, IngestEnvelope env, IngestBatchStatus status, string error, string sha, int bytes,
         DateTimeOffset now, CancellationToken ct) =>
         WriteJournalAsync(key, env.BatchId, env.Sequence, env.Entity.Name, env.Mode, env.FullSyncId, env.IsLastBatch, env.SchemaVersion,
             env.ExtensionVersion, env.ExportedAt, status, error, sha, bytes, now, ct);
 
-    private async Task WriteJournalAsync(IngestKeyIdentity key, string batchId, int sequence, string entity, string mode, string? fullSyncId,
+    private async Task WriteJournalAsync(Source key, string batchId, int sequence, string entity, string mode, string? fullSyncId,
         bool isLast, int schemaVersion, string? extension, DateTimeOffset? exportedAt, IngestBatchStatus status, string error, string sha,
         int bytes, DateTimeOffset now, CancellationToken ct)
     {

@@ -28,7 +28,12 @@ public class IngestBatch : TenantEntity
     public const int MaxIdLength = 64;
 
     public Guid ConnectionId { get; set; }
-    public Guid IngestKeyId { get; set; }
+
+    /// <summary>
+    /// The ingest key the 1C extension sent the package with; null for packages that Synect loaded itself (1C:Fresh over
+    /// OData): their source is the connection (<see cref="ConnectionId"/>).
+    /// </summary>
+    public Guid? IngestKeyId { get; set; }
 
     /// <summary>Package id assigned by the source.</summary>
     public string BatchId { get; set; } = string.Empty;

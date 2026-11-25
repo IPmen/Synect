@@ -13,7 +13,7 @@ public sealed record ScheduleSlot(DateTimeOffset Start, DateTimeOffset ValidUnti
 /// jitter derived from a hash of the connection id: the same connection always gets the same time,
 /// different connections are distributed over the window.
 /// </summary>
-public sealed class SyncScheduleCalculator(IOptions<ScheduleOptions> options)
+public sealed class SyncScheduleCalculator(IOptions<ScheduleOptions> options, IOptions<OData.ODataOptions>? odataOptions = null)
 {
     private ScheduleOptions O => options.Value;
 
@@ -36,10 +36,13 @@ public sealed class SyncScheduleCalculator(IOptions<ScheduleOptions> options)
     }
 
     /// <summary>Daytime refresh slots of an EDO connection: every N hours from DaytimeStart, shifted by the jitter.</summary>
-    public IReadOnlyList<ScheduleSlot> DaytimeSlots(Guid connectionId, DateOnly localDate)
+    public IReadOnlyList<ScheduleSlot> DaytimeSlots(Guid connectionId, DateOnly localDate) => DaytimeSlots(connectionId, localDate, O.EdoDaytimeRefreshHours);
+
+    /// <summary>Daytime refresh slots every <paramref name="hours"/> hours from DaytimeStart, shifted by the jitter.</summary>
+    public IReadOnlyList<ScheduleSlot> DaytimeSlots(Guid connectionId, DateOnly localDate, int hours)
     {
-        if (O.EdoDaytimeRefreshHours <= 0) return [];
-        var period = TimeSpan.FromHours(O.EdoDaytimeRefreshHours);
+        if (hours <= 0) return [];
+        var period = TimeSpan.FromHours(hours);
         var offset = TimeSpan.FromSeconds(Math.Floor(period.TotalSeconds * JitterFraction(connectionId)));
         var slots = new List<ScheduleSlot>();
         for (var start = O.DaytimeStart + offset; start < O.DaytimeEnd; start += period)
@@ -51,11 +54,13 @@ public sealed class SyncScheduleCalculator(IOptions<ScheduleOptions> options)
     }
 
     /// <summary>The slot that is due now (start passed, still valid), or null.</summary>
-    public ScheduleSlot? CurrentSlot(Guid connectionId, AdapterKind kind, DateTimeOffset now)
+    public ScheduleSlot? CurrentSlot(Guid connectionId, AdapterKind kind, DateTimeOffset now, bool oneCOData = false)
     {
         var localDate = DateOnly.FromDateTime(now.ToOffset(O.UtcOffset).DateTime);
         var slots = new List<ScheduleSlot> { NightlySlot(connectionId, localDate) };
         if (kind == AdapterKind.Edo) slots.AddRange(DaytimeSlots(connectionId, localDate));
+        // 1C:Fresh over OData: daytime deltas every OData:DaytimeRefreshHours (the nightly slot usually becomes the full load).
+        if (oneCOData) slots.AddRange(DaytimeSlots(connectionId, localDate, odataOptions?.Value.DaytimeRefreshHours ?? 2));
         return slots.Where(s => s.Start <= now && now < s.ValidUntil).MaxBy(s => s.Start);
     }
 
