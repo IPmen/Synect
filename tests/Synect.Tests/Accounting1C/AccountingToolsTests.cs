@@ -269,7 +269,7 @@ public class AccountingToolsTests(AccountingFixture f) : IClassFixture<Accountin
             Assert.Contains(sources, s => s.GetProperty("kind").GetString() == "accounting1_c" || s.GetProperty("source").GetString() == "1c");
             var notes = List(body.GetProperty("notes")).Select(n => n.GetString()!).ToList();
             Assert.Contains(notes, n => n.Contains("1C extension"));
-            Assert.Contains(notes, n => n.Contains("assumptions"));
+            Assert.DoesNotContain(notes, n => n.Contains("assumption") || n.Contains("Accounting:*"));
             // No full account number of the organization anywhere in the answer.
             foreach (var account in f.GoldenData.BankAccounts.Select(a => (string)a["number"]!))
                 Assert.DoesNotContain(account, body.GetRawText());

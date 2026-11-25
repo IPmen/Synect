@@ -42,7 +42,9 @@ public class McpAttentionTests(McpFixture f) : IClassFixture<McpFixture>
         Assert.Equal(2, data.GetProperty("open_by_category").GetProperty("reconciliation").GetInt32());
         Assert.True(data.GetProperty("last_evaluated_at").ValueKind == JsonValueKind.String);
         Assert.Equal(2, body.GetProperty("data_freshness").GetProperty("sources").GetArrayLength());
-        Assert.Contains(Notes(body), n => n.Contains("possible discrepancy") && n.Contains("Attention:*"));
+        Assert.Contains(Notes(body), n => n.Contains("possible discrepancy"));
+        // Internal setting names and development caveats are not passed on to the user.
+        Assert.DoesNotContain(Notes(body), n => n.Contains("Attention:*") || n.Contains("assumption"));
         // Attention tools carry no attention block of their own.
         Assert.False(body.TryGetProperty("attention", out _));
         Assert.Equal(0, f.AdapterCalls.Calls);

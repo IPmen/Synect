@@ -67,9 +67,21 @@ public sealed class McpNotesOptions
 {
     public string[] Bank { get; set; } =
     [
-        "Kapital Bank amount unit (sum or tiyin) is NOT confirmed yet (Adapters:KapitalBank:AmountUnit); bank amounts may be off by a factor of 100.",
         "Bank operations rejected by the bank (has_error) are always excluded.",
     ];
+
+    /// <summary>
+    /// Added to every answer whose data includes a real Kapital Bank connection (source <see cref="KapitalBankSourceCode"/>)
+    /// while <see cref="KapitalBankAmountUnitConfirmed"/> is false. Demo (fake) bank data never gets it.
+    /// </summary>
+    public string KapitalBankAmountUnit { get; set; } =
+        "The amount unit of Kapital Bank (sum or tiyin) is not confirmed yet: bank amounts may be off by a factor of 100. Tell the user once, briefly.";
+
+    /// <summary>Set to true once the Kapital Bank amount unit has been checked on a real statement: the caveat disappears.</summary>
+    public bool KapitalBankAmountUnitConfirmed { get; set; }
+
+    /// <summary>Source code of the real Kapital Bank adapter (the fake one is fake_kapitalbank).</summary>
+    public string KapitalBankSourceCode { get; set; } = "kapitalbank";
 
     public string[] Documents { get; set; } =
     [
@@ -84,20 +96,18 @@ public sealed class McpNotesOptions
     public string[] Reconciliation { get; set; } =
     [
         "Results are possible matches with a confidence score (0-100) and their reasons; the accountant makes the decision.",
-        "Matching rules and weights (Reconciliation:*) are assumptions still to be checked on real data.",
         "Only UZS payments are matched with Didox documents (documents are in UZS); payments in other currencies are listed as excluded, never converted.",
         "Payments without a counterparty INN are never matched automatically.",
     ];
 
     public string[] Attention { get; set; } =
     [
-        "Attention items come from Synect's rules over loaded data; their thresholds (Attention:*) are assumptions still to be checked on real data. Present each item as a possible discrepancy with its basis (body, details), not as a confirmed violation.",
+        "Attention items come from Synect's rules over loaded data. Present each item as a possible discrepancy with its basis (body, details), not as a confirmed violation.",
     ];
 
     public string[] Accounting { get; set; } =
     [
         "1C figures are what the 1C extension sent to Synect; check the 1C source in data_freshness (data_groups: accounting is stale when its last package is older than Ingest:AccountingStaleAfter).",
-        "The field mapping of the 1C export and the pairing rules of the comparison (Accounting:*) are assumptions still to be checked on real 1C data.",
         "Comparison rows are possible discrepancies with their basis; the accountant decides what each one means.",
     ];
 

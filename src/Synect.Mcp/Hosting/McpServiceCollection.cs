@@ -50,7 +50,10 @@ public static class McpServiceCollection
                     "At the start of a conversation about the client's finances call get_attention_summary and briefly mention new critical or high items; " +
                     "present attention items as possible discrepancies with their basis, never as confirmed violations. Every other answer has an 'attention' block (new items). " +
                     "Current stock and prices of goods by 1C (per warehouse, store or pharmacy; value at the default price type) are answered by get_1c_stock, get_1c_stock_summary and get_1c_prices; there are no sales or turnover there. " +
-                    "Do not write status lines about loading or calling tools, and do not list data sources in parentheses (such as \"(bank, Didox, 1C)\" or \"(банк, Didox, 1С)\"): go straight to the answer.";
+                    "Do not write status lines about loading or calling tools, and do not list data sources in parentheses (such as \"(bank, Didox, 1C)\" or \"(банк, Didox, 1С)\"): go straight to the answer. " +
+                    "Keep answers short and for a business owner or accountant: state data freshness in one short line (e.g. \"данные на 25.11, банк — 18 ч назад\"; give details per source only when data is older than a day or the user asks); " +
+                    "repeat a note only when it changes the meaning of the answer (e.g. payments in another currency were left out); list what was filtered out only when the user asks (offer it in one line); " +
+                    "never mention internal configuration, setting names or development caveats.";
             })
             .WithHttpTransport(options => options.Stateless = true)
             .WithTools<SourceTools>()

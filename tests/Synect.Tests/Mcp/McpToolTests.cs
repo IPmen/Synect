@@ -527,4 +527,30 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
 
     private async Task<int> QueuedJobsAsync(Guid tenant) =>
         (await f.QueryAdminAsync($"SELECT count(*)::int FROM sync_jobs WHERE tenant_id = '{tenant}' AND status = 'Queued'", r => r.GetInt32(0))).Single();
+    [Fact]
+    public async Task The_Kapital_Bank_amount_unit_note_appears_only_for_a_real_Kapital_Bank_connection_until_confirmed()
+    {
+        RequirePostgres();
+        const string Unit = "amount unit of Kapital Bank";
+        static bool HasNote(System.Text.Json.JsonElement body) =>
+            body.GetProperty("notes").EnumerateArray().Any(n => n.GetString()!.Contains(Unit));
+
+        // Demo (fake) bank data: no caveat.
+        await using (var demo = await f.ClientAsync(f.KeyA))
+            Assert.False(HasNote((await McpFixture.CallAsync(demo, "get_account_balances")).Body));
+
+        // A real Kapital Bank connection (source code kapitalbank): the caveat is there.
+        var tenant = await f.Host.CreateTenantAsync("MCP real Kapital Bank " + Guid.NewGuid().ToString("N")[..6]);
+        var bank = await f.Host.CreateConnectionAsync(tenant, Synect.Domain.Sync.AdapterKind.Bank);
+        await f.ExecAdminAsync($"update connections set source_code = 'kapitalbank' where id = '{bank}'");
+        var key = await f.Host.InTenantAsync(tenant, sp => sp.GetRequiredService<Synect.Application.Access.ApiKeyService>()
+            .CreateAsync("real bank", [ApiKey.ScopeRead], CancellationToken.None));
+        await using (var real = await f.ClientAsync(key.Key))
+            Assert.True(HasNote((await McpFixture.CallAsync(real, "get_account_balances")).Body));
+
+        // Once the unit is confirmed (Mcp:Notes:KapitalBankAmountUnitConfirmed), it disappears.
+        var confirmed = f.CreateApi(("Mcp:Notes:KapitalBankAmountUnitConfirmed", "true"));
+        await using (var real = await f.ClientAsync(key.Key, confirmed))
+            Assert.False(HasNote((await McpFixture.CallAsync(real, "get_account_balances")).Body));
+    }
 }

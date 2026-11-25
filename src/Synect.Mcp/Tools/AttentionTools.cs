@@ -20,8 +20,8 @@ namespace Synect.Mcp.Tools;
 internal static class AttentionText
 {
     public const string About =
-        " Attention items are findings of Synect's own rules over the loaded bank and Didox data (thresholds in Attention:*, assumptions still to be" +
-        " checked on real data); severity is critical, high, medium or low; status is new, seen, snoozed, dismissed, resolved (the" +
+        " Attention items are findings of Synect's own rules over the loaded bank and Didox data; severity" +
+        " is critical, high, medium or low; status is new, seen, snoozed, dismissed, resolved (the" +
         " condition is no longer found) or archived (dismissed long ago and its condition has been gone since). Describe each item to the user as a POSSIBLE discrepancy with its basis (body and details), never as a" +
         " confirmed violation, and translate title and body into the user's language.";
 }

@@ -144,7 +144,13 @@ public sealed class ToolRunner(
         var notes = new List<string>();
         notes.AddRange(GroupNotes(group));
         if (output.Notes is { } specific) notes.AddRange(specific);
-        if (output.Freshness is { } f) notes.AddRange(FreshnessNotes(f));
+        if (output.Freshness is { } f)
+        {
+            notes.AddRange(FreshnessNotes(f));
+            var n = Options.Notes;
+            if (!n.KapitalBankAmountUnitConfirmed && f.Sources.Any(s => string.Equals(s.SourceCode, n.KapitalBankSourceCode, StringComparison.OrdinalIgnoreCase)))
+                notes.Add(n.KapitalBankAmountUnit);
+        }
         var truncated = output.Truncated || output.NextCursor is not null;
         if (truncated)
             notes.Add(output.NextCursor is not null
@@ -272,7 +278,7 @@ public sealed class ToolRunner(
     }
 
     public string CountedStatusesNote =>
-        $"Didox document sums count only statuses {string.Join(", ", analytics.Value.Edo.CountedStatuses)} (Analytics:Edo:CountedStatuses, an assumption still to be confirmed); other statuses (e.g. draft 0, rejected 4, invalid 40) are excluded from sums.";
+        $"Didox document sums count only statuses {string.Join(", ", analytics.Value.Edo.CountedStatuses)} ; other statuses (e.g. draft 0, rejected 4, invalid 40) are excluded from sums.";
 
     private IEnumerable<string> FreshnessNotes(DataFreshness freshness)
     {
