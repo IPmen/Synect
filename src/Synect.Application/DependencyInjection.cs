@@ -106,6 +106,7 @@ public static class DependencyInjection
         // Questions about 1C data and its comparison with the bank and Didox (read only).
         services.AddOptions<Accounting1C.AccountingOptions>();
         services.AddScoped<Accounting1C.AccountingQueries>();
+        services.AddScoped<Accounting1C.CatalogQueries>();
         services.AddScoped<Accounting1C.AccountingComparison>();
         services.AddSynectAnalytics();
         return services;

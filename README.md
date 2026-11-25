@@ -186,6 +186,7 @@ Errors are answers with `isError: true` and `error.code`: `invalid_argument`, `t
 | Attention | `get_attention_items`, `get_attention_summary`, `update_attention_item` (scope `review`; changes only Synect's attention list) |
 | Refresh | `request_data_refresh` (scope `sync_request`) |
 | 1C | `get_1c_documents`, `get_1c_payment_orders`, `get_1c_settlement_balances`, `get_1c_bank_account_balances`, `compare_bank_with_1c`, `compare_didox_with_1c`, `compare_bank_balances_with_1c`, `compare_counterparty_with_1c` (see "1C questions and comparison") |
+| 1C catalog | `get_1c_stock` (current stock per item and warehouse: search by name in any spelling, code, article or barcode; warehouse; in stock / out of stock / negative / at most N; price and value at the default price type), `get_1c_stock_summary` (per warehouse: positions, out of stock, negative, stock value), `get_1c_prices` (current prices of every price type; items without a price). Only current stock and prices: no sales or turnover |
 
 Typical questions and the tool for each: [docs/demo-questions.md](docs/demo-questions.md).
 

@@ -33,6 +33,8 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         // 1C (stage 8b).
         "get_1c_documents", "get_1c_payment_orders", "get_1c_settlement_balances", "get_1c_bank_account_balances",
         "compare_bank_with_1c", "compare_didox_with_1c", "compare_bank_balances_with_1c", "compare_counterparty_with_1c",
+        // 1C catalog: stock and prices.
+        "get_1c_stock", "get_1c_stock_summary", "get_1c_prices",
     ];
 
     /// <summary>Tools over every organization of the key (stage 6.5).</summary>
@@ -100,6 +102,9 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         ["compare_didox_with_1c"] = October,
         ["compare_bank_balances_with_1c"] = null,
         ["compare_counterparty_with_1c"] = new { inn = Alpha, from = "2026-10-01", to = "2026-10-31" },
+        ["get_1c_stock"] = null,
+        ["get_1c_stock_summary"] = null,
+        ["get_1c_prices"] = null,
         ["get_attention_items"] = null,
         ["get_attention_summary"] = null,
         ["update_attention_item"] = new { item_id = "00000000-0000-0000-0000-000000000001", action = "seen" },

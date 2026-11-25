@@ -61,6 +61,7 @@ public static class McpServiceCollection
             .WithTools<AttentionTools>()
             .WithTools<PortfolioTools>()
             .WithTools<AccountingTools>()
+            .WithTools<CatalogTools>()
             .WithRequestFilters(filters =>
             {
                 filters.AddCallToolFilter(ToolCallFilter.Create());
