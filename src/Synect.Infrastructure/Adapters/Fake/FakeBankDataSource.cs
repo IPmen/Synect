@@ -188,7 +188,7 @@ public sealed class FakeBankDataSource
                 ["aid"] = s.Seed * 100 + i,
                 ["branch"] = "00974",
                 ["account"] = AccountNumber(s.Seed, i, CurrencyOf(s, i)),
-                ["name"] = $"OOO \"FAKE CLIENT {s.Seed}\"",
+                ["name"] = FakeNames.Client(s.Seed),
                 ["val"] = CurrencyOf(s, i),
                 ["o_date"] = "2024-01-15",
                 ["l_date"] = "2026-11-06",
@@ -281,9 +281,9 @@ public sealed class FakeBankDataSource
             : (300_000_000 + random.Next(0, 99_999_999)).ToString();
         if (s.NoInnShare > 0 && random.NextDouble() < s.NoInnShare) partnerInn = "";
         var partnerAccount = $"20208000{random.Next(0, 999_999_999):D9}001";
-        var partnerName = partnerInn.Length == 0 ? "BANK FEE" : $"OOO \"PARTNER {partnerInn[^3..]}\"";
+        var partnerName = partnerInn.Length == 0 ? "BANK FEE" : FakeNames.Partner(partnerInn);
         var ourInn = (200_000_000 + s.Seed).ToString();
-        var ourName = $"OOO \"FAKE CLIENT {s.Seed}\"";
+        var ourName = FakeNames.Client(s.Seed);
         var b2Id = $"{day.DayNumber}{accountIndex:D2}{i:D3}";
 
         return new JsonObject

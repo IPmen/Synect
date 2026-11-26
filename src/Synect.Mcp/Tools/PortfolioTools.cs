@@ -243,14 +243,14 @@ public sealed class PortfolioTools(ToolRunner runner, McpCaller caller, Organiza
         NeedsAttention = connections.Count(c => c.Status == ConnectionStatus.NeedsAttention),
         Disabled = connections.Count(c => c.Status == ConnectionStatus.Disabled),
         NeverLoaded = connections.Count(c => c.LastSuccessfulSyncAt is null),
-        Sources = connections.Select(c => new { c.ConnectionId, Source = c.SourceCode, c.Kind, c.Status }).ToList(),
+        Sources = connections.Select(c => new { c.ConnectionId, Source = ConnectionKinds.DisplayName(c.SourceCode), c.Kind, c.Status }).ToList(),
     };
 
     private object Source(OrganizationConnection c, DateTimeOffset now) => new
     {
         c.ConnectionId,
         ConnectionName = TextSafety.Untrusted(c.Name, runner.Options.UntrustedTextMaxLength),
-        Source = c.SourceCode,
+        Source = ConnectionKinds.DisplayName(c.SourceCode),
         c.Kind,
         c.ConnectionKind,
         c.Transport,

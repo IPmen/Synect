@@ -226,7 +226,7 @@ public class IngestSecurityTests(IngestFixture f) : IClassFixture<IngestFixture>
         var result = await client2.CallToolAsync("get_data_freshness", new Dictionary<string, object?>());
         var body = JsonSerializer.SerializeToElement(result.StructuredContent).GetRawText();
         Assert.Contains("Accounting1C", body);
-        Assert.Contains("accounting data of the Accounting1C source 1c was last received", body);
+        Assert.Contains("accounting data of the Accounting1C source 1C was last received", body);
         Assert.Contains("more than 48 hours ago", body);
     }
 

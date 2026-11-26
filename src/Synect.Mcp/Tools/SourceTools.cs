@@ -60,7 +60,7 @@ public sealed class SourceTools(ToolRunner runner, ISourceFreshnessQuery freshne
                 results.Add(new
                 {
                     s.ConnectionId,
-                    Source = s.SourceCode,
+                    Source = ConnectionKinds.DisplayName(s.SourceCode),
                     s.Kind,
                     Result = r.Status,
                     r.JobId,

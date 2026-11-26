@@ -203,6 +203,24 @@ public static class ConnectionKinds
         _ => adapterKind.ToString().ToLowerInvariant(),
     };
 
+    /// <summary>
+    /// Provider name shown to users and to the model ("Kapital Bank", "Didox", "1C"): the internal source code (and the
+    /// fake_ prefix of the demo adapters) never leaves Synect.
+    /// </summary>
+    public static string DisplayName(string sourceCode)
+    {
+        var code = sourceCode.StartsWith("fake_", StringComparison.OrdinalIgnoreCase) ? sourceCode[5..] : sourceCode;
+        return code.ToLowerInvariant() switch
+        {
+            "kapitalbank" => "Kapital Bank",
+            "didox" => "Didox",
+            Connection.Accounting1CSourceCode => "1C",
+            Connection.OneCFreshODataSourceCode => "1C:Fresh",
+            Connection.FileImportSourceCode => "File import",
+            _ => code,
+        };
+    }
+
     /// <summary>The 1C extension and file imports push data to Synect; everything else is loaded by Synect.</summary>
     public static string TransportOf(string kind) => kind is OneCExtension or FileImport ? TransportPush : TransportPull;
 

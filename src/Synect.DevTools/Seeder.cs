@@ -28,8 +28,8 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
         for (var i = 1; i <= count; i++)
         {
             var tenant = await EnsureTenantAsync($"Demo client {i}", (310_000_000 + i).ToString());
-            var bankId = await EnsureConnectionAsync(tenant, AdapterKind.Bank, $"Kapital Bank (demo {i})");
-            var edoId = await EnsureConnectionAsync(tenant, AdapterKind.Edo, $"Didox (demo {i})");
+            var bankId = await EnsureConnectionAsync(tenant, AdapterKind.Bank, "Kapital Bank", $"Kapital Bank (demo {i})");
+            var edoId = await EnsureConnectionAsync(tenant, AdapterKind.Edo, "Didox", $"Didox (demo {i})");
 
             var b = bank.For(bankId);
             b.Seed = 100 + i;
@@ -180,12 +180,13 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
         return tenant.Id;
     }
 
-    private Task<Guid> EnsureConnectionAsync(Guid tenant, AdapterKind kind, string name) =>
+    /// <summary>Finds the connection by its name or by the name earlier seeds gave it (oldName), else creates it.</summary>
+    private Task<Guid> EnsureConnectionAsync(Guid tenant, AdapterKind kind, string name, string? oldName = null) =>
         tenants.InTenantAsync(tenant, async (sp, ct) =>
         {
             var db = sp.GetRequiredService<ISynectDbContext>();
             var existing = await db.InTransactionAsync(t =>
-                db.Connections.Where(c => c.Name == name).Select(c => (Guid?)c.Id).SingleOrDefaultAsync(t), ct);
+                db.Connections.Where(c => c.Name == name || (oldName != null && c.Name == oldName)).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(t), ct);
             if (existing is { } id) return id;
 
             var connection = new Connection

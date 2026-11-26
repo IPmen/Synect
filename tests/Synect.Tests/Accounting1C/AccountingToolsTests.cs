@@ -266,7 +266,7 @@ public class AccountingToolsTests(AccountingFixture f) : IClassFixture<Accountin
             var body = await f.AskAsync(f.GoldenKey, tool, args);
             Assert.Equal("ok", body.GetProperty("status").GetString());
             var sources = List(body.GetProperty("data_freshness").GetProperty("sources"));
-            Assert.Contains(sources, s => s.GetProperty("kind").GetString() == "accounting1_c" || s.GetProperty("source").GetString() == "1c");
+            Assert.Contains(sources, s => s.GetProperty("kind").GetString() == "accounting1_c" || s.GetProperty("source").GetString() == "1C");
             var notes = List(body.GetProperty("notes")).Select(n => n.GetString()!).ToList();
             Assert.Contains(notes, n => n.Contains("1C extension"));
             Assert.DoesNotContain(notes, n => n.Contains("assumption") || n.Contains("Accounting:*"));

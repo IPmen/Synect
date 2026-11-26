@@ -216,7 +216,7 @@ public sealed class FakeEdoDataSource(TimeProvider time)
                 Name = $"{i + 1:D4}",
                 DocDate = DateOnly.FromDateTime(created.DateTime),
                 PartnerTin = partnerTin,
-                PartnerCompany = $"OOO \"PARTNER {partnerTin[^3..]}\"",
+                PartnerCompany = FakeNames.Partner(partnerTin),
                 ContractNumber = i % 3 == 0 ? null : $"C-{2026}-{i:D3}",
                 ContractDate = i % 3 == 0 ? null : DateOnly.FromDateTime(s.BaseTime.AddMonths(-2).DateTime),
                 TotalSum = sum,

@@ -163,7 +163,7 @@ internal static class AttentionRuleSet
         {
             AdapterKind.Edo => "Didox", AdapterKind.File => "file_import", AdapterKind.Accounting1C => c.Kind, _ => c.AdapterKind.ToString().ToLowerInvariant(),
         },
-        ["source"] = c.SourceCode,
+        ["source"] = ConnectionKinds.DisplayName(c.SourceCode),
         ["status"] = c.Status.ToString(),
         ["status_changed_at"] = c.StatusChangedAt,
         ["last_successful_load_at"] = c.LastSuccessfulSyncAt,

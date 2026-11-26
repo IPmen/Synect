@@ -235,7 +235,7 @@ public sealed class ToolRunner(
         {
             s.ConnectionId,
             ConnectionName = TextSafety.Untrusted(s.ConnectionName, Options.UntrustedTextMaxLength),
-            Source = s.SourceCode,
+            Source = ConnectionKinds.DisplayName(s.SourceCode),
             Kind = s.Kind,
             ConnectionStatus = s.Status,
             StatusReason = TextSafety.Untrusted(s.StatusReason, Options.UntrustedTextMaxLength),
@@ -286,7 +286,7 @@ public sealed class ToolRunner(
             yield return "The client has no connected sources; there is no data to answer from.";
         foreach (var s in freshness.Sources)
         {
-            var name = $"{s.Kind} source {s.SourceCode}";
+            var name = $"{s.Kind} source {ConnectionKinds.DisplayName(s.SourceCode)}";
             if (s.Status != ConnectionStatus.Active)
                 yield return $"The {name} connection is {s.Status}: its data is not being refreshed.";
             if (s.DataGroups is { } groups && s.LastSuccessfulSyncAt is not null)
