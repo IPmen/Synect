@@ -38,6 +38,7 @@ public sealed class FakeEdoAdapter(FakeEdoDataSource source, DidoxMapper mapper,
         AdapterContext context, EdoDocumentOwner owner, DateTimeOffset? updatedSince, int page, CancellationToken ct)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        source.Configure(context);
         await source.GateAsync(context.ConnectionId, await TokenAsync(context, ct), ct);
         var pageSize = source.For(context.ConnectionId).PageSize;
         var json = source.ListJson(context.ConnectionId, owner, updatedSince, page, pageSize);
@@ -50,6 +51,7 @@ public sealed class FakeEdoAdapter(FakeEdoDataSource source, DidoxMapper mapper,
 
     public async Task<EdoDocumentInfo?> GetDocumentAsync(AdapterContext context, string externalId, CancellationToken ct)
     {
+        source.Configure(context);
         await source.GateAsync(context.ConnectionId, await TokenAsync(context, ct), ct);
         var json = source.DocumentJson(context.ConnectionId, externalId);
         return json is null ? null : mapper.MapSingleDocument(json);

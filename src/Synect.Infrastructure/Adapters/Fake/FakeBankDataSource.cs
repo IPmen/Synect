@@ -126,6 +126,9 @@ public sealed class FakeBankScenario
 
     /// <summary>Days whose closing balance (saldo_out) of the first account is off by 1 000.00, so that the day balance does not add up.</summary>
     public HashSet<DateOnly> BrokenBalanceDays { get; } = [];
+
+    /// <summary>The connection's stored settings were applied (or it has none).</summary>
+    internal volatile bool ConfiguredFromSettings;
 }
 
 /// <summary>
@@ -142,6 +145,15 @@ public sealed class FakeBankDataSource
     private long _requestId;
 
     public FakeBankScenario For(Guid connectionId) => _scenarios.GetOrAdd(connectionId, _ => new FakeBankScenario());
+
+    /// <summary>Applies the demo settings stored with the connection (<see cref="FakeScenarioSettings"/>) once per process.</summary>
+    public void Configure(AdapterContext context)
+    {
+        var s = For(context.ConnectionId);
+        if (s.ConfiguredFromSettings) return;
+        if (FakeScenarioSettings.Read(context) is { } stored) FakeScenarioSettings.Apply(s, stored);
+        s.ConfiguredFromSettings = true;
+    }
 
     public static string AccountNumber(int seed, int index, string currency = "000") =>
         $"20208{currency}{seed % 1000:D3}{index + 1:D6}001";

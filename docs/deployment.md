@@ -27,7 +27,10 @@ user `synect`), plus the backup directory (700, root).
 
 Demo data: run `seed-demo` with the Worker stopped (`systemctl stop synect-worker`). A running Worker starts the first
 load of new connections at once with its own default fake data, so the demo data becomes a mix (seen on the pilot
-server: 13 Didox documents instead of about 400).
+server: 13 Didox documents instead of about 400). The seed stores each demo scenario in the connection's
+`settings` (`fake_scenario`: seed, accounts and currencies, counterparty pool, document base time), and the fake
+adapters apply it in every process, so the Worker's scheduled loads of a seeded connection generate the same data;
+re-running `seed-demo` keeps the stored document base time.
 
 ## Services
 

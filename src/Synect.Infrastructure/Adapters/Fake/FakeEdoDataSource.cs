@@ -96,6 +96,9 @@ public sealed class FakeEdoScenario
 
     /// <summary>Base time of seeded documents.</summary>
     public DateTimeOffset BaseTime { get; set; } = new(2026, 10, 1, 9, 0, 0, TimeSpan.FromHours(5));
+
+    /// <summary>The connection's stored settings were applied (or it has none).</summary>
+    internal volatile bool ConfiguredFromSettings;
 }
 
 /// <summary>Produces Didox shaped JSON from an in-memory, mutable document set.</summary>
@@ -110,6 +113,19 @@ public sealed class FakeEdoDataSource(TimeProvider time)
     private readonly ConcurrentDictionary<Guid, FakeEdoScenario> _scenarios = new();
 
     public FakeEdoScenario For(Guid connectionId) => _scenarios.GetOrAdd(connectionId, _ => new FakeEdoScenario());
+
+    /// <summary>Applies the demo settings stored with the connection (<see cref="FakeScenarioSettings"/>) once per process.</summary>
+    public void Configure(Synect.Application.Adapters.AdapterContext context)
+    {
+        var s = For(context.ConnectionId);
+        if (s.ConfiguredFromSettings) return;
+        lock (s.Sync)
+        {
+            if (s.ConfiguredFromSettings) return;
+            if (s.Documents is null && FakeScenarioSettings.Read(context) is { } stored) FakeScenarioSettings.Apply(s, stored);
+            s.ConfiguredFromSettings = true;
+        }
+    }
 
     /// <summary>Login response: { "token": "..." } or { "error": ... }. The password is only checked for presence.</summary>
     public string LoginJson(Guid connectionId, string login, string password)

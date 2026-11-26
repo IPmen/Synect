@@ -44,7 +44,8 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
             e.SpreadDays = 365;
             e.CounterpartyPoolSize = 40;
             e.PageSize = 100;
-            e.BaseTime = time.GetUtcNow().AddDays(-365);
+            e.BaseTime = await StoredBaseTimeAsync(tenant, edoId) ?? time.GetUtcNow().AddDays(-365);
+            await StoreScenariosAsync(tenant, bankId, b, edoId, e);
 
             var sw = Stopwatch.StartNew();
             var bankOutcome = await SyncBankAsync(tenant, bankId, Today.AddDays(-119), Today);
@@ -76,7 +77,8 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
         e.SpreadDays = 120;
         e.CounterpartyPoolSize = 15;
         e.PageSize = 100;
-        e.BaseTime = time.GetUtcNow().AddDays(-120);
+        e.BaseTime = await StoredBaseTimeAsync(tenant, edoId) ?? time.GetUtcNow().AddDays(-120);
+        await StoreScenariosAsync(tenant, bankId, b, edoId, e);
         await SyncBankAsync(tenant, bankId, Today.AddDays(-59), Today);
         await SyncEdoAsync(tenant, edoId);
         return (bankId, edoId);
@@ -104,7 +106,8 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
         e.SpreadDays = days;
         e.CounterpartyPoolSize = 2000;
         e.PageSize = 1000;
-        e.BaseTime = time.GetUtcNow().AddDays(-days);
+        e.BaseTime = await StoredBaseTimeAsync(tenant, edoId) ?? time.GetUtcNow().AddDays(-days);
+        await StoreScenariosAsync(tenant, bankId, b, edoId, e);
 
         var sw = Stopwatch.StartNew();
         var from = Today.AddDays(-days + 1);
@@ -161,6 +164,36 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
 
     public Task<int> RebuildAliasesAsync(Guid tenant) => tenants.InTenantAsync(tenant, (sp, ct) =>
         sp.GetRequiredService<CounterpartyAliasRebuilder>().RebuildAsync(ct), CancellationToken.None);
+
+    /// <summary>
+    /// Stores the demo scenarios with their connections (FakeScenarioSettings), so that the Worker's scheduled loads
+    /// generate the same data instead of the default fake data.
+    /// </summary>
+    private Task StoreScenariosAsync(Guid tenant, Guid bankId, FakeBankScenario bankScenario, Guid edoId, FakeEdoScenario edoScenario) =>
+        tenants.InTenantAsync(tenant, async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<ISynectDbContext>();
+            await db.InTransactionAsync(async t =>
+            {
+                var connections = await db.Connections.Where(c => c.Id == bankId || c.Id == edoId).ToListAsync(t);
+                foreach (var c in connections)
+                    c.Settings = FakeScenarioSettings.Store(c.Settings,
+                        c.Id == bankId ? FakeScenarioSettings.Of(bankScenario) : FakeScenarioSettings.Of(edoScenario));
+                await db.SaveChangesAsync(t);
+            }, ct);
+            return true;
+        }, CancellationToken.None);
+
+    /// <summary>The document base time stored with a fake Didox connection by an earlier seed, so that re-seeding keeps the documents.</summary>
+    private Task<DateTimeOffset?> StoredBaseTimeAsync(Guid tenant, Guid edoId) =>
+        tenants.InTenantAsync(tenant, async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<ISynectDbContext>();
+            var settings = await db.InTransactionAsync(t => db.Connections.Where(c => c.Id == edoId).Select(c => c.Settings).SingleAsync(t), ct);
+            return FakeScenarioSettings.Stored(settings) is { } e && e.TryGetProperty("base_time", out var v)
+                ? DateTimeOffset.Parse(v.GetString()!, System.Globalization.CultureInfo.InvariantCulture)
+                : (DateTimeOffset?)null;
+        }, CancellationToken.None);
 
     private Task<SyncOutcome> SyncBankAsync(Guid tenant, Guid connection, DateOnly from, DateOnly to) =>
         tenants.InTenantAsync(tenant, (sp, ct) => sp.GetRequiredService<BankSyncService>().SyncAsync(connection, from, to, ct), CancellationToken.None);

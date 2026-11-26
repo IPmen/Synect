@@ -38,16 +38,23 @@ public sealed class FakeBankAdapter(FakeBankDataSource source, KapitalBankMapper
     }
 
     public Task<IReadOnlyList<BankAccountInfo>> GetAccountsAsync(AdapterContext context, CancellationToken ct) =>
-        sessions.WithSessionAsync(context, Login(context), async (sid, token) =>
+        sessions.WithSessionAsync(Configured(context), Login(context), async (sid, token) =>
             mapper.MapAccounts(await source.AccountsJsonAsync(context.ConnectionId, sid, token)), ct);
 
     public Task<BankDayTransactions> GetTransactionsAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct) =>
-        sessions.WithSessionAsync(context, Login(context), async (sid, token) =>
+        sessions.WithSessionAsync(Configured(context), Login(context), async (sid, token) =>
             mapper.MapTransactions(await source.StatementJsonAsync(context.ConnectionId, sid, accountNumber, day, token), accountNumber, day), ct);
 
     public Task<BankBalanceInfo?> GetBalancesAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct) =>
-        sessions.WithSessionAsync(context, Login(context), async (sid, token) =>
+        sessions.WithSessionAsync(Configured(context), Login(context), async (sid, token) =>
             mapper.MapBalance(await source.StatementJsonAsync(context.ConnectionId, sid, accountNumber, day, token), accountNumber, day), ct);
+
+    /// <summary>Applies the connection's stored demo settings before the first call of this process.</summary>
+    private AdapterContext Configured(AdapterContext context)
+    {
+        source.Configure(context);
+        return context;
+    }
 
     private KapitalSessionManager.LoginTransport Login(AdapterContext context) =>
         (login, password, _) => Task.FromResult(source.LoginJson(context.ConnectionId, login, password));
