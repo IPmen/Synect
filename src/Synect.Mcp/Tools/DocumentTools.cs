@@ -23,8 +23,9 @@ public sealed class DocumentTools(ToolRunner runner, Presenter p, DocumentsAnaly
         CancellationToken cancellationToken = default) =>
         runner.RunAsync("get_documents_awaiting_our_signature", Group, async (a, ct) =>
         {
-            var r = await analytics.GetAwaitingOurSignatureAsync(a.Page(limit, cursor), ct);
-            return ToolOutputs.Page(r, p.Document);
+            var (r, summary) = await ListSummary.FirstPageAsync((pg, c) => analytics.GetAwaitingOurSignatureAsync(pg, c), a.Page(limit, cursor), runner.Options.MaxLimit,
+                d => new ListSummary.Item(d.Currency, d.TotalSum), ct);
+            return ToolOutputs.Page(r, summary, p.Document);
         }, cancellationToken);
 
     [McpServerTool(Name = "get_documents_awaiting_partner_signature", Title = "Documents awaiting partner signature", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -36,8 +37,9 @@ public sealed class DocumentTools(ToolRunner runner, Presenter p, DocumentsAnaly
         CancellationToken cancellationToken = default) =>
         runner.RunAsync("get_documents_awaiting_partner_signature", Group, async (a, ct) =>
         {
-            var r = await analytics.GetAwaitingPartnerSignatureAsync(a.Page(limit, cursor), ct);
-            return ToolOutputs.Page(r, p.Document);
+            var (r, summary) = await ListSummary.FirstPageAsync((pg, c) => analytics.GetAwaitingPartnerSignatureAsync(pg, c), a.Page(limit, cursor), runner.Options.MaxLimit,
+                d => new ListSummary.Item(d.Currency, d.TotalSum), ct);
+            return ToolOutputs.Page(r, summary, p.Document);
         }, cancellationToken);
 
     [McpServerTool(Name = "get_document_counts", Title = "Document counts by status", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -81,8 +83,9 @@ public sealed class DocumentTools(ToolRunner runner, Presenter p, DocumentsAnaly
         {
             var period = a.DatePeriod("from", from, "to", to);
             var basis = a.Enum("date_basis", date_basis, ToolEnums.DateBasis);
-            var r = await analytics.GetRejectedAsync(period, basis, a.Page(limit, cursor), ct);
-            return ToolOutputs.Page(r, p.Document);
+            var (r, summary) = await ListSummary.FirstPageAsync((pg, c) => analytics.GetRejectedAsync(period, basis, pg, c), a.Page(limit, cursor), runner.Options.MaxLimit,
+                d => new ListSummary.Item(d.Currency, d.TotalSum), ct);
+            return ToolOutputs.Page(r, summary, p.Document);
         }, cancellationToken);
 
     [McpServerTool(Name = "search_documents", Title = "Search documents", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -190,7 +193,18 @@ public sealed class DocumentTools(ToolRunner runner, Presenter p, DocumentsAnaly
                     }).ToList(),
                 };
             }).ToList();
-            return new ToolOutput(new { ByOwner = byOwner, r.Data.CountedStatuses }, r.Data.ByStatus.Count, r.Freshness, Notes:
+            // Outgoing minus incoming VAT per currency, computed here so that the model never subtracts by itself.
+            long VatOf(Synect.Domain.Edo.EdoDocumentOwner owner, string currency, VatStatusGroup? group) => group is { } g
+                ? r.Data.ByStatus.Where(l => l.Owner == owner && l.Currency == currency && l.Group == g).Sum(l => l.TotalVatSum)
+                : r.Data.Totals.Where(t => t.Owner == owner && t.Currency == currency).Sum(t => t.TotalVatSum);
+            var vatDifference = r.Data.Totals.Select(t => t.Currency).Distinct().Order(StringComparer.Ordinal).Select(c => new
+            {
+                Currency = c,
+                CountedTotal = p.Money(VatOf(Synect.Domain.Edo.EdoDocumentOwner.Outgoing, c, null) - VatOf(Synect.Domain.Edo.EdoDocumentOwner.Incoming, c, null), c),
+                Signed = p.Money(VatOf(Synect.Domain.Edo.EdoDocumentOwner.Outgoing, c, VatStatusGroup.Signed) - VatOf(Synect.Domain.Edo.EdoDocumentOwner.Incoming, c, VatStatusGroup.Signed), c),
+                AwaitingSignature = p.Money(VatOf(Synect.Domain.Edo.EdoDocumentOwner.Outgoing, c, VatStatusGroup.AwaitingSignature) - VatOf(Synect.Domain.Edo.EdoDocumentOwner.Incoming, c, VatStatusGroup.AwaitingSignature), c),
+            }).ToList();
+            return new ToolOutput(new { ByOwner = byOwner, VatDifferenceOutgoingMinusIncoming = vatDifference, r.Data.CountedStatuses }, r.Data.ByStatus.Count, r.Freshness, Notes:
             [
                 "signed = statuses 3 and 8; awaiting_signature = statuses 1, 2, 6 and 60. Only signed documents are final for VAT; documents awaiting a signature may still be rejected.",
                 "incoming = documents received from suppliers (purchase VAT); outgoing = documents issued to customers (sales VAT).",

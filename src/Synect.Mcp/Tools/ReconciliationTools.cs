@@ -108,8 +108,10 @@ public sealed class ReconciliationTools(ToolRunner runner, Presenter p, Reconcil
             var dir = a.OptionalEnum("direction", direction, ToolEnums.PaymentDirection);
             var i = a.OptionalInn("inn", inn);
             var noInn = a.Enum("without_inn", without_inn, ToolEnums.WithoutInn);
-            var r = await queries.GetUnmatchedPaymentsAsync(new PaymentFilter(period, i, dir, noInn), a.Page(limit, cursor), ct);
-            return ToolOutputs.Page(r, u => new
+            var filter = new PaymentFilter(period, i, dir, noInn);
+            var (r, summary) = await ListSummary.FirstPageAsync((pg, c) => queries.GetUnmatchedPaymentsAsync(filter, pg, c), a.Page(limit, cursor),
+                runner.Options.MaxLimit, u => new ListSummary.Item(u.Currency, u.Amount, Group: UnmatchedGroup(u)), ct);
+            return ToolOutputs.Page(r, summary, u => new
             {
                 u.Id,
                 u.AccountId,
@@ -174,8 +176,10 @@ public sealed class ReconciliationTools(ToolRunner runner, Presenter p, Reconcil
             var period = a.DatePeriod("from", from, "to", to);
             var dir = a.OptionalEnum("direction", direction, ToolEnums.PaymentDirection);
             var i = a.OptionalInn("inn", inn);
-            var r = await queries.GetPaymentsWithoutReferenceAsync(new PaymentFilter(period, i, dir), a.Page(limit, cursor), ct);
-            return ToolOutputs.Page(r, x => new
+            var filter = new PaymentFilter(period, i, dir);
+            var (r, summary) = await ListSummary.FirstPageAsync((pg, c) => queries.GetPaymentsWithoutReferenceAsync(filter, pg, c), a.Page(limit, cursor),
+                runner.Options.MaxLimit, x => new ListSummary.Item(x.Currency, x.Amount), ct);
+            return ToolOutputs.Page(r, summary, x => new
             {
                 x.Id,
                 AccountNumber = p.Account(x.AccountNumber),
@@ -263,8 +267,9 @@ public sealed class ReconciliationTools(ToolRunner runner, Presenter p, Reconcil
         {
             var period = a.DatePeriod("from", from, "to", to);
             var i = a.OptionalInn("inn", inn);
-            var r = await queries.GetAccountMismatchesAsync(period, i, a.Page(limit, cursor), ct);
-            return ToolOutputs.Page(r, x => new
+            var (r, summary) = await ListSummary.FirstPageAsync((pg, c) => queries.GetAccountMismatchesAsync(period, i, pg, c), a.Page(limit, cursor),
+                runner.Options.MaxLimit, x => new ListSummary.Item(x.Currency, x.Amount), ct);
+            return ToolOutputs.Page(r, summary, x => new
             {
                 x.MatchId,
                 x.Status,
@@ -298,8 +303,9 @@ public sealed class ReconciliationTools(ToolRunner runner, Presenter p, Reconcil
         {
             var period = a.DatePeriod("from", from, "to", to);
             var i = a.OptionalInn("inn", inn);
-            var r = await queries.GetPossibleDuplicatePaymentsAsync(period, i, a.Page(limit, cursor), ct);
-            return ToolOutputs.Page(r, x => new
+            var (r, summary) = await ListSummary.FirstPageAsync((pg, c) => queries.GetPossibleDuplicatePaymentsAsync(period, i, pg, c), a.Page(limit, cursor),
+                runner.Options.MaxLimit, x => new ListSummary.Item(x.Currency, x.Amount), ct);
+            return ToolOutputs.Page(r, summary, x => new
             {
                 x.PaymentId,
                 x.PostingDate,
@@ -380,6 +386,10 @@ public sealed class ReconciliationTools(ToolRunner runner, Presenter p, Reconcil
 
     // ---- Shared ----
 
+    /// <summary>Why a payment is unmatched, for the summary: the exclusion reason, else whether the counterparty has documents at all.</summary>
+    private static string UnmatchedGroup(UnmatchedPayment u) =>
+        u.ExcludedReason ?? (u.CounterpartyHasDocuments ? "no_matching_document" : "counterparty_has_no_documents");
+
     private Task<CallToolResult> Documents(
         string tool, string from, string to, string? inn, string? direction, int? limit, string? cursor,
         Func<DocumentFilter, PageRequest?, CancellationToken, Task<AnalyticsResult<Page<ReconciledDocument>>>> query, CancellationToken cancellationToken) =>
@@ -388,8 +398,10 @@ public sealed class ReconciliationTools(ToolRunner runner, Presenter p, Reconcil
             var period = a.DatePeriod("from", from, "to", to);
             var i = a.OptionalInn("inn", inn);
             var dir = a.OptionalEnum("direction", direction, ToolEnums.Owner);
-            var r = await query(new DocumentFilter(period, i, dir), a.Page(limit, cursor), ct);
-            return ToolOutputs.Page(r, d => new
+            var filter = new DocumentFilter(period, i, dir);
+            var (r, summary) = await ListSummary.FirstPageAsync((pg, c) => query(filter, pg, c), a.Page(limit, cursor), runner.Options.MaxLimit,
+                d => new ListSummary.Item(d.Currency, d.Amount, d.RemainingAmount), ct);
+            return ToolOutputs.Page(r, summary, d => new
             {
                 d.Id,
                 Number = p.Code(d.Number),

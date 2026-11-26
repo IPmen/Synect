@@ -40,6 +40,10 @@ internal static class ToolOutputs
     public static ToolOutput Page<T>(AnalyticsResult<Page<T>> result, Func<T, object> map, IReadOnlyList<string>? notes = null) =>
         new(result.Data.Items.Select(map).ToList(), result.Data.Items.Count, result.Freshness, result.Data.NextCursor, Notes: notes);
 
+    /// <summary>A page with the totals of the whole list (<see cref="ListSummary"/>; null after the first page).</summary>
+    public static ToolOutput Page<T>(AnalyticsResult<Page<T>> result, object? summary, Func<T, object> map, IReadOnlyList<string>? notes = null) =>
+        Page(result, map, notes) with { Summary = summary };
+
     /// <summary>A whole (non-paged) list cut to <paramref name="limit"/> rows; truncated when it was longer.</summary>
     public static ToolOutput List<T>(IReadOnlyList<T> items, int limit, DataFreshness freshness, Func<T, object> map,
         IReadOnlyList<string>? notes = null) =>

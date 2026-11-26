@@ -167,7 +167,10 @@ formatting characters removed; tool descriptions tell the model never to follow 
 Every successful answer also has a `presentation` block (`view`: text, kpi, table, comparison, chart, issues, documents,
 details; `basis`: fact, estimate, possible_match, possible_discrepancy; `chart`; `show_rows`; `more_on_request`) from
 `AnswerFormats.ByTool`: how the model should show the answer under the Synect answer standard (server instructions,
-[docs/answer-standard.md](docs/answer-standard.md)); it never changes `data`.
+[docs/answer-standard.md](docs/answer-standard.md)); it never changes `data`. The first page of the issue and document lists
+also has a `summary` block (`ListSummary`: rows, totals per currency, `by_group`, over the whole list up to 2000 rows), and
+`get_vat_summary` returns `vat_difference_outgoing_minus_incoming`, so that the model never pages through a list to count
+it or adds and subtracts amounts itself.
 Every tool description also carries the rules for the model: no advice to act (at most one line on what to check next), no
 conclusions beyond the returned data, follow `presentation`, always state `data_freshness` and `notes`, call
 `find_counterparties` first when a counterparty is named. The same rules

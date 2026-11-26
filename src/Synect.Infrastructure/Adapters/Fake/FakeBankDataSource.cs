@@ -212,17 +212,20 @@ public sealed class FakeBankDataSource
         if (await GateAsync(s, sid, ct) is { } error) return error;
 
         var accountIndex = int.Parse(account.Substring(11, 6)) - 1;
-        var random = new Random(unchecked(s.Seed * 7919 + day.DayNumber * 31 + accountIndex));
+        var currency = account.Substring(5, 3);
+        // Names and accounts come from their own generator, so that the amounts (and thus every opening balance) can be
+        // replayed cheaply without building the operations.
+        var random = new Random(unchecked(s.Seed * 7919 + day.DayNumber * 31 + accountIndex + 1_000_003));
+        var opening = OpeningBalance(s, accountIndex, currency, day);
 
         var content = new JsonArray();
         long debit = 0, credit = 0;
-        var count = s.EmptyDays.Contains(day) || s.OnlyFixedOperations ? 0 : random.Next(s.MinOperationsPerDay, s.MaxOperationsPerDay + 1);
-        for (var i = 0; i < count; i++)
+        var draws = Draws(s, accountIndex, currency, day, opening);
+        for (var i = 0; i < draws.Count; i++)
         {
-            var dir = random.Next(1, 3);
-            var amount = (long)random.Next(1_000, 50_000_000) * 100; // whole sums, expressed in tiyin
+            var (dir, amount, noInn) = draws[i];
             if (dir == 1) credit += amount; else debit += amount;
-            var op = Operation(s, account, day, accountIndex, i, dir, amount, random, err: 0);
+            var op = Operation(s, account, day, accountIndex, i, dir, amount, random, err: 0, noInn);
             content.Add(op);
             if (s.DuplicateDays.Contains(day)) content.Add(op.DeepClone());
         }
@@ -259,7 +262,7 @@ public sealed class FakeBankDataSource
             content.Add(Operation(s, account, day, accountIndex, 900, 2, 777_00, random, ErroneousOperationErrorCode));
         }
 
-        var saldoIn = 1_000_000_000_00L + (day.DayNumber % 100) * 1_000_00L;
+        var saldoIn = opening;
         var result = new JsonObject
         {
             ["content"] = content,
@@ -273,15 +276,79 @@ public sealed class FakeBankDataSource
         return Envelope(result);
     }
 
+    /// <summary>The first day of the fake account history; earlier days open with the start balance.</summary>
+    public static readonly DateOnly HistoryStart = new(2024, 1, 15);
+
+    private static bool IsForeign(string currency) => currency is not ("000" or "860");
+
+    /// <summary>Opening balance of a new account: 1 bn UZS, 150 000 in a foreign currency (minor units).</summary>
+    public static long StartBalance(string currency) => IsForeign(currency) ? 150_000_00L : 1_000_000_000_00L;
+
+    /// <summary>
+    /// The random operations of a day: direction, amount, and whether it is a bank fee without counterparty INN.
+    /// Amounts fit the currency (UZS 1 000 - 50 m, foreign 100 - 40 000; fees 5 000 - 300 000 UZS or 5 - 60);
+    /// incoming operations are likelier while the balance is below the start balance and an outgoing one never
+    /// overdraws the account, so the balance stays plausible over years.
+    /// </summary>
+    private static List<(int Dir, long Amount, bool NoInn)> Draws(FakeBankScenario s, int accountIndex, string currency, DateOnly day, long opening)
+    {
+        if (s.EmptyDays.Contains(day) || s.OnlyFixedOperations) return [];
+        var r = new Random(unchecked(s.Seed * 7919 + day.DayNumber * 31 + accountIndex));
+        var count = r.Next(s.MinOperationsPerDay, s.MaxOperationsPerDay + 1);
+        var foreign = IsForeign(currency);
+        var target = StartBalance(currency);
+        var balance = opening;
+        var list = new List<(int, long, bool)>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var noInn = s.NoInnShare > 0 && r.NextDouble() < s.NoInnShare;
+            int dir;
+            long amount;
+            if (noInn)
+            {
+                dir = 2;
+                amount = (foreign ? r.Next(5, 61) : r.Next(5_000, 300_001)) * 100L;
+            }
+            else
+            {
+                dir = r.NextDouble() < (balance < target ? 0.6 : 0.4) ? 1 : 2;
+                amount = (foreign ? r.Next(100, 40_001) : r.Next(1_000, 50_000_000)) * 100L;
+            }
+            if (dir == 2 && amount > balance) dir = 1;
+            balance += dir == 1 ? amount : -amount;
+            list.Add((dir, amount, noInn));
+        }
+        return list;
+    }
+
+    /// <summary>Net of everything a day adds to the balance (random, fixed and extra operations; rejected ones do not count).</summary>
+    private static long DayNet(FakeBankScenario s, int accountIndex, string currency, DateOnly day, long opening)
+    {
+        var net = Draws(s, accountIndex, currency, day, opening).Sum(d => d.Dir == 1 ? d.Amount : -d.Amount);
+        foreach (var f in s.FixedOperations)
+            if (f.Day == day && f.AccountIndex == accountIndex && f.Err == 0) net += f.Dir == 1 ? f.Amount : -f.Amount;
+        if (s.ExtraDays.Contains(day)) net += 1_234_00;
+        return net;
+    }
+
+    /// <summary>Opening balance of a day = closing balance of the previous day, replayed from <see cref="HistoryStart"/>.</summary>
+    private static long OpeningBalance(FakeBankScenario s, int accountIndex, string currency, DateOnly day)
+    {
+        var balance = StartBalance(currency);
+        for (var d = HistoryStart; d < day; d = d.AddDays(1))
+            balance += DayNet(s, accountIndex, currency, d, balance);
+        return balance;
+    }
+
     private static JsonObject Operation(
-        FakeBankScenario s, string account, DateOnly day, int accountIndex, int i, int dir, long amount, Random random, int err)
+        FakeBankScenario s, string account, DateOnly day, int accountIndex, int i, int dir, long amount, Random random, int err, bool noInn = false)
     {
         var partnerInn = s.CounterpartyPoolSize > 0
             ? (300_000_000 + random.Next(0, s.CounterpartyPoolSize)).ToString()
             : (300_000_000 + random.Next(0, 99_999_999)).ToString();
-        if (s.NoInnShare > 0 && random.NextDouble() < s.NoInnShare) partnerInn = "";
+        if (noInn) partnerInn = "";
         var partnerAccount = $"20208000{random.Next(0, 999_999_999):D9}001";
-        var partnerName = partnerInn.Length == 0 ? "BANK FEE" : FakeNames.Partner(partnerInn);
+        var partnerName = noInn ? "BANK FEE" : FakeNames.Partner(partnerInn);
         var ourInn = (200_000_000 + s.Seed).ToString();
         var ourName = FakeNames.Client(s.Seed);
         var b2Id = $"{day.DayNumber}{accountIndex:D2}{i:D3}";
@@ -302,7 +369,8 @@ public sealed class FakeBankDataSource
             ["acc_ct"] = dir == 1 ? account : partnerAccount,
             ["name_ct"] = dir == 1 ? ourName : partnerName,
             ["inn_ct"] = dir == 1 ? ourInn : partnerInn,
-            ["purpose"] = dir == 1 ? $"Payment for goods under contract #{i + 10}" : $"Payment for services, invoice #{i + 20}",
+            ["purpose"] = noInn ? "Bank fee for account maintenance"
+                : dir == 1 ? $"Payment for goods under contract #{i + 10}" : $"Payment for services, invoice #{i + 20}",
             ["purp_code"] = dir == 1 ? "00668" : "00702",
             ["amount"] = amount,
             ["dtype"] = "01",

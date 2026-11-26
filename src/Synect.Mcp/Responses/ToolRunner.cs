@@ -57,7 +57,7 @@ public sealed class AttentionReminder(TimeProvider time, IOptions<AttentionOptio
 /// <param name="Rows">Number of rows (list items) in Data, for the answer and tool_audit_log.</param>
 public sealed record ToolOutput(
     object? Data, int Rows, DataFreshness? Freshness,
-    string? NextCursor = null, bool Truncated = false, IReadOnlyList<string>? Notes = null);
+    string? NextCursor = null, bool Truncated = false, IReadOnlyList<string>? Notes = null, object? Summary = null);
 
 /// <summary>
 /// Runs a tool body with validation, the call timeout and error mapping, and builds the answer envelope:
@@ -167,6 +167,7 @@ public sealed class ToolRunner(
             Organization = OrganizationBlock(),
             Period = args.Period,
             Request = args.Request,
+            Summary = output.Summary,
             Data = output.Data,
             ReturnedRows = output.Rows,
             Truncated = truncated,
@@ -313,6 +314,7 @@ public sealed class ToolRunner(
     {
         var node = JsonSerializer.SerializeToNode(envelope, ToolJson.Options)!.AsObject();
         if (omitNullAttention && node["attention"] is null) node.Remove("attention");
+        if (node.ContainsKey("summary") && node["summary"] is null) node.Remove("summary");
         if (node.ContainsKey("organizations") && node["organizations"] is null) node.Remove("organizations");
         var element = JsonSerializer.SerializeToElement(node, ToolJson.Options);
         return new CallToolResult

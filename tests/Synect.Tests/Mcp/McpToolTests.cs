@@ -234,6 +234,43 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
         Assert.Equal(38_677, outgoing.GetProperty("counted_total").GetProperty("vat").GetProperty("amount_minor").GetInt64());
         var rejected = outgoing.GetProperty("by_status").EnumerateArray().Single(s => s.GetProperty("status").GetString() == "4");
         Assert.False(rejected.GetProperty("counted_in_total").GetBoolean());
+
+        // The difference is computed by the server, so that the model never subtracts by itself.
+        var incoming = body.GetProperty("data").GetProperty("by_owner").EnumerateArray()
+            .Single(o => o.GetProperty("owner").GetString() == "incoming");
+        long Vat(JsonElement owner, string part) => owner.GetProperty(part).GetProperty("vat").GetProperty("amount_minor").GetInt64();
+        var difference = body.GetProperty("data").GetProperty("vat_difference_outgoing_minus_incoming").EnumerateArray().Single();
+        foreach (var part in new[] { "counted_total", "signed", "awaiting_signature" })
+            Assert.Equal(Vat(outgoing, part) - Vat(incoming, part), difference.GetProperty(part).GetProperty("amount_minor").GetInt64());
+    }
+
+    [Fact]
+    public async Task The_first_page_of_a_list_carries_the_totals_of_the_whole_list()
+    {
+        RequirePostgres();
+        await using var client = await f.ClientAsync(f.KeyA);
+        var period = new { from = "2026-09-01", to = "2026-10-31" };
+        var (all, _) = await McpFixture.CallAsync(client, "get_rejected_documents", period);
+        var rows = all.GetProperty("data").EnumerateArray().ToList();
+        Assert.NotEmpty(rows);
+
+        var (first, _) = await McpFixture.CallAsync(client, "get_rejected_documents", new { period.from, period.to, limit = 1 });
+        var summary = first.GetProperty("summary");
+        Assert.Equal(rows.Count, summary.GetProperty("rows").GetInt32());
+        Assert.True(summary.GetProperty("complete").GetBoolean());
+        foreach (var total in summary.GetProperty("totals_by_currency").EnumerateArray())
+        {
+            var currency = total.GetProperty("currency").GetString();
+            var expected = rows.Where(r => r.GetProperty("total").GetProperty("currency").GetString() == currency)
+                .Sum(r => r.GetProperty("total").GetProperty("amount_minor").GetInt64());
+            Assert.Equal(expected, total.GetProperty("amount").GetProperty("amount_minor").GetInt64());
+        }
+
+        if (first.GetProperty("next_cursor").GetString() is { } cursor)
+        {
+            var (second, _) = await McpFixture.CallAsync(client, "get_rejected_documents", new { period.from, period.to, limit = 1, cursor });
+            Assert.False(second.TryGetProperty("summary", out _));
+        }
     }
 
     [Fact]

@@ -20,19 +20,24 @@ public static class McpServiceCollection
     /// </summary>
     public const string AnswerStandard =
         "ANSWER STANDARD (the same for every user; fit the depth to the question, never to the job title): " +
-        "start with the answer itself: no preamble, do not restate the question; about 100-150 words, longer only when every extra block is useful; " +
+        "the first words are the answer itself: no preamble, no line about looking up or loading data, do not restate the question; " +
+        "answer exactly what was asked (asked what came in and what went out - show both, not only the net); about 100-150 words, longer only when every extra block is useful; " +
         "use only the blocks the question needs. Every answer has a 'presentation' block: " +
         "view kpi - the key figure in bold on its own line with period and currency, then one or two lines of explanation; " +
-        "table - a compact Markdown table of the first show_rows rows with only the columns that answer the question; " +
-        "chart - a simple line or bar chart (presentation.chart) when you can draw one, otherwise a short table; " +
+        "table - a compact Markdown table of at most show_rows rows in total (not per currency), 2-5 columns, one value per cell; " +
+        "chart - draw a simple line or bar chart (presentation.chart) with your chart or visualization tool when you have one, otherwise a table of 2-4 columns; " +
         "comparison - the two sides next to each other with the difference; " +
         "issues - the count and the total amount first, then up to show_rows rows (largest amount or oldest first), each with its basis; " +
+        "a 'summary' block (rows, totals_by_currency, by_group) holds the count and the totals of the whole list: take them from there, " +
+        "never page through a list to count it and never add or subtract amounts yourself; use differences the answer gives (e.g. vat_difference_outgoing_minus_incoming); " +
         "documents - number, date, counterparty, amount, status; details - one item with its reasons; text - one or two sentences. " +
         "When more_on_request is true, do not print the rest: offer it in one line (e.g. \"Показать все 24?\"); when the user asks for details, " +
         "give the full rows with dates, numbers, counterparties, amounts, documents, reasons and statuses. " +
         "presentation.basis tells what the data is: fact; estimate (call it an estimate); possible_match or possible_discrepancy " +
         "(say \"возможное сопоставление\" / \"возможное расхождение\", never a confirmed error). " +
         "Status markers sparingly and only for status: 🔴 needs attention now, 🟡 worth checking, 🟢 in order; a warning as one line starting with ⚠️. " +
+        "Never show internal codes or field names (currency_not_reconciled, possible_match, without_inn): say what they mean in words. " +
+        "Do not repeat in every answer that currencies are not added: showing them separately is enough. " +
         "Always give the period and the currency; headline figures may be rounded (\"28,4 млн сум\"), tables keep exact amounts with spaces between thousands. " +
         "Use exact professional terms (ЭСФ, акт, платёжное поручение, дебиторская задолженность) and explain a term in a few plain words when the user does not seem to be an accountant. " +
         "Keep facts, estimates and suggestions apart: a suggestion is at most one line starting with \"Можно проверить:\" (in the user's language) and names only what to check or open next in the data; " +
