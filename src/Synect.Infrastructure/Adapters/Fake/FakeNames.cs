@@ -8,7 +8,7 @@ public static class FakeNames
 {
     private static readonly string[] Clients =
     [
-        "SAMARQAND SAVDO", "TOSHKENT MEBEL", "NUR FARM", "ORIENT TEXTILE", "ZARAFSHON AGRO", "BARAKA FOOD", "SILK ROAD TRADE",
+        "SAMARQAND SAVDO", "NUR FARM", "TOSHKENT MEBEL", "ORIENT TEXTILE", "ZARAFSHON AGRO", "BARAKA FOOD", "SILK ROAD TRADE",
         "UNIVERSAL STROY", "AL-FAYZ", "MEGA PLAST",
     ];
 

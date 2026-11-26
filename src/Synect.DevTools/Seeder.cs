@@ -27,7 +27,7 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
     {
         for (var i = 1; i <= count; i++)
         {
-            var tenant = await EnsureTenantAsync($"Demo client {i}", (310_000_000 + i).ToString());
+            var tenant = await EnsureTenantAsync(FakeNames.Client(100 + i), (310_000_000 + i).ToString());
             var bankId = await EnsureConnectionAsync(tenant, AdapterKind.Bank, "Kapital Bank", $"Kapital Bank (demo {i})");
             var edoId = await EnsureConnectionAsync(tenant, AdapterKind.Edo, "Didox", $"Didox (demo {i})");
 
@@ -49,7 +49,7 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
             var sw = Stopwatch.StartNew();
             var bankOutcome = await SyncBankAsync(tenant, bankId, Today.AddDays(-119), Today);
             var edoOutcome = await SyncEdoAsync(tenant, edoId);
-            Console.WriteLine($"Demo client {i} ({tenant}): bank {bankOutcome.Result} {bankOutcome.RecordCount} records, " +
+            Console.WriteLine($"Demo client {i}, {FakeNames.Client(100 + i)} ({tenant}): bank {bankOutcome.Result} {bankOutcome.RecordCount} records, " +
                               $"EDO {edoOutcome.Result} {edoOutcome.RecordCount} records, {sw.Elapsed.TotalSeconds:F1}s");
         }
     }
