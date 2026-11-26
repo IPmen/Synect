@@ -65,6 +65,19 @@ public class AnswerFormatTests
     }
 
     [Fact]
+    public void Every_answer_carries_its_instruction_because_clients_may_drop_the_server_instructions()
+    {
+        var cash = Serialize(AnswerFormats.Block("get_cash_flow", 5, false)).GetProperty("how").GetString()!;
+        Assert.Contains("came in, what went out and the net", cash);
+        Assert.Contains("never with a line about looking up", cash);
+        var issues = Serialize(AnswerFormats.Block("get_unmatched_payments", 50, true)).GetProperty("how").GetString()!;
+        Assert.Contains("'summary'", issues);
+        Assert.Contains("Offer the rest in one line", issues);
+        Assert.Contains("possible discrepancy", issues);
+        Assert.DoesNotContain("Offer the rest", Serialize(AnswerFormats.Block("get_unmatched_payments", 3, false)).GetProperty("how").GetString());
+    }
+
+    [Fact]
     public void Server_instructions_carry_the_answer_standard()
     {
         var s = McpServiceCollection.AnswerStandard;

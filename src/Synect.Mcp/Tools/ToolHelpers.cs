@@ -19,8 +19,8 @@ internal static class ToolText
     public const string ModelRules =
         " RULES FOR THE MODEL: do not recommend actions such as paying, collecting, signing or correcting, and give no business, tax" +
         " or legal advice; at most one line on what to check next; do not draw conclusions beyond the returned data;" +
-        " show the answer as its 'presentation' block says (view, basis, show_rows);" +
-        " always state data_freshness and the notes of the answer to the user; when the user names a counterparty by name," +
+        " show the answer as its 'presentation' block says (follow presentation.how); start with the answer, never with a line about" +
+        " looking up data; state data_freshness in one short line and a note only when it changes the meaning; when the user names a counterparty by name," +
         " call find_counterparties first and use the INN it returns. ORGANIZATIONS: when the key serves several organizations, pass" +
         " 'organization' (TIN, name or id); if the user did not say which, ask; never mix data of different organizations, and say" +
         " whose data it is (the 'organization' block of the answer).";

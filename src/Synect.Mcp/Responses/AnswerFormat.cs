@@ -51,7 +51,8 @@ public enum ChartKind
 }
 
 /// <param name="ShowRows">Rows to show in the first answer; the rest only when the user asks. Null: show the answer whole.</param>
-public sealed record AnswerFormat(AnswerView View, AnswerBasis Basis, ChartKind? Chart = null, int? ShowRows = null);
+/// <param name="Hint">What this tool's answer must show beyond its view (e.g. incoming and outgoing, not only the net).</param>
+public sealed record AnswerFormat(AnswerView View, AnswerBasis Basis, ChartKind? Chart = null, int? ShowRows = null, string? Hint = null);
 
 /// <summary>
 /// The presentation hint of every tool. Every registered tool must have one (enforced by a test); the hint goes into
@@ -81,8 +82,8 @@ public static class AnswerFormats
         ["get_account_balances"] = Kpi(),
         ["get_balance_history"] = Chart(ChartKind.Line),
         ["get_balance_stats"] = Kpi(),
-        ["get_cash_flow"] = Chart(ChartKind.Bar),
-        ["get_largest_transactions"] = Table(),
+        ["get_cash_flow"] = Chart(ChartKind.Bar) with { Hint = "For every period show what came in, what went out and the net, per currency." },
+        ["get_largest_transactions"] = Table() with { Hint = "At most 10 rows in total, both currencies together, largest first." },
         ["get_transactions_for_day"] = Table(),
         ["find_idle_accounts"] = Table(),
         ["check_balance_integrity"] = Issues(),
@@ -90,7 +91,7 @@ public static class AnswerFormats
         // Counterparties.
         ["find_counterparties"] = Text(),
         ["get_counterparty_payments"] = Kpi(),
-        ["get_top_counterparties"] = Chart(ChartKind.Bar),
+        ["get_top_counterparties"] = Chart(ChartKind.Bar) with { Hint = "One row per counterparty: name, amount, payments; a currency per table only when both currencies have rows." },
         ["get_counterparty_summary"] = Kpi(),
         ["compare_counterparty_periods"] = Compare(),
         ["get_counterparty_changes"] = Table(),
@@ -104,7 +105,7 @@ public static class AnswerFormats
         ["get_rejected_documents"] = Docs(),
         ["search_documents"] = Docs(),
         ["get_largest_documents"] = Docs(),
-        ["get_vat_summary"] = Compare(),
+        ["get_vat_summary"] = Compare() with { Hint = "Take the differences from vat_difference_outgoing_minus_incoming; never subtract yourself." },
 
         // Reconciliation of payments with documents.
         ["get_paid_documents"] = Docs(AnswerBasis.PossibleMatch),
@@ -148,19 +149,56 @@ public static class AnswerFormats
     };
 
     /// <summary>
-    /// The 'presentation' block: view, basis, chart, show_rows and more_on_request (true when the answer has more rows
-    /// than show_rows or was truncated). Null for a tool without a hint.
+    /// Rules every answer repeats in its 'how' line: the MCP client may not show the server instructions to the model,
+    /// while tool answers always reach it.
+    /// </summary>
+    public const string CommonRules =
+        "Start with the answer itself, never with a line about looking up or loading data. Answer exactly what was asked. " +
+        "No internal codes or field names: say what they mean. Show currencies separately without saying they are not added. " +
+        "Freshness in one short line; repeat a note only when it changes the meaning.";
+
+    private static string ViewGuide(AnswerFormat f) => f.View switch
+    {
+        AnswerView.Text => "One or two sentences.",
+        AnswerView.Kpi => "The key figure in bold on its own line with period and currency, then one or two lines of explanation.",
+        AnswerView.Table => "A Markdown table of at most show_rows rows in total, 2-5 columns, one value per cell.",
+        AnswerView.Comparison => "The two sides next to each other and the difference, taken from the answer.",
+        AnswerView.Chart => $"Draw a {(f.Chart == ChartKind.Line ? "line" : "bar")} chart with your chart or visualization tool if you have one; otherwise a table of 2-4 columns.",
+        AnswerView.Issues => "First the count and the total amount from 'summary' (by_group: per reason), then up to show_rows rows, largest or oldest first, each with its basis; never count or add amounts yourself.",
+        AnswerView.Documents => "First the count and the total from 'summary' when present, then up to show_rows rows: number, date, counterparty, amount, status.",
+        AnswerView.Details => "One item with its reasons.",
+        _ => "",
+    };
+
+    /// <summary>
+    /// The 'presentation' block: view, basis, chart, show_rows, more_on_request (true when the answer has more rows
+    /// than show_rows or was truncated) and 'how', the instruction for this answer. Null for a tool without a hint.
     /// </summary>
     public static object? Block(string tool, int rows, bool truncated)
     {
         if (!ByTool.TryGetValue(tool, out var f)) return null;
+        var more = f.ShowRows is { } show && (rows > show || truncated);
+        var how = string.Join(' ', new[]
+        {
+            ViewGuide(f), f.Hint,
+            more ? "Offer the rest in one line instead of printing it." : null,
+            f.Basis switch
+            {
+                AnswerBasis.Estimate => "Call it an estimate.",
+                AnswerBasis.PossibleMatch => "Call it a possible match.",
+                AnswerBasis.PossibleDiscrepancy => "Call it a possible discrepancy, never a confirmed error.",
+                _ => null,
+            },
+            CommonRules,
+        }.Where(x => !string.IsNullOrEmpty(x)));
         return new
         {
             f.View,
             f.Basis,
             f.Chart,
             f.ShowRows,
-            MoreOnRequest = f.ShowRows is { } show && (rows > show || truncated),
+            MoreOnRequest = more,
+            How = how,
         };
     }
 }
