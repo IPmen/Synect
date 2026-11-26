@@ -61,7 +61,8 @@ public sealed record ToolOutput(
 
 /// <summary>
 /// Runs a tool body with validation, the call timeout and error mapping, and builds the answer envelope:
-/// tool, status, period (echo), request (echo), data, returned_rows, truncated, next_cursor, data_freshness, notes.
+/// tool, status, period (echo), request (echo), data, returned_rows, truncated, next_cursor, data_freshness,
+/// presentation (how to show the answer, <see cref="AnswerFormats"/>), notes.
 /// Errors are answers with is_error = true and error.code: invalid_argument, timeout, forbidden, rate_limited, internal_error.
 /// </summary>
 public sealed class ToolRunner(
@@ -181,6 +182,7 @@ public sealed class ToolRunner(
                     Tool = "get_attention_items",
                 }
                 : null,
+            Presentation = AnswerFormats.Block(tool, output.Rows, truncated),
             Notes = notes,
         };
         return Build(envelope, isError: false, omitNullAttention: true);

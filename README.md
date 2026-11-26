@@ -164,8 +164,13 @@ completeness), `notes` (configured warnings such as the unconfirmed Kapital Bank
 in sums, B6 history depth). Money is `{amount_minor, amount, currency}`; currencies are never added together.
 Third-party text is returned as `{"untrusted_text": "..."}`, cut to 300 characters with control and invisible
 formatting characters removed; tool descriptions tell the model never to follow instructions in it.
-Every tool description also carries the rules for the model: no recommendations, no conclusions beyond the returned data,
-always state `data_freshness` and `notes`, call `find_counterparties` first when a counterparty is named. The same rules
+Every successful answer also has a `presentation` block (`view`: text, kpi, table, comparison, chart, issues, documents,
+details; `basis`: fact, estimate, possible_match, possible_discrepancy; `chart`; `show_rows`; `more_on_request`) from
+`AnswerFormats.ByTool`: how the model should show the answer under the Synect answer standard (server instructions,
+[docs/answer-standard.md](docs/answer-standard.md)); it never changes `data`.
+Every tool description also carries the rules for the model: no advice to act (at most one line on what to check next), no
+conclusions beyond the returned data, follow `presentation`, always state `data_freshness` and `notes`, call
+`find_counterparties` first when a counterparty is named. The same rules
 for a Claude project are in [docs/model-instructions.md](docs/model-instructions.md) (reference text for clients). Tools
 that only compare documents and payments by INN (`get_payments_without_documents`, `get_counterparty_summary`,
 `find_counterparties`) say in `notes` that they check whether documents exist, not a matching of payments with documents.

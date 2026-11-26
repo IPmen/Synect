@@ -76,4 +76,4 @@
 вызывает `confirm_match` / `reject_match` без явной просьбы; в начале разговора о финансах модель вызывает
 `get_attention_summary` и коротко сообщает о новых Critical и High; блок `attention` и напоминание в `notes` других
 ответов модель не пересказывает каждый раз, а использует, чтобы предложить показать список. Эталонная инструкция для проекта в Claude:
-[model-instructions.md](model-instructions.md).
+[model-instructions.md](model-instructions.md); стандарт ответов и тестовые вопросы по форме ответа: [answer-standard.md](answer-standard.md).

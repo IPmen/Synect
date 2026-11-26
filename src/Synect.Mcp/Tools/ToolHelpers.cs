@@ -17,7 +17,9 @@ internal static class ToolText
 
     /// <summary>Rules for the model, part of every tool description (also in docs/model-instructions.md).</summary>
     public const string ModelRules =
-        " RULES FOR THE MODEL: do not recommend actions or give advice; do not draw conclusions beyond the returned data;" +
+        " RULES FOR THE MODEL: do not recommend actions such as paying, collecting, signing or correcting, and give no business, tax" +
+        " or legal advice; at most one line on what to check next; do not draw conclusions beyond the returned data;" +
+        " show the answer as its 'presentation' block says (view, basis, show_rows);" +
         " always state data_freshness and the notes of the answer to the user; when the user names a counterparty by name," +
         " call find_counterparties first and use the INN it returns. ORGANIZATIONS: when the key serves several organizations, pass" +
         " 'organization' (TIN, name or id); if the user did not say which, ask; never mix data of different organizations, and say" +

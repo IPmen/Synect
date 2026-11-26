@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using Synect.Domain.Access;
 using Synect.Mcp.Hosting;
+using Synect.Mcp.Responses;
 using Synect.Tests.Postgres;
 using static Synect.Tests.Analytics.AnalyticsFixture;
 
@@ -127,6 +128,7 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
             Assert.Contains("«", tool.Description); // Russian example questions
             Assert.Contains("RULES FOR THE MODEL", tool.Description);
             Assert.Contains("do not recommend actions", tool.Description);
+            Assert.Contains("'presentation' block", tool.Description);
             Assert.Contains("data_freshness", tool.Description);
             Assert.Contains("call find_counterparties first", tool.Description);
             var schema = tool.ProtocolTool.InputSchema;
@@ -161,6 +163,10 @@ public class McpToolTests(McpFixture f) : IClassFixture<McpFixture>
             Assert.True(body.TryGetProperty("next_cursor", out _), tool);
             Assert.True(body.TryGetProperty("truncated", out _), tool);
             Assert.True(body.TryGetProperty("period", out _), tool);
+            var presentation = body.GetProperty("presentation");
+            Assert.Equal(AnswerFormats.ByTool[tool].View.ToString().ToLowerInvariant(), presentation.GetProperty("view").GetString());
+            Assert.True(presentation.TryGetProperty("basis", out _), tool);
+            Assert.True(presentation.TryGetProperty("more_on_request", out _), tool);
         }
         Assert.Equal(0, f.AdapterCalls.Calls);
     }
