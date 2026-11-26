@@ -61,8 +61,8 @@ public sealed class Seeder(IServiceProvider services, TenantScopeRunner tenants,
     /// </summary>
     public async Task<(Guid Bank, Guid Edo)> SeedSmallOrganizationAsync(Guid tenant, int index)
     {
-        var bankId = await EnsureConnectionAsync(tenant, AdapterKind.Bank, $"Kapital Bank (seed {index})");
-        var edoId = await EnsureConnectionAsync(tenant, AdapterKind.Edo, $"Didox (seed {index})");
+        var bankId = await EnsureConnectionAsync(tenant, AdapterKind.Bank, "Kapital Bank", $"Kapital Bank (seed {index})");
+        var edoId = await EnsureConnectionAsync(tenant, AdapterKind.Edo, "Didox", $"Didox (seed {index})");
         var b = bank.For(bankId);
         b.Seed = 5000 + index;
         b.AccountCount = 2;
