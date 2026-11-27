@@ -112,7 +112,16 @@ public sealed class BankSyncService(
                     // One bank request per account and day: operations and totals from the same answer.
                     var (dayTransactions, balance) = await policy.ExecuteAsync(adapter, context, "GetDay",
                         token => adapter.GetDayAsync(context, account.AccountNumber, d, token), ct);
-                    var dayClosed = adapter.Capabilities.HasFinalityFlag
+                    // Operations the adapter could not read are left out; the day stays open (not final) so that the
+                    // next load reads it again, and the run is not complete.
+                    var rejected = dayTransactions.Rejected.Count > 0;
+                    if (rejected)
+                    {
+                        logger.LogWarning("Bank sync: {Count} operation(s) of {Day} could not be read and were left out, connection {ConnectionId}, account id {AccountId}: {Reasons}",
+                            dayTransactions.Rejected.Count, d, connection.Id, account.Id, string.Join("; ", dayTransactions.Rejected));
+                        if (balance is not null) balance = balance with { IsDayClosed = false };
+                    }
+                    var dayClosed = adapter.Capabilities.HasFinalityFlag && !rejected
                         && (balance?.IsDayClosed ?? dayTransactions.IsDayClosed ?? false);
                     allDaysClosed &= dayClosed;
                     records += dayTransactions.Transactions.Count + (balance is null ? 0 : 1);

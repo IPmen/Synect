@@ -63,6 +63,9 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
     /// <summary>
     /// Maps statement operations (GetDoc1C) for one account and day. Repeated operations (same b2_id)
     /// are collapsed, the last occurrence wins. Operations with err != 0 are kept and flagged.
+    /// An operation that cannot be read (no b2_id or amount, unknown dir, bad date or amount) is left out and listed in
+    /// <see cref="BankDayTransactions.Rejected"/>; the other operations of the day still load. Errors of the answer as a
+    /// whole (envelope error, no result) still fail the call.
     /// </summary>
     public BankDayTransactions MapTransactions(string json, string accountNumber, DateOnly day)
     {
@@ -70,18 +73,30 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
         var result = Result(doc.RootElement);
         var currency = CurrencyCodes.FromAccount(accountNumber);
         var byId = new Dictionary<string, BankTransactionInfo>(StringComparer.Ordinal);
+        var rejected = new List<string>();
 
         if (result.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
         {
+            var index = 0;
             foreach (var item in content.EnumerateArray())
             {
-                var tx = MapOperation(item, currency, day);
-                byId[tx.OperationId] = tx;
+                index++;
+                try
+                {
+                    var tx = MapOperation(item, currency, day);
+                    byId[tx.OperationId] = tx;
+                }
+                catch (Exception ex) when (ex is FormatException or OverflowException or InvalidOperationException)
+                {
+                    // The reason names the position and the bank id, never the operation's content (names, INNs, purpose).
+                    var id = item.ValueKind == JsonValueKind.Object ? SourceJson.Str(item, "b2_id") : null;
+                    rejected.Add($"operation #{index}{(id is null ? "" : $" (b2_id {id})")}: {ex.Message}");
+                }
             }
         }
 
         bool? closed = SourceJson.Int(result, "fin") is { } fin ? fin == 1 : null;
-        return new BankDayTransactions(accountNumber, day, byId.Values.ToList(), closed);
+        return new BankDayTransactions(accountNumber, day, byId.Values.ToList(), closed) { Rejected = rejected };
     }
 
     /// <summary>The four day totals of GetDoc1C; a day balance is stored only when all of them are present.</summary>

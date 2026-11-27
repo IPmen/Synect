@@ -54,7 +54,15 @@ public sealed record BankDayTransactions(
     string AccountNumber,
     DateOnly Day,
     IReadOnlyList<BankTransactionInfo> Transactions,
-    bool? IsDayClosed);
+    bool? IsDayClosed)
+{
+    /// <summary>
+    /// Operations of the answer that could not be read and were left out (the rest of the day still loads): one reason
+    /// each, naming the bank's operation id when there is one, never the operation's content. A day with rejected
+    /// operations is never treated as closed, so that it is read again on the next load.
+    /// </summary>
+    public IReadOnlyList<string> Rejected { get; init; } = [];
+}
 
 public sealed record BankBalanceInfo(
     string AccountNumber,

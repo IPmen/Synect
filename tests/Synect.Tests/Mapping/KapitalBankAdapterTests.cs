@@ -312,4 +312,42 @@ public class KapitalBankAdapterTests
         Assert.Equal([1_300_000L, 1_100_000L], kept.Select(b => b.ClosingBalance));
         Assert.Contains(host.Logs.Lines, l => l.Contains("no complete day totals"));
     }
+
+    [Fact]
+    public async Task A_bad_operation_is_left_out_the_day_loads_and_stays_open_until_it_is_read()
+    {
+        var bank = WithOperations();
+        var broken = StubKapitalBank.Operation(105, 9, 70_000); // unknown dir
+        bank.Days["2026-11-03"].Add(broken);
+        await using var host = await TestHost.CreateSqliteAsync(services =>
+        {
+            services.AddSingleton(new KapitalBankHttp(new HttpClient(bank)));
+            services.Configure<KapitalBankApiOptions>(o => o.Endpoint = StubKapitalBank.Endpoint);
+        });
+        var tenant = await host.CreateTenantAsync("Kapital Bank bad operation");
+        var created = await host.InTenantAsync(tenant, sp => sp.GetRequiredService<ConnectionCredentialsService>()
+            .CreateAsync(KapitalBankAdapter.Code, null, StubKapitalBank.Login, new SecretValue("correct-password"), test: true, CancellationToken.None));
+
+        var outcome = await host.SyncBankAsync(tenant, created.ConnectionId, Day, Day);
+        Assert.Equal(SyncRunResult.Succeeded, outcome.Result);
+        Assert.False(outcome.IsComplete);
+        var stored = await host.QueryAsync(tenant, db => db.BankTransactions.AsNoTracking().ToListAsync());
+        Assert.Equal(["101", "102"], stored.Select(t => t.OperationId).Order());
+        Assert.All(stored, t => Assert.False(t.IsFinal));
+        var balance = Assert.Single(await host.QueryAsync(tenant, db => db.BankDailyBalances.AsNoTracking().ToListAsync()));
+        Assert.False(balance.IsDayClosed); // the bank says fin = 1, but the day is read again next time
+        var warning = Assert.Single(host.Logs.Lines, l => l.Contains("could not be read and were left out"));
+        Assert.Contains("b2_id 105", warning);
+        Assert.DoesNotContain(StubKapitalBank.Account, warning);
+        Assert.DoesNotContain("PARTNER LLC", warning);
+
+        // The bank fixes the operation: the next load reads it and closes the day.
+        broken["dir"] = 1;
+        var fixedRun = await host.SyncBankAsync(tenant, created.ConnectionId, Day, Day);
+        Assert.True(fixedRun.IsComplete);
+        stored = await host.QueryAsync(tenant, db => db.BankTransactions.AsNoTracking().ToListAsync());
+        Assert.Equal(["101", "102", "105"], stored.Select(t => t.OperationId).Order());
+        Assert.All(stored, t => Assert.True(t.IsFinal));
+        Assert.True(Assert.Single(await host.QueryAsync(tenant, db => db.BankDailyBalances.AsNoTracking().ToListAsync())).IsDayClosed);
+    }
 }

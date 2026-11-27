@@ -71,7 +71,9 @@ public class KapitalBankMapperTests
     [Fact]
     public void Fractional_minor_amount_is_rejected_instead_of_rounded()
     {
-        Assert.Throws<FormatException>(() => Mapper().MapTransactions(Statement(1, Operation("1", 1, "10.5")), Account, Day));
+        var result = Mapper().MapTransactions(Statement(1, Operation("1", 1, "10.5")), Account, Day);
+        Assert.Empty(result.Transactions);
+        Assert.Contains("precision", Assert.Single(result.Rejected));
     }
 
     [Fact]
@@ -103,7 +105,30 @@ public class KapitalBankMapperTests
     [Fact]
     public void Unknown_direction_is_rejected()
     {
-        Assert.Throws<FormatException>(() => Mapper().MapTransactions(Statement(1, Operation("1", 3, "500")), Account, Day));
+        var result = Mapper().MapTransactions(Statement(1, Operation("1", 3, "500")), Account, Day);
+        Assert.Empty(result.Transactions);
+        Assert.Contains("direction", Assert.Single(result.Rejected));
+    }
+
+    [Fact]
+    public void A_bad_operation_is_left_out_and_the_rest_of_the_day_loads()
+    {
+        var noId = Operation("1", 1, "100").Replace("\"b2_id\": 1,", "");
+        var badDate = Operation("4", 1, "100").Replace("\"ddate\": \"2026-11-03\"", "\"ddate\": \"not a date\"");
+        var json = Statement(1, Operation("2", 1, "100"), noId, Operation("3", 9, "100"), badDate, "\"not an object\"", Operation("5", 2, "200"));
+        var result = Mapper().MapTransactions(json, Account, Day);
+
+        Assert.Equal(["2", "5"], result.Transactions.Select(t => t.OperationId).Order());
+        Assert.Equal(4, result.Rejected.Count);
+        Assert.StartsWith("operation #2:", result.Rejected[0]);
+        Assert.StartsWith("operation #3 (b2_id 3):", result.Rejected[1]);
+        Assert.StartsWith("operation #4 (b2_id 4):", result.Rejected[2]);
+        Assert.StartsWith("operation #5:", result.Rejected[3]);
+        // The reasons never carry the operation's content.
+        Assert.All(result.Rejected, r => Assert.DoesNotContain("LLC", r));
+        Assert.True(result.IsDayClosed); // the bank's own flag; the sync keeps such a day open
+
+        Assert.Empty(Mapper().MapTransactions(Statement(1, Operation("6", 1, "100")), Account, Day).Rejected);
     }
 
     [Fact]
