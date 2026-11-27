@@ -159,7 +159,7 @@ public class KapitalBankAdapterTests
     {
         var bank = WithOperations();
         var (adapter, context) = Create(bank);
-        var day = await adapter.GetTransactionsAsync(context, StubKapitalBank.Account, Day, CancellationToken.None);
+        var (day, balance) = await adapter.GetDayAsync(context, StubKapitalBank.Account, Day, CancellationToken.None);
         Assert.True(day.IsDayClosed);
         Assert.Equal(["101", "102"], day.Transactions.Select(t => t.OperationId).Order());
         var incoming = day.Transactions.Single(t => t.OperationId == "101");
@@ -173,8 +173,9 @@ public class KapitalBankAdapterTests
         Assert.Equal("GetDoc1C", (string?)statement["method"]);
         Assert.Equal(StubKapitalBank.Account, (string?)statement["params"]!["account"]);
         Assert.Equal("2026-11-03", (string?)statement["params"]!["date"]);
+        // Operations and totals come from one GetDoc1C request.
+        Assert.Single(bank.Requests, r => (string?)r["method"] == "GetDoc1C");
 
-        var balance = await adapter.GetBalancesAsync(context, StubKapitalBank.Account, Day, CancellationToken.None);
         Assert.Equal(1_000_000, balance!.OpeningBalance);
         Assert.Equal(1_300_000, balance.ClosingBalance);
         Assert.Equal(200_000, balance.TotalDebit);
@@ -244,7 +245,7 @@ public class KapitalBankAdapterTests
         await Assert.ThrowsAsync<AdapterTransientException>(() => adapter.GetAccountsAsync(context, CancellationToken.None));
 
         bank.Overrides.Enqueue(() => StubKapitalBank.Json(HttpStatusCode.OK, StubKapitalBank.Error(5000, "Счёт не найден")));
-        var other = await Assert.ThrowsAsync<AdapterException>(() => adapter.GetTransactionsAsync(context, StubKapitalBank.Account, Day, CancellationToken.None));
+        var other = await Assert.ThrowsAsync<AdapterException>(() => adapter.GetDayAsync(context, StubKapitalBank.Account, Day, CancellationToken.None));
         Assert.IsNotType<AdapterAuthenticationException>(other);
         Assert.IsNotType<AdapterTransientException>(other);
         bank.Overrides.Enqueue(() => StubKapitalBank.Json(HttpStatusCode.OK, "not json"));
@@ -280,6 +281,8 @@ public class KapitalBankAdapterTests
 
         var outcome = await host.SyncBankAsync(tenant, created.ConnectionId, new DateOnly(2026, 11, 3), new DateOnly(2026, 11, 4));
         Assert.Equal(SyncRunResult.Succeeded, outcome.Result);
+        // One account, two days: one GetDoc1C request per day, not one for operations and another for totals.
+        Assert.Equal(2, bank.Requests.Count(r => (string?)r["method"] == "GetDoc1C"));
         Assert.Equal(3, await host.CountAsync(tenant, db => db.BankTransactions));
         Assert.Equal(1, await host.CountAsync(tenant, db => db.BankAccounts));
         var balances = await host.QueryAsync(tenant, db => db.BankDailyBalances.AsNoTracking().OrderBy(b => b.Date).ToListAsync());

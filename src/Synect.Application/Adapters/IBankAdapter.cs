@@ -67,6 +67,12 @@ public sealed record BankBalanceInfo(
     RawRecord Raw);
 
 /// <summary>
+/// One account and operational day as the bank returns it: the operations and the day totals.
+/// <paramref name="Balance"/> is null when the bank has no totals for that day.
+/// </summary>
+public sealed record BankDayStatement(BankDayTransactions Transactions, BankBalanceInfo? Balance);
+
+/// <summary>
 /// Bank adapter contract. Everything bank specific (transport, auth, field formats) lives
 /// behind this interface; callers only see the common models above.
 /// </summary>
@@ -78,9 +84,9 @@ public interface IBankAdapter : ISourceAdapter
 
     Task<IReadOnlyList<BankAccountInfo>> GetAccountsAsync(AdapterContext context, CancellationToken ct);
 
-    /// <summary>Operations of one account for one operational day. Duplicates must already be removed.</summary>
-    Task<BankDayTransactions> GetTransactionsAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct);
-
-    /// <summary>Daily totals of one account; null when the bank has nothing for that day.</summary>
-    Task<BankBalanceInfo?> GetBalancesAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct);
+    /// <summary>
+    /// Operations (duplicates already removed) and daily totals of one account for one operational day, from one bank
+    /// request where the bank returns both together (Kapital Bank: one GetDoc1C call).
+    /// </summary>
+    Task<BankDayStatement> GetDayAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct);
 }

@@ -120,8 +120,8 @@ public class AdapterRetryTests : IAsyncLifetime
 
     private FakeBankScenario Bank => _host.FakeBank.For(_bank);
 
-    /// <summary>Data calls of a successful one-day load: GetAccounts + GetTransactions + GetBalances.</summary>
-    private const int CallsPerDay = 3;
+    /// <summary>Data calls of a successful one-day load: GetAccounts + one statement call (operations and totals).</summary>
+    private const int CallsPerDay = 2;
 
     [Fact]
     public async Task Rate_limited_calls_are_retried_until_they_succeed()

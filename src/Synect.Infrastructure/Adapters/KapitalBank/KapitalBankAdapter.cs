@@ -113,18 +113,13 @@ public sealed class KapitalBankAdapter(
             return Map(O.AccountsMethod, () => mapper.MapAccounts(json));
         }, ct);
 
-    public Task<BankDayTransactions> GetTransactionsAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct) =>
+    /// <summary>One GetDoc1C call per account and day: the operations and the day totals come from the same answer.</summary>
+    public Task<BankDayStatement> GetDayAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct) =>
         sessions.WithSessionAsync(context, Login, async (sid, token) =>
         {
             var json = await StatementAsync(sid, accountNumber, day, token);
-            return Map(O.StatementMethod, () => mapper.MapTransactions(json, accountNumber, day));
-        }, ct);
-
-    public Task<BankBalanceInfo?> GetBalancesAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct) =>
-        sessions.WithSessionAsync(context, Login, async (sid, token) =>
-        {
-            var json = await StatementAsync(sid, accountNumber, day, token);
-            return Map(O.StatementMethod, () => mapper.MapBalance(json, accountNumber, day));
+            return Map(O.StatementMethod, () => new BankDayStatement(
+                mapper.MapTransactions(json, accountNumber, day), mapper.MapBalance(json, accountNumber, day)));
         }, ct);
 
     private Task<string> StatementAsync(string sid, string accountNumber, DateOnly day, CancellationToken ct) =>

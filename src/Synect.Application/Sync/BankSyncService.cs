@@ -109,10 +109,9 @@ public sealed class BankSyncService(
                 for (var day = from; day <= to; day = day.AddDays(1))
                 {
                     var d = day;
-                    var dayTransactions = await policy.ExecuteAsync(adapter, context, "GetTransactions",
-                        token => adapter.GetTransactionsAsync(context, account.AccountNumber, d, token), ct);
-                    var balance = await policy.ExecuteAsync(adapter, context, "GetBalances",
-                        token => adapter.GetBalancesAsync(context, account.AccountNumber, d, token), ct);
+                    // One bank request per account and day: operations and totals from the same answer.
+                    var (dayTransactions, balance) = await policy.ExecuteAsync(adapter, context, "GetDay",
+                        token => adapter.GetDayAsync(context, account.AccountNumber, d, token), ct);
                     var dayClosed = adapter.Capabilities.HasFinalityFlag
                         && (balance?.IsDayClosed ?? dayTransactions.IsDayClosed ?? false);
                     allDaysClosed &= dayClosed;

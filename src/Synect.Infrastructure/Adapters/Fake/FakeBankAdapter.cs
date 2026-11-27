@@ -41,13 +41,12 @@ public sealed class FakeBankAdapter(FakeBankDataSource source, KapitalBankMapper
         sessions.WithSessionAsync(Configured(context), Login(context), async (sid, token) =>
             mapper.MapAccounts(await source.AccountsJsonAsync(context.ConnectionId, sid, token)), ct);
 
-    public Task<BankDayTransactions> GetTransactionsAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct) =>
+    public Task<BankDayStatement> GetDayAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct) =>
         sessions.WithSessionAsync(Configured(context), Login(context), async (sid, token) =>
-            mapper.MapTransactions(await source.StatementJsonAsync(context.ConnectionId, sid, accountNumber, day, token), accountNumber, day), ct);
-
-    public Task<BankBalanceInfo?> GetBalancesAsync(AdapterContext context, string accountNumber, DateOnly day, CancellationToken ct) =>
-        sessions.WithSessionAsync(Configured(context), Login(context), async (sid, token) =>
-            mapper.MapBalance(await source.StatementJsonAsync(context.ConnectionId, sid, accountNumber, day, token), accountNumber, day), ct);
+        {
+            var json = await source.StatementJsonAsync(context.ConnectionId, sid, accountNumber, day, token);
+            return new BankDayStatement(mapper.MapTransactions(json, accountNumber, day), mapper.MapBalance(json, accountNumber, day));
+        }, ct);
 
     /// <summary>Applies the connection's stored demo settings before the first call of this process.</summary>
     private AdapterContext Configured(AdapterContext context)
