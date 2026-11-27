@@ -77,6 +77,28 @@ public sealed class BankLoadWriter(
     }
 
     /// <summary>
+    /// Keeps the operations the adapter could not read for one account and day in raw_objects (type
+    /// <paramref name="objectType"/>, external id "{account}:{yyyy-MM-dd}:{key}"), so that they are not lost while the
+    /// day is re-read. Rows of an earlier read of the same day that are no longer rejected are removed. Does not call
+    /// SaveChanges.
+    /// </summary>
+    public async Task ReplaceRejectedOperationsAsync(Connection connection, BankAccount account, DateOnly day, string objectType,
+        IReadOnlyList<BankRejectedOperation> rejected, CancellationToken ct)
+    {
+        var prefix = $"{account.AccountNumber}:{day:yyyy-MM-dd}:";
+        var records = rejected.Select(r => r.Raw with { ObjectType = objectType, ExternalId = prefix + r.Raw.ExternalId }).ToList();
+        var keep = records.Select(r => r.ExternalId).ToHashSet(StringComparer.Ordinal);
+        // Few rows: only rejected objects of this connection and type are scanned (unique index tenant, connection, type, id).
+        var stored = await db.RawObjects
+            .Where(r => r.ConnectionId == connection.Id && r.ObjectType == objectType && r.ExternalId.StartsWith(prefix))
+            .ToListAsync(ct);
+        foreach (var row in stored.Where(r => !keep.Contains(r.ExternalId)))
+            db.RawObjects.Remove(row);
+        if (records.Count > 0)
+            await rawStore.UpsertAsync(connection, records, time.GetUtcNow(), ct);
+    }
+
+    /// <summary>
     /// Upserts operations of one account. <paramref name="infos"/> must carry final operation ids (the caller decides how
     /// ids are made); the last occurrence of an id wins. An existing operation is rewritten only when its raw payload or
     /// its finality changed.

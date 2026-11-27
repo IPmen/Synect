@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 using Synect.Application.Adapters;
+using Synect.Application.Common;
 using Synect.Domain.Banking;
 using Synect.Domain.Common;
 
@@ -27,6 +28,7 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
 {
     public const string AccountObjectType = "kapitalbank.account";
     public const string TransactionObjectType = "kapitalbank.transaction";
+    public const string RejectedTransactionObjectType = "kapitalbank.transaction.rejected";
     public const string DayBalanceObjectType = "kapitalbank.day_balance";
 
     /// <summary>
@@ -98,7 +100,7 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
         var result = Result(doc.RootElement);
         var currency = CurrencyCodes.FromAccount(accountNumber);
         var byId = new Dictionary<string, BankTransactionInfo>(StringComparer.Ordinal);
-        var rejected = new List<string>();
+        var rejected = new List<BankRejectedOperation>();
 
         if (result.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
         {
@@ -115,13 +117,21 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
                 {
                     // The reason names the position and the bank id, never the operation's content (names, INNs, purpose).
                     var id = item.ValueKind == JsonValueKind.Object ? SourceJson.Str(item, "b2_id") : null;
-                    rejected.Add($"operation #{index}{(id is null ? "" : $" (b2_id {id})")}: {ex.Message}");
+                    var reason = $"operation #{index}{(id is null ? "" : $" (b2_id {id})")}: {ex.Message}";
+                    // The raw copy keeps the whole item and the reason; without a b2_id it is keyed by the item's hash.
+                    var itemJson = item.GetRawText();
+                    var payload = new JsonObject { ["reason"] = reason, ["operation"] = JsonNode.Parse(itemJson) };
+                    rejected.Add(new BankRejectedOperation(reason, new RawRecord(
+                        RejectedTransactionObjectType, id ?? "h:" + JsonHasher.Hash(itemJson)[..16], payload.ToJsonString())));
                 }
             }
         }
 
         bool? closed = SourceJson.Int(result, "fin") is { } fin ? fin == 1 : null;
-        return new BankDayTransactions(accountNumber, day, byId.Values.ToList(), closed) { Rejected = rejected };
+        return new BankDayTransactions(accountNumber, day, byId.Values.ToList(), closed)
+        {
+            Rejected = rejected, RejectedObjectType = RejectedTransactionObjectType,
+        };
     }
 
     /// <summary>The four day totals of GetDoc1C; a day balance is stored only when all of them are present.</summary>

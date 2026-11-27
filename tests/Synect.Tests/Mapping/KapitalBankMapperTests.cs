@@ -73,7 +73,7 @@ public class KapitalBankMapperTests
     {
         var result = Mapper().MapTransactions(Statement(1, Operation("1", 1, "10.5")), Account, Day);
         Assert.Empty(result.Transactions);
-        Assert.Contains("precision", Assert.Single(result.Rejected));
+        Assert.Contains("precision", Assert.Single(result.Rejected).Reason);
     }
 
     [Fact]
@@ -107,7 +107,7 @@ public class KapitalBankMapperTests
     {
         var result = Mapper().MapTransactions(Statement(1, Operation("1", 3, "500")), Account, Day);
         Assert.Empty(result.Transactions);
-        Assert.Contains("direction", Assert.Single(result.Rejected));
+        Assert.Contains("direction", Assert.Single(result.Rejected).Reason);
     }
 
     [Fact]
@@ -120,12 +120,22 @@ public class KapitalBankMapperTests
 
         Assert.Equal(["2", "5"], result.Transactions.Select(t => t.OperationId).Order());
         Assert.Equal(4, result.Rejected.Count);
-        Assert.StartsWith("operation #2:", result.Rejected[0]);
-        Assert.StartsWith("operation #3 (b2_id 3):", result.Rejected[1]);
-        Assert.StartsWith("operation #4 (b2_id 4):", result.Rejected[2]);
-        Assert.StartsWith("operation #5:", result.Rejected[3]);
+        Assert.StartsWith("operation #2:", result.Rejected[0].Reason);
+        Assert.StartsWith("operation #3 (b2_id 3):", result.Rejected[1].Reason);
+        Assert.StartsWith("operation #4 (b2_id 4):", result.Rejected[2].Reason);
+        Assert.StartsWith("operation #5:", result.Rejected[3].Reason);
         // The reasons never carry the operation's content.
-        Assert.All(result.Rejected, r => Assert.DoesNotContain("LLC", r));
+        Assert.All(result.Rejected, r => Assert.DoesNotContain("LLC", r.Reason));
+        // The raw copies keep the whole item and the reason, keyed by b2_id or, without one, by the item's hash.
+        Assert.Equal(KapitalBankMapper.RejectedTransactionObjectType, result.RejectedObjectType);
+        Assert.All(result.Rejected, r => Assert.Equal(KapitalBankMapper.RejectedTransactionObjectType, r.Raw.ObjectType));
+        Assert.Equal("3", result.Rejected[1].Raw.ExternalId);
+        Assert.StartsWith("h:", result.Rejected[0].Raw.ExternalId);
+        Assert.NotEqual(result.Rejected[0].Raw.ExternalId, result.Rejected[3].Raw.ExternalId);
+        var raw = System.Text.Json.Nodes.JsonNode.Parse(result.Rejected[1].Raw.Json)!;
+        Assert.Equal(result.Rejected[1].Reason, (string?)raw["reason"]);
+        Assert.Equal(9, (int)raw["operation"]!["dir"]!);
+        Assert.Equal("not an object", (string?)System.Text.Json.Nodes.JsonNode.Parse(result.Rejected[3].Raw.Json)!["operation"]);
         Assert.True(result.IsDayClosed); // the bank's own flag; the sync keeps such a day open
 
         Assert.Empty(Mapper().MapTransactions(Statement(1, Operation("6", 1, "100")), Account, Day).Rejected);

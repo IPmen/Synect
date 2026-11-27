@@ -342,6 +342,15 @@ public class KapitalBankAdapterTests
         Assert.Contains("b2_id 105", warning);
         Assert.DoesNotContain(StubKapitalBank.Account, warning);
         Assert.DoesNotContain("PARTNER LLC", warning);
+        // The operation itself is kept in raw_objects, with the reason.
+        var rejectedRaw = Assert.Single(await host.QueryAsync(tenant, db => db.RawObjects.AsNoTracking()
+            .Where(r => r.ObjectType == KapitalBankMapper.RejectedTransactionObjectType).ToListAsync()));
+        Assert.Equal($"{StubKapitalBank.Account}:2026-11-03:105", rejectedRaw.ExternalId);
+        Assert.Contains("PARTNER LLC", rejectedRaw.Payload);
+        Assert.Contains("direction", rejectedRaw.Payload);
+        // Reading the same day again keeps one row.
+        Assert.False((await host.SyncBankAsync(tenant, created.ConnectionId, Day, Day)).IsComplete);
+        Assert.Equal(1, await host.CountAsync(tenant, db => db.RawObjects.Where(r => r.ObjectType == KapitalBankMapper.RejectedTransactionObjectType)));
 
         // The bank fixes the operation: the next load reads it and closes the day.
         broken["dir"] = 1;
@@ -351,6 +360,8 @@ public class KapitalBankAdapterTests
         Assert.Equal(["101", "102", "105"], stored.Select(t => t.OperationId).Order());
         Assert.All(stored, t => Assert.True(t.IsFinal));
         Assert.True(Assert.Single(await host.QueryAsync(tenant, db => db.BankDailyBalances.AsNoTracking().ToListAsync())).IsDayClosed);
+        // It is no longer rejected: its raw copy as a rejected operation is removed.
+        Assert.Equal(0, await host.CountAsync(tenant, db => db.RawObjects.Where(r => r.ObjectType == KapitalBankMapper.RejectedTransactionObjectType)));
     }
 
     [Fact]

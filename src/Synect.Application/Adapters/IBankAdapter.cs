@@ -57,12 +57,28 @@ public sealed record BankDayTransactions(
     bool? IsDayClosed)
 {
     /// <summary>
-    /// Operations of the answer that could not be read and were left out (the rest of the day still loads): one reason
-    /// each, naming the bank's operation id when there is one, never the operation's content. A day with rejected
-    /// operations is never treated as closed, so that it is read again on the next load.
+    /// Operations of the answer that could not be read and were left out (the rest of the day still loads). A day with
+    /// rejected operations is never treated as closed, so that it is read again on the next load.
     /// </summary>
-    public IReadOnlyList<string> Rejected { get; init; } = [];
+    public IReadOnlyList<BankRejectedOperation> Rejected { get; init; } = [];
+
+    /// <summary>
+    /// raw_objects type under which this adapter keeps rejected operations (e.g. "kapitalbank.transaction.rejected");
+    /// null when it does not keep them. Set even when nothing was rejected, so that rows of an earlier read of the same
+    /// day can be removed once the bank sends the operations in a readable form.
+    /// </summary>
+    public string? RejectedObjectType { get; init; }
 }
+
+/// <summary>An operation the adapter could not read.</summary>
+/// <param name="Reason">
+/// Why, naming the position and the bank's operation id when there is one, never the operation's content (it goes to logs).
+/// </param>
+/// <param name="Raw">
+/// The operation as received (with the reason), for raw_objects. Its ExternalId is unique within the account and day
+/// only (the bank id, or a hash of the item); the writer prefixes it with the account number and the day.
+/// </param>
+public sealed record BankRejectedOperation(string Reason, RawRecord Raw);
 
 /// <summary>The accounts of a bank connection as the bank lists them.</summary>
 public sealed record BankAccountList(IReadOnlyList<BankAccountInfo> Accounts)

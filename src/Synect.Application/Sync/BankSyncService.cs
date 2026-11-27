@@ -125,7 +125,7 @@ public sealed class BankSyncService(
                     if (rejected)
                     {
                         logger.LogWarning("Bank sync: {Count} operation(s) of {Day} could not be read and were left out, connection {ConnectionId}, account id {AccountId}: {Reasons}",
-                            dayTransactions.Rejected.Count, d, connection.Id, account.Id, string.Join("; ", dayTransactions.Rejected));
+                            dayTransactions.Rejected.Count, d, connection.Id, account.Id, string.Join("; ", dayTransactions.Rejected.Select(r => r.Reason)));
                         if (balance is not null) balance = balance with { IsDayClosed = false };
                     }
                     var dayClosed = adapter.Capabilities.HasFinalityFlag && !rejected
@@ -144,6 +144,8 @@ public sealed class BankSyncService(
                         await writer.UpsertTransactionsAsync(connection, account, items, dayClosed, token);
                         if (balance is not null)
                             await writer.UpsertBalanceAsync(connection, account, balance, token);
+                        if (dayTransactions.RejectedObjectType is { } rejectedType)
+                            await writer.ReplaceRejectedOperationsAsync(connection, account, d, rejectedType, dayTransactions.Rejected, token);
                         await db.SaveChangesAsync(token);
                     }, ct);
                 }
