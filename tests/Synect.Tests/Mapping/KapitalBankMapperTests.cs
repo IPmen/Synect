@@ -206,9 +206,35 @@ public class KapitalBankMapperTests
     }
 
     [Fact]
+    public void A_bad_account_is_left_out_and_the_other_accounts_load()
+    {
+        var json = Envelope($$"""
+            [
+              { "aid": 5501, "branch": "00974", "account": "{{Account}}", "name": "FAKE CLIENT LLC", "val": "000" },
+              { "aid": 5502, "branch": "00974", "name": "NO NUMBER LLC", "val": "000" },
+              { "branch": "00974", "account": "", "name": "EMPTY NUMBER LLC" },
+              "not an object",
+              { "aid": 5504, "branch": "00974", "account": "20208840900123456004", "name": "SECOND LLC", "val": "840" }
+            ]
+            """);
+        var result = Mapper().MapAccounts(json);
+
+        Assert.Equal([Account, "20208840900123456004"], result.Accounts.Select(a => a.AccountNumber));
+        Assert.Equal(3, result.Rejected.Count);
+        Assert.StartsWith("account #2 (aid 5502):", result.Rejected[0]);
+        Assert.StartsWith("account #3:", result.Rejected[1]);
+        Assert.StartsWith("account #4:", result.Rejected[2]);
+        // The reasons never carry the account's number or name.
+        Assert.All(result.Rejected, r => Assert.DoesNotContain("LLC", r));
+        Assert.Empty(Mapper().MapAccounts(Accounts("000")).Rejected);
+        // An empty list is not an error.
+        Assert.Empty(Mapper().MapAccounts(Envelope("[]")).Accounts);
+    }
+
+    [Fact]
     public void Account_fields_are_mapped()
     {
-        var account = Assert.Single(Mapper().MapAccounts(Accounts("000")));
+        var account = Assert.Single(Mapper().MapAccounts(Accounts("000")).Accounts);
         Assert.Equal(Account, account.AccountNumber);
         Assert.Equal("00974", account.Mfo);
         Assert.Equal("5501", account.ExternalId);
@@ -229,7 +255,7 @@ public class KapitalBankMapperTests
     [InlineData("999", "999")] // unknown numeric code: kept as is
     public void Account_currency_comes_from_val(string val, string expected)
     {
-        Assert.Equal(expected, Assert.Single(Mapper().MapAccounts(Accounts(val))).Currency);
+        Assert.Equal(expected, Assert.Single(Mapper().MapAccounts(Accounts(val)).Accounts).Currency);
     }
 
     [Theory]
@@ -250,7 +276,7 @@ public class KapitalBankMapperTests
         var json = """{ "error": null, "id": 1, "result": { "content": [ { "b2_id": 7, "dir": 1, "amount": 100, "ddate": "2026-10-01", "err": 0 } ] } }""";
         var tx = Assert.Single(Mapper().MapTransactions(json, "20208840900123456001", new DateOnly(2026, 10, 1)).Transactions);
         Assert.Equal("USD", tx.Currency);
-        var account = Assert.Single(Mapper().MapAccounts(Accounts("840")));
+        var account = Assert.Single(Mapper().MapAccounts(Accounts("840")).Accounts);
         Assert.Contains("\"val\":\"840\"", account.Raw.Json.Replace(" ", ""));
     }
 

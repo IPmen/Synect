@@ -37,7 +37,7 @@ public sealed class FakeBankAdapter(FakeBankDataSource source, KapitalBankMapper
         }
     }
 
-    public Task<IReadOnlyList<BankAccountInfo>> GetAccountsAsync(AdapterContext context, CancellationToken ct) =>
+    public Task<BankAccountList> GetAccountsAsync(AdapterContext context, CancellationToken ct) =>
         sessions.WithSessionAsync(Configured(context), Login(context), async (sid, token) =>
             mapper.MapAccounts(await source.AccountsJsonAsync(context.ConnectionId, sid, token)), ct);
 

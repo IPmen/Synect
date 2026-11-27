@@ -106,7 +106,7 @@ public sealed class KapitalBankAdapter(
         }
     }
 
-    public Task<IReadOnlyList<BankAccountInfo>> GetAccountsAsync(AdapterContext context, CancellationToken ct) =>
+    public Task<BankAccountList> GetAccountsAsync(AdapterContext context, CancellationToken ct) =>
         sessions.WithSessionAsync(context, Login, async (sid, token) =>
         {
             var json = await Checked(O.AccountsMethod, CallAsync(O.AccountsMethod, new JsonObject { [O.SidParameter] = sid }, token));

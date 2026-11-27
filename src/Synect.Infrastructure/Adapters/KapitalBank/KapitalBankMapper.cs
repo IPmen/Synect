@@ -38,7 +38,12 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
 
     private readonly KapitalBankMapperOptions _options = options.Value;
 
-    public IReadOnlyList<BankAccountInfo> MapAccounts(string json)
+    /// <summary>
+    /// Maps the account list (GetAccounts). An account that cannot be read (not an object, no account number) is left out
+    /// and listed in <see cref="BankAccountList.Rejected"/>; the other accounts still load. Errors of the answer as a whole
+    /// (envelope error, result not an array) fail the call, and so does a list where no account could be read.
+    /// </summary>
+    public BankAccountList MapAccounts(string json)
     {
         using var doc = JsonDocument.Parse(json);
         var result = Result(doc.RootElement);
@@ -46,18 +51,38 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
             throw new AdapterException("Kapital Bank account list: result is not an array.");
 
         var accounts = new List<BankAccountInfo>();
+        var rejected = new List<string>();
+        var index = 0;
         foreach (var item in result.EnumerateArray())
         {
-            var account = SourceJson.Str(item, "account") ?? throw new FormatException("Account without number.");
-            accounts.Add(new BankAccountInfo(
-                AccountNumber: account,
-                Mfo: SourceJson.Str(item, "branch") ?? string.Empty,
-                Currency: CurrencyCodes.Resolve(SourceJson.Str(item, "val"), account),
-                Name: SourceJson.Str(item, "name"),
-                ExternalId: SourceJson.Str(item, "aid"),
-                Raw: new RawRecord(AccountObjectType, account, item.GetRawText())));
+            index++;
+            try
+            {
+                accounts.Add(MapAccount(item));
+            }
+            catch (Exception ex) when (ex is FormatException or InvalidOperationException)
+            {
+                // The reason names the position and the bank's internal id, never the account number or the name.
+                var aid = item.ValueKind == JsonValueKind.Object ? SourceJson.Str(item, "aid") : null;
+                rejected.Add($"account #{index}{(aid is null ? "" : $" (aid {aid})")}: {ex.Message}");
+            }
         }
-        return accounts;
+        if (accounts.Count == 0 && rejected.Count > 0)
+            throw new AdapterException($"Kapital Bank account list: none of {rejected.Count} account(s) could be read: {string.Join("; ", rejected)}");
+        return new BankAccountList(accounts) { Rejected = rejected };
+    }
+
+    private static BankAccountInfo MapAccount(JsonElement item)
+    {
+        if (item.ValueKind != JsonValueKind.Object) throw new FormatException("Account is not a JSON object.");
+        var account = SourceJson.Str(item, "account") ?? throw new FormatException("Account without number.");
+        return new BankAccountInfo(
+            AccountNumber: account,
+            Mfo: SourceJson.Str(item, "branch") ?? string.Empty,
+            Currency: CurrencyCodes.Resolve(SourceJson.Str(item, "val"), account),
+            Name: SourceJson.Str(item, "name"),
+            ExternalId: SourceJson.Str(item, "aid"),
+            Raw: new RawRecord(AccountObjectType, account, item.GetRawText()));
     }
 
     /// <summary>

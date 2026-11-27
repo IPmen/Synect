@@ -64,6 +64,17 @@ public sealed record BankDayTransactions(
     public IReadOnlyList<string> Rejected { get; init; } = [];
 }
 
+/// <summary>The accounts of a bank connection as the bank lists them.</summary>
+public sealed record BankAccountList(IReadOnlyList<BankAccountInfo> Accounts)
+{
+    /// <summary>
+    /// Accounts of the answer that could not be read and were left out (the other accounts still load): one reason each,
+    /// naming the position and the bank's internal account id when there is one, never the account number or name. A load
+    /// with rejected accounts is never complete.
+    /// </summary>
+    public IReadOnlyList<string> Rejected { get; init; } = [];
+}
+
 public sealed record BankBalanceInfo(
     string AccountNumber,
     DateOnly Day,
@@ -90,7 +101,7 @@ public interface IBankAdapter : ISourceAdapter
 
     Task<ConnectionTestResult> TestConnectionAsync(AdapterContext context, CancellationToken ct);
 
-    Task<IReadOnlyList<BankAccountInfo>> GetAccountsAsync(AdapterContext context, CancellationToken ct);
+    Task<BankAccountList> GetAccountsAsync(AdapterContext context, CancellationToken ct);
 
     /// <summary>
     /// Operations (duplicates already removed) and daily totals of one account for one operational day, from one bank

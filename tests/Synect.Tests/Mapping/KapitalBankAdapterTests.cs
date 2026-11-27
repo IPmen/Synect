@@ -36,6 +36,9 @@ public sealed class StubKapitalBank : HttpMessageHandler
     /// <summary>Day total fields left out of every GetDoc1C answer (e.g. "saldo_out").</summary>
     public HashSet<string> OmittedTotals { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>Items added after the main account in every GetAccounts answer (e.g. a broken account).</summary>
+    public List<JsonNode> ExtraAccounts { get; } = [];
+
     /// <summary>Operations per operational day (yyyy-MM-dd).</summary>
     public Dictionary<string, List<JsonObject>> Days { get; } = new(StringComparer.Ordinal);
 
@@ -79,10 +82,9 @@ public sealed class StubKapitalBank : HttpMessageHandler
                 lock (Sessions) known = Sessions.Contains((string?)p["sid"] ?? "");
                 if (!known) return Json(HttpStatusCode.Unauthorized, "{}");
                 if (method == "GetAccounts")
-                    return Json(HttpStatusCode.OK, Envelope(body["id"], new JsonArray(new JsonObject
-                    {
-                        ["aid"] = 5501, ["branch"] = "00974", ["account"] = Account, ["name"] = "CLIENT LLC", ["val"] = "000",
-                    })));
+                    return Json(HttpStatusCode.OK, Envelope(body["id"], new JsonArray(
+                        [new JsonObject { ["aid"] = 5501, ["branch"] = "00974", ["account"] = Account, ["name"] = "CLIENT LLC", ["val"] = "000" },
+                         .. ExtraAccounts.Select(e => e.DeepClone())])));
                 var day = (string)p["date"]!;
                 var ops = Days.GetValueOrDefault(day) ?? [];
                 var debit = ops.Where(o => (int)o["dir"]! == 2).Sum(o => (long)o["amount"]!);
@@ -143,7 +145,7 @@ public class KapitalBankAdapterTests
         var (adapter, context) = Create(bank);
         var accounts = await adapter.GetAccountsAsync(context, CancellationToken.None);
 
-        var account = Assert.Single(accounts);
+        var account = Assert.Single(accounts.Accounts);
         Assert.Equal(StubKapitalBank.Account, account.AccountNumber);
         Assert.Equal("UZS", account.Currency);
         Assert.Equal("00974", account.Mfo);
@@ -194,14 +196,14 @@ public class KapitalBankAdapterTests
         var (adapter, context) = Create(bank);
         await adapter.GetAccountsAsync(context, CancellationToken.None);
         lock (bank.Sessions) bank.Sessions.Clear();
-        Assert.Single(await adapter.GetAccountsAsync(context, CancellationToken.None));
+        Assert.Single((await adapter.GetAccountsAsync(context, CancellationToken.None)).Accounts);
         Assert.Equal(2, bank.Logins);
 
         // A configured envelope code counts as an expired session too.
         var (configured, configuredContext) = Create(bank, sessionExpired: [70001]);
         await configured.GetAccountsAsync(configuredContext, CancellationToken.None);
         bank.Overrides.Enqueue(() => StubKapitalBank.Json(HttpStatusCode.OK, StubKapitalBank.Error(70001, "Session expired")));
-        Assert.Single(await configured.GetAccountsAsync(configuredContext, CancellationToken.None));
+        Assert.Single((await configured.GetAccountsAsync(configuredContext, CancellationToken.None)).Accounts);
 
         // Twice in a row is an authentication failure.
         bank.Overrides.Enqueue(() => StubKapitalBank.Json(HttpStatusCode.Unauthorized, "{}"));
@@ -349,5 +351,53 @@ public class KapitalBankAdapterTests
         Assert.Equal(["101", "102", "105"], stored.Select(t => t.OperationId).Order());
         Assert.All(stored, t => Assert.True(t.IsFinal));
         Assert.True(Assert.Single(await host.QueryAsync(tenant, db => db.BankDailyBalances.AsNoTracking().ToListAsync())).IsDayClosed);
+    }
+
+    [Fact]
+    public async Task A_bad_account_is_left_out_the_other_accounts_load_and_the_run_is_not_complete()
+    {
+        const string Second = "20208000900123456002";
+        var bank = WithOperations();
+        var broken = new JsonObject { ["aid"] = 5503, ["branch"] = "00974", ["name"] = "BROKEN LLC", ["val"] = "000" }; // no account number
+        bank.ExtraAccounts.Add(broken);
+        await using var host = await TestHost.CreateSqliteAsync(services =>
+        {
+            services.AddSingleton(new KapitalBankHttp(new HttpClient(bank)));
+            services.Configure<KapitalBankApiOptions>(o => o.Endpoint = StubKapitalBank.Endpoint);
+        });
+        var tenant = await host.CreateTenantAsync("Kapital Bank bad account");
+        var created = await host.InTenantAsync(tenant, sp => sp.GetRequiredService<ConnectionCredentialsService>()
+            .CreateAsync(KapitalBankAdapter.Code, null, StubKapitalBank.Login, new SecretValue("correct-password"), test: true, CancellationToken.None));
+
+        var outcome = await host.SyncBankAsync(tenant, created.ConnectionId, Day, Day);
+        Assert.Equal(SyncRunResult.Succeeded, outcome.Result);
+        Assert.False(outcome.IsComplete);
+        Assert.Equal(StubKapitalBank.Account, Assert.Single(await host.QueryAsync(tenant, db => db.BankAccounts.AsNoTracking().ToListAsync())).AccountNumber);
+        Assert.Equal(2, await host.CountAsync(tenant, db => db.BankTransactions));
+        Assert.Equal(1, bank.Requests.Count(r => (string?)r["method"] == "GetDoc1C"));
+        var warning = Assert.Single(host.Logs.Lines, l => l.Contains("account(s) could not be read and were left out"));
+        Assert.Contains("aid 5503", warning);
+        Assert.DoesNotContain("BROKEN LLC", warning);
+
+        // The bank fixes the account: the next load stores it and reads its day, and the run is complete.
+        broken["account"] = Second;
+        var fixedRun = await host.SyncBankAsync(tenant, created.ConnectionId, Day, Day);
+        Assert.True(fixedRun.IsComplete);
+        var accounts = await host.QueryAsync(tenant, db => db.BankAccounts.AsNoTracking().ToListAsync());
+        Assert.Equal([StubKapitalBank.Account, Second], accounts.Select(x => x.AccountNumber).Order());
+        Assert.Contains(bank.Requests, r => (string?)r["method"] == "GetDoc1C" && (string?)r["params"]!["account"] == Second);
+    }
+
+    [Fact]
+    public async Task A_list_where_no_account_can_be_read_fails_the_call()
+    {
+        var bank = new StubKapitalBank();
+        var (adapter, context) = Create(bank);
+        Assert.Single((await adapter.GetAccountsAsync(context, CancellationToken.None)).Accounts);
+        bank.Overrides.Enqueue(() => StubKapitalBank.Json(HttpStatusCode.OK,
+            """{"error":null,"id":1,"result":[{"aid":1,"name":"NO NUMBER LLC"},"not an object"]}"""));
+        var ex = await Assert.ThrowsAsync<AdapterException>(() => adapter.GetAccountsAsync(context, CancellationToken.None));
+        Assert.Contains("none of 2 account(s)", ex.Message);
+        Assert.DoesNotContain("NO NUMBER LLC", ex.Message);
     }
 }

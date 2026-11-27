@@ -87,9 +87,16 @@ public sealed class BankSyncService(
 
         try
         {
-            var accountInfos = await policy.ExecuteAsync(adapter, context, "GetAccounts",
+            var accountList = await policy.ExecuteAsync(adapter, context, "GetAccounts",
                 token => adapter.GetAccountsAsync(context, token), ct);
+            var accountInfos = accountList.Accounts;
             records += accountInfos.Count;
+            // Accounts the adapter could not read are left out of this load (stored accounts are kept as they are); the
+            // other accounts still load, and the run is not complete.
+            var accountsRejected = accountList.Rejected.Count > 0;
+            if (accountsRejected)
+                logger.LogWarning("Bank sync: {Count} account(s) could not be read and were left out, connection {ConnectionId}: {Reasons}",
+                    accountList.Rejected.Count, connection.Id, string.Join("; ", accountList.Rejected));
             var accounts = await db.InTransactionAsync(async token =>
             {
                 var result = await writer.UpsertAccountsAsync(connection, accountInfos, token);
@@ -97,7 +104,7 @@ public sealed class BankSyncService(
                 return result;
             }, ct);
 
-            var allDaysClosed = adapter.Capabilities.HasFinalityFlag;
+            var allDaysClosed = adapter.Capabilities.HasFinalityFlag && !accountsRejected;
             DateOnly? rangeFrom = null, rangeTo = null;
             foreach (var account in accounts)
             {
