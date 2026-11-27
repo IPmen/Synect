@@ -160,6 +160,26 @@ public class KapitalBankMapperTests
         Assert.Equal(75_000, balance.TotalCredit);
     }
 
+    [Theory]
+    [InlineData("saldo_in")]
+    [InlineData("saldo_out")]
+    [InlineData("total_debit")]
+    [InlineData("total_credit")]
+    public void A_missing_day_total_gives_no_balance_instead_of_zero(string field)
+    {
+        var full = Statement(1, Operation("1", 1, "100"));
+        var missing = full.Replace($"\"{field}\": ", $"\"{field}_absent\": ");
+        var empty = full.Replace($"\"{field}\": ", $"\"{field}\": null, \"{field}_was\": ");
+        Assert.NotEqual(full, missing);
+
+        foreach (var json in new[] { missing, empty })
+        {
+            Assert.Null(Mapper().MapBalance(json, Account, Day));
+            // The operations of the same answer are still read.
+            Assert.Single(Mapper().MapTransactions(json, Account, Day).Transactions);
+        }
+    }
+
     [Fact]
     public void Account_fields_are_mapped()
     {

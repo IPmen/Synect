@@ -84,12 +84,23 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
         return new BankDayTransactions(accountNumber, day, byId.Values.ToList(), closed);
     }
 
-    /// <summary>Maps the day totals of a statement (GetDoc1C); null when the payload has no totals.</summary>
+    /// <summary>The four day totals of GetDoc1C; a day balance is stored only when all of them are present.</summary>
+    public static readonly IReadOnlyList<string> DayTotalFields = ["saldo_in", "saldo_out", "total_debit", "total_credit"];
+
+    /// <summary>
+    /// Maps the day totals of a statement (GetDoc1C). Null when any of <see cref="DayTotalFields"/> is missing or not a
+    /// number: a missing value is never stored as 0 (a false closing balance or turnover), and a day balance stored
+    /// earlier is then left as it was.
+    /// </summary>
     public BankBalanceInfo? MapBalance(string json, string accountNumber, DateOnly day)
     {
         using var doc = JsonDocument.Parse(json);
         var result = Result(doc.RootElement);
-        if (SourceJson.Dec(result, "saldo_in") is not { } saldoIn) return null;
+        if (SourceJson.Dec(result, "saldo_in") is not { } saldoIn
+            || SourceJson.Dec(result, "saldo_out") is not { } saldoOut
+            || SourceJson.Dec(result, "total_debit") is not { } totalDebit
+            || SourceJson.Dec(result, "total_credit") is not { } totalCredit)
+            return null;
 
         // Raw copy of the day header without the operations (they are stored as separate raw objects).
         var header = JsonNode.Parse(result.GetRawText())!.AsObject();
@@ -100,9 +111,9 @@ public sealed class KapitalBankMapper(IOptions<KapitalBankMapperOptions> options
             accountNumber,
             operDay,
             Minor(saldoIn, "saldo_in"),
-            Minor(SourceJson.Dec(result, "saldo_out") ?? 0, "saldo_out"),
-            Minor(SourceJson.Dec(result, "total_debit") ?? 0, "total_debit"),
-            Minor(SourceJson.Dec(result, "total_credit") ?? 0, "total_credit"),
+            Minor(saldoOut, "saldo_out"),
+            Minor(totalDebit, "total_debit"),
+            Minor(totalCredit, "total_credit"),
             SourceJson.Int(result, "fin") == 1,
             new RawRecord(DayBalanceObjectType, $"{accountNumber}:{operDay:yyyy-MM-dd}", header.ToJsonString()));
     }

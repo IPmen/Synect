@@ -33,6 +33,9 @@ public sealed class StubKapitalBank : HttpMessageHandler
     public ConcurrentQueue<JsonObject> Requests { get; } = new();
     public ConcurrentQueue<Func<HttpResponseMessage>> Overrides { get; } = new();
 
+    /// <summary>Day total fields left out of every GetDoc1C answer (e.g. "saldo_out").</summary>
+    public HashSet<string> OmittedTotals { get; } = new(StringComparer.Ordinal);
+
     /// <summary>Operations per operational day (yyyy-MM-dd).</summary>
     public Dictionary<string, List<JsonObject>> Days { get; } = new(StringComparer.Ordinal);
 
@@ -90,11 +93,13 @@ public sealed class StubKapitalBank : HttpMessageHandler
                     copy["ddate"] = day;
                     return (JsonNode)copy;
                 }).ToArray());
-                return Json(HttpStatusCode.OK, Envelope(body["id"], new JsonObject
+                var statement = new JsonObject
                 {
                     ["content"] = content, ["total_debit"] = debit, ["total_credit"] = credit, ["saldo_in"] = 1_000_000,
                     ["saldo_out"] = 1_000_000 + credit - debit, ["fin"] = 1, ["oper_day"] = day,
-                }));
+                };
+                foreach (var field in OmittedTotals) statement.Remove(field);
+                return Json(HttpStatusCode.OK, Envelope(body["id"], statement));
             default:
                 return Json(HttpStatusCode.OK, Error(-32601, "Method not found"));
         }
@@ -294,5 +299,17 @@ public class KapitalBankAdapterTests
         var again = await host.SyncBankAsync(tenant, created.ConnectionId, new DateOnly(2026, 11, 3), new DateOnly(2026, 11, 4));
         Assert.Equal(SyncRunResult.Succeeded, again.Result);
         Assert.Equal(3, await host.CountAsync(tenant, db => db.BankTransactions));
+
+        // The bank leaves out saldo_out: the stored day balances are not overwritten with 0, a new day gets no balance
+        // row at all, and its operations still load.
+        bank.OmittedTotals.Add("saldo_out");
+        bank.Days["2026-11-05"] = [StubKapitalBank.Operation(104, 1, 50_000)];
+        var partial = await host.SyncBankAsync(tenant, created.ConnectionId, new DateOnly(2026, 11, 3), new DateOnly(2026, 11, 5));
+        Assert.Equal(SyncRunResult.Succeeded, partial.Result);
+        Assert.Equal(4, await host.CountAsync(tenant, db => db.BankTransactions));
+        var kept = await host.QueryAsync(tenant, db => db.BankDailyBalances.AsNoTracking().OrderBy(b => b.Date).ToListAsync());
+        Assert.Equal([new DateOnly(2026, 11, 3), new DateOnly(2026, 11, 4)], kept.Select(b => b.Date));
+        Assert.Equal([1_300_000L, 1_100_000L], kept.Select(b => b.ClosingBalance));
+        Assert.Contains(host.Logs.Lines, l => l.Contains("no complete day totals"));
     }
 }

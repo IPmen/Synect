@@ -118,8 +118,12 @@ public sealed class KapitalBankAdapter(
         sessions.WithSessionAsync(context, Login, async (sid, token) =>
         {
             var json = await StatementAsync(sid, accountNumber, day, token);
-            return Map(O.StatementMethod, () => new BankDayStatement(
+            var statement = Map(O.StatementMethod, () => new BankDayStatement(
                 mapper.MapTransactions(json, accountNumber, day), mapper.MapBalance(json, accountNumber, day)));
+            if (statement.Balance is null)
+                logger.LogWarning("Kapital Bank {Method}: no complete day totals ({Fields}) for {Day}, connection {ConnectionId}; the day balance is not stored",
+                    O.StatementMethod, string.Join(", ", KapitalBankMapper.DayTotalFields), day, context.ConnectionId);
+            return statement;
         }, ct);
 
     private Task<string> StatementAsync(string sid, string accountNumber, DateOnly day, CancellationToken ct) =>
